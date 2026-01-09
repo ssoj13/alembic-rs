@@ -442,6 +442,215 @@ pub type IUInt32GeomParam<'a> = IGeomParam<'a>;
 /// Float geometry parameter.
 pub type IFloatGeomParam<'a> = IGeomParam<'a>;
 
+// ============================================================================
+// Output Geometry Parameter
+// ============================================================================
+
+use crate::core::MetaData;
+
+/// Output geometry parameter sample.
+#[derive(Clone, Debug)]
+pub struct OGeomParamSample<T> {
+    /// Values data.
+    pub values: Vec<T>,
+    /// Optional indices for indexed parameters.
+    pub indices: Option<Vec<u32>>,
+    /// Scope of the data.
+    pub scope: GeometryScope,
+}
+
+impl<T> Default for OGeomParamSample<T> {
+    fn default() -> Self {
+        Self {
+            values: Vec::new(),
+            indices: None,
+            scope: GeometryScope::Unknown,
+        }
+    }
+}
+
+impl<T> OGeomParamSample<T> {
+    /// Create non-indexed sample.
+    pub fn new(values: Vec<T>, scope: GeometryScope) -> Self {
+        Self { values, indices: None, scope }
+    }
+    
+    /// Create indexed sample.
+    pub fn indexed(values: Vec<T>, indices: Vec<u32>, scope: GeometryScope) -> Self {
+        Self { values, indices: Some(indices), scope }
+    }
+    
+    /// Check if indexed.
+    pub fn is_indexed(&self) -> bool {
+        self.indices.is_some()
+    }
+}
+
+/// Output geometry parameter builder.
+/// 
+/// Creates GeomParam properties for writing to Alembic files.
+/// Supports both indexed and non-indexed parameters.
+pub struct OGeomParam {
+    /// Property name.
+    name: String,
+    /// Data type.
+    data_type: DataType,
+    /// Geometry scope.
+    scope: GeometryScope,
+    /// Whether indexed.
+    is_indexed: bool,
+    /// Values samples (raw bytes).
+    values_samples: Vec<Vec<u8>>,
+    /// Indices samples (for indexed params).
+    indices_samples: Vec<Vec<u32>>,
+    /// Time sampling index.
+    time_sampling_index: u32,
+}
+
+impl OGeomParam {
+    /// Create a new output geometry parameter.
+    pub fn new(name: &str, data_type: DataType, scope: GeometryScope, is_indexed: bool) -> Self {
+        Self {
+            name: name.to_string(),
+            data_type,
+            scope,
+            is_indexed,
+            values_samples: Vec::new(),
+            indices_samples: Vec::new(),
+            time_sampling_index: 0,
+        }
+    }
+    
+    /// Create non-indexed float parameter.
+    pub fn float(name: &str, scope: GeometryScope) -> Self {
+        Self::new(name, DataType::FLOAT32, scope, false)
+    }
+    
+    /// Create non-indexed Vec2f parameter (UVs).
+    pub fn vec2f(name: &str, scope: GeometryScope) -> Self {
+        Self::new(name, DataType::VEC2F, scope, false)
+    }
+    
+    /// Create non-indexed Vec3f parameter (normals, colors).
+    pub fn vec3f(name: &str, scope: GeometryScope) -> Self {
+        Self::new(name, DataType::VEC3F, scope, false)
+    }
+    
+    /// Create indexed Vec2f parameter.
+    pub fn vec2f_indexed(name: &str, scope: GeometryScope) -> Self {
+        Self::new(name, DataType::VEC2F, scope, true)
+    }
+    
+    /// Create indexed Vec3f parameter.
+    pub fn vec3f_indexed(name: &str, scope: GeometryScope) -> Self {
+        Self::new(name, DataType::VEC3F, scope, true)
+    }
+    
+    /// Set time sampling index.
+    pub fn with_time_sampling(mut self, index: u32) -> Self {
+        self.time_sampling_index = index;
+        self
+    }
+    
+    /// Add a sample with typed data.
+    pub fn add_sample<T: bytemuck::Pod>(&mut self, sample: &OGeomParamSample<T>) {
+        self.values_samples.push(bytemuck::cast_slice(&sample.values).to_vec());
+        if self.is_indexed {
+            self.indices_samples.push(sample.indices.clone().unwrap_or_default());
+        }
+        self.scope = sample.scope;
+    }
+    
+    /// Add raw values sample (non-indexed).
+    pub fn add_values<T: bytemuck::Pod>(&mut self, values: &[T]) {
+        self.values_samples.push(bytemuck::cast_slice(values).to_vec());
+    }
+    
+    /// Add indexed sample.
+    pub fn add_indexed<T: bytemuck::Pod>(&mut self, values: &[T], indices: &[u32]) {
+        self.values_samples.push(bytemuck::cast_slice(values).to_vec());
+        self.indices_samples.push(indices.to_vec());
+    }
+    
+    /// Get property name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    
+    /// Check if indexed.
+    pub fn is_indexed(&self) -> bool {
+        self.is_indexed
+    }
+    
+    /// Get number of samples.
+    pub fn num_samples(&self) -> usize {
+        self.values_samples.len()
+    }
+    
+    /// Get scope.
+    pub fn scope(&self) -> GeometryScope {
+        self.scope
+    }
+    
+    /// Get data type.
+    pub fn data_type(&self) -> DataType {
+        self.data_type
+    }
+    
+    /// Build metadata for this parameter.
+    pub fn build_meta_data(&self) -> MetaData {
+        let mut meta = MetaData::new();
+        meta.set(GEOM_SCOPE_KEY, self.scope.as_str());
+        if self.data_type.extent > 1 {
+            meta.set(ARRAY_EXTENT_KEY, &self.data_type.extent.to_string());
+        }
+        meta.set(POD_NAME_KEY, self.data_type.pod.name());
+        meta.set(POD_EXTENT_KEY, &self.data_type.extent.to_string());
+        meta
+    }
+    
+    /// Get values for sample index.
+    pub fn values(&self, index: usize) -> Option<&[u8]> {
+        self.values_samples.get(index).map(|v| v.as_slice())
+    }
+    
+    /// Get indices for sample index (indexed params only).
+    pub fn indices(&self, index: usize) -> Option<&[u32]> {
+        self.indices_samples.get(index).map(|v| v.as_slice())
+    }
+    
+    /// Get time sampling index.
+    pub fn time_sampling_index(&self) -> u32 {
+        self.time_sampling_index
+    }
+}
+
+// Type aliases for output geometry parameters
+
+/// Output Vec2f geometry parameter (UVs).
+pub type OV2fGeomParam = OGeomParam;
+
+/// Output Vec3f geometry parameter (normals, colors).
+pub type OV3fGeomParam = OGeomParam;
+
+/// Output Normal3f geometry parameter.
+pub type ON3fGeomParam = OGeomParam;
+
+/// Output Color3f geometry parameter.
+pub type OC3fGeomParam = OGeomParam;
+
+/// Output Color4f geometry parameter.
+pub type OC4fGeomParam = OGeomParam;
+
+/// Output Int32 geometry parameter.
+pub type OInt32GeomParam = OGeomParam;
+
+/// Output UInt32 geometry parameter.
+pub type OUInt32GeomParam = OGeomParam;
+
+/// Output Float geometry parameter.
+pub type OFloatGeomParam = OGeomParam;
+
 #[cfg(test)]
 mod tests {
     use super::*;

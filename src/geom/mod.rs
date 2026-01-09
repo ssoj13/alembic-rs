@@ -53,10 +53,17 @@ pub use visibility::{
 
 // Re-export geom_param types
 pub use geom_param::{
+    // Input (ITypedGeomParam<T>)
     IGeomParam, GeomParamSample,
     IV2fGeomParam, IV3fGeomParam, IN3fGeomParam,
     IC3fGeomParam, IC4fGeomParam,
     IInt32GeomParam, IUInt32GeomParam, IFloatGeomParam,
+    // Output (OTypedGeomParam<T>)
+    OGeomParam, OGeomParamSample,
+    OV2fGeomParam, OV3fGeomParam, ON3fGeomParam,
+    OC3fGeomParam, OC4fGeomParam,
+    OInt32GeomParam, OUInt32GeomParam, OFloatGeomParam,
+    // Constants
     GEOM_SCOPE_KEY, VALS_PROPERTY_NAME, INDICES_PROPERTY_NAME,
 };
 

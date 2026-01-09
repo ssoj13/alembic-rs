@@ -175,7 +175,7 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | `getValue(selector)` | Yes | Yes | |
 | `getInheritsXforms()` | Yes | Yes | In sample |
 | `getNumOps()` | Yes | Yes | In sample |
-| `getChildBoundsProperty()` | Yes | [ ] | |
+| `getChildBoundsProperty()` | Yes | Yes | `child_bounds()`, `has_child_bounds()` |
 | `getArbGeomParams()` | Yes | Partial | `has_arb_geom_params()`, `arb_geom_param_names()` |
 | `getUserProperties()` | Yes | Partial | `has_user_properties()`, `user_property_names()` |
 | `OXformSchema` | Yes | Yes | `OXform` builder |
@@ -290,9 +290,9 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | Focus distance | Yes | Yes | |
 | Shutter open/close | Yes | Yes | |
 | Near/far clipping plane | Yes | Yes | |
-| Film back transform ops | Yes | [ ] | |
+| Film back transform ops | Yes | Yes | `FilmBackXformOp` |
 | Core properties (16 doubles) | Yes | Yes | |
-| `getChildBoundsProperty()` | Yes | [ ] | |
+| `getChildBoundsProperty()` | Yes | Yes | `child_bounds()`, `has_child_bounds()` |
 | `getArbGeomParams()` | Yes | Partial | `has_arb_geom_params()`, `arb_geom_param_names()` |
 | `getUserProperties()` | Yes | Partial | `has_user_properties()`, `user_property_names()` |
 | FOV calculations | Yes | Yes | `fov_horizontal()`, `fov_vertical()` |
@@ -331,7 +331,7 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | `getExpanded()` | Yes | Yes | `get_expanded_sample()` |
 | Geometry scope | Yes | Yes | `GeometryScope` enum |
 | All typed variants (IV2fGeomParam, etc.) | Yes | Yes | Type aliases |
-| `OTypedGeomParam<T>` | Yes | [ ] | |
+| `OTypedGeomParam<T>` | Yes | Yes | `OGeomParam`, type aliases |
 
 ### Visibility
 | Feature | C++ | Rust | Notes |
@@ -350,7 +350,7 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | `GeometryScope` enum | Yes | Yes | In `core::sample` |
 | `MeshTopologyVariance` enum | Yes | Yes | `TopologyVariance` in core |
 | `ArchiveBounds` | Yes | [ ] | Archive-level bounds |
-| `FilmBackXformOp` | Yes | [ ] | Camera film back transforms |
+| `FilmBackXformOp` | Yes | Yes | Camera film back transforms |
 
 ---
 
@@ -440,7 +440,7 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | Feature | C++ | Rust | Notes |
 |---------|-----|------|-------|
 | `ArraySample` class | Yes | [ ] | |
-| `ArraySampleKey` | Yes | [ ] | For deduplication |
+| `ArraySampleKey` | Yes | Yes | `ArraySampleKey`, `ArraySampleContentKey` |
 | `ScalarSample` class | Yes | [ ] | |
 | Type-safe accessors | Yes | [ ] | |
 
@@ -452,11 +452,11 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | `CompoundPropertyReader` trait | Yes | Yes | |
 | `ScalarPropertyReader` trait | Yes | Yes | |
 | `ArrayPropertyReader` trait | Yes | Yes | |
-| `ArchiveWriter` trait | Yes | [ ] | |
-| `ObjectWriter` trait | Yes | [ ] | |
-| `CompoundPropertyWriter` trait | Yes | [ ] | |
-| `ScalarPropertyWriter` trait | Yes | [ ] | |
-| `ArrayPropertyWriter` trait | Yes | [ ] | |
+| `ArchiveWriter` trait | Yes | Yes | In `core::traits` |
+| `ObjectWriter` trait | Yes | Yes | In `core::traits` |
+| `CompoundPropertyWriter` trait | Yes | Yes | In `core::traits` |
+| `ScalarPropertyWriter` trait | Yes | Yes | In `core::traits` |
+| `ArrayPropertyWriter` trait | Yes | Yes | In `core::traits` |
 
 ### ReadArraySampleCache
 | Feature | C++ | Rust | Notes |
@@ -635,8 +635,8 @@ Can be added later if needed.
 ### Overall (excluding HDF5, AbcCoreLayer, ErrorHandler)
 
 - **Total Applicable Features**: ~365
-- **Fully Implemented**: ~357 (98%)
-- **Partially Implemented**: ~6 (2%)
+- **Fully Implemented**: ~360 (99%)
+- **Partially Implemented**: ~5 (1%)
 - **N/A (Architectural)**: ~8 (Rust ownership model)
 
 ### Out of Scope
@@ -669,6 +669,9 @@ Can be added later if needed.
 20. **ReadArraySampleCache**: Thread-safe cache for array samples
 21. **Compression**: zlib compression/decompression support
 22. **Visibility round-trip**: Write and read visibility properties verified
+23. **OTypedGeomParam**: Output geometry parameters with indexed/non-indexed support
+24. **FilmBackXformOp**: Camera film back transforms (translate, scale, matrix)
+25. **ChildBoundsProperty**: Child bounds on IXform, ICamera, IPolyMesh, ISubD, ILight
 
 ---
 
