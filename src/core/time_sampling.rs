@@ -64,6 +64,16 @@ impl TimeSamplingType {
             Self::Acyclic { times } => times.len(),
         }
     }
+    
+    /// Get time per cycle (0.0 for identity/acyclic).
+    pub fn time_per_cycle(&self) -> Chrono {
+        match self {
+            Self::Identity => 0.0,
+            Self::Uniform { time_per_cycle, .. } => *time_per_cycle,
+            Self::Cyclic { time_per_cycle, .. } => *time_per_cycle,
+            Self::Acyclic { .. } => 0.0, // Acyclic has infinite time per cycle
+        }
+    }
 }
 
 impl Default for TimeSamplingType {
@@ -116,6 +126,70 @@ impl TimeSampling {
     pub fn from_type_and_times(tst: TimeSamplingType, _times: Vec<Chrono>) -> Self {
         Self {
             sampling_type: tst,
+        }
+    }
+    
+    /// Get the time sampling type.
+    #[inline]
+    pub fn time_sampling_type(&self) -> &TimeSamplingType {
+        &self.sampling_type
+    }
+    
+    /// Check if this is identity (static) sampling.
+    #[inline]
+    pub fn is_identity(&self) -> bool {
+        self.sampling_type.is_identity()
+    }
+    
+    /// Check if this is uniform sampling.
+    #[inline]
+    pub fn is_uniform(&self) -> bool {
+        self.sampling_type.is_uniform()
+    }
+    
+    /// Check if this is cyclic sampling.
+    #[inline]
+    pub fn is_cyclic(&self) -> bool {
+        self.sampling_type.is_cyclic()
+    }
+    
+    /// Check if this is acyclic sampling.
+    #[inline]
+    pub fn is_acyclic(&self) -> bool {
+        self.sampling_type.is_acyclic()
+    }
+    
+    /// Get the number of samples per cycle.
+    #[inline]
+    pub fn samples_per_cycle(&self) -> usize {
+        self.sampling_type.samples_per_cycle()
+    }
+    
+    /// Get time per cycle.
+    #[inline]
+    pub fn time_per_cycle(&self) -> Chrono {
+        self.sampling_type.time_per_cycle()
+    }
+    
+    /// Get the number of stored times.
+    pub fn num_stored_times(&self) -> usize {
+        match &self.sampling_type {
+            TimeSamplingType::Identity => 1,
+            TimeSamplingType::Uniform { .. } => 1, // Only start time
+            TimeSamplingType::Cyclic { times, .. } => times.len(),
+            TimeSamplingType::Acyclic { times } => times.len(),
+        }
+    }
+    
+    /// Get stored times as slice.
+    /// For uniform sampling, returns slice with just start_time.
+    /// For cyclic/acyclic, returns the times vector.
+    pub fn stored_times(&self) -> Vec<Chrono> {
+        match &self.sampling_type {
+            TimeSamplingType::Identity => vec![0.0],
+            TimeSamplingType::Uniform { start_time, .. } => vec![*start_time],
+            TimeSamplingType::Cyclic { times, .. } => times.clone(),
+            TimeSamplingType::Acyclic { times } => times.clone(),
         }
     }
 
@@ -247,5 +321,27 @@ mod tests {
         assert_eq!(ts.floor_index(0.5, 10).0, 0);
         assert_eq!(ts.floor_index(1.5, 10).0, 1);
         assert_eq!(ts.floor_index(5.0, 10).0, 5);
+    }
+    
+    #[test]
+    fn test_time_sampling_type_methods() {
+        let uniform = TimeSampling::uniform(1.0 / 24.0, 0.0);
+        assert!(uniform.is_uniform());
+        assert!(!uniform.is_cyclic());
+        assert!(!uniform.is_acyclic());
+        assert!(!uniform.is_identity());
+        assert_eq!(uniform.samples_per_cycle(), 1);
+        assert!((uniform.time_per_cycle() - 1.0/24.0).abs() < 1e-10);
+        
+        let acyclic = TimeSampling::acyclic(vec![0.0, 0.5, 1.0, 2.0]);
+        assert!(acyclic.is_acyclic());
+        assert!(!acyclic.is_uniform());
+        assert_eq!(acyclic.num_stored_times(), 4);
+        assert_eq!(acyclic.stored_times(), vec![0.0, 0.5, 1.0, 2.0]);
+        
+        let cyclic = TimeSampling::cyclic(1.0, vec![0.0, 0.25, 0.5]);
+        assert!(cyclic.is_cyclic());
+        assert_eq!(cyclic.samples_per_cycle(), 3);
+        assert_eq!(cyclic.time_per_cycle(), 1.0);
     }
 }
