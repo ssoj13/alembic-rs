@@ -123,7 +123,7 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | `get(sample, selector)` | Yes | Yes | `read_sample()` |
 | `getParent()` | Yes | N/A | Architectural (Rust ownership) |
 | `valid()` | Yes | Yes | Always returns true in Rust |
-| Typed property access | Yes | [ ] | `ITypedScalarProperty<T>` |
+| Typed property access | Yes | Yes | `ITypedScalarProperty<T>` with type aliases |
 
 ### IArrayProperty
 | Feature | C++ | Rust | Notes |
@@ -135,9 +135,9 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | `isScalarLike()` | Yes | Yes | `is_scalar_like()` |
 | `getTimeSamplingIndex()` | Yes | Yes | `time_sampling_index()` |
 | `get(sample, selector)` | Yes | Yes | `read_sample_vec()` |
-| `getAs(sample, pod)` | Yes | [ ] | Type conversion |
-| `getKey(key, selector)` | Yes | [ ] | Array sample key |
-| `getDimensions(dims, selector)` | Yes | [ ] | |
+| `getAs(sample, pod)` | Yes | Yes | `get_as::<Src, Dst>()` type conversion |
+| `getKey(key, selector)` | Yes | Yes | `get_key()` returns `SampleDigest` |
+| `getDimensions(dims, selector)` | Yes | Yes | `get_dimensions()` returns `Vec<usize>` |
 | `getParent()` | Yes | N/A | Architectural (Rust ownership) |
 | `valid()` | Yes | Yes | `valid()` |
 | Typed property access | Yes | [~] | Via `read_sample_typed<T>()` |
@@ -349,7 +349,7 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 |---------|-----|------|-------|
 | `GeometryScope` enum | Yes | Yes | In `core::sample` |
 | `MeshTopologyVariance` enum | Yes | Yes | `TopologyVariance` in core |
-| `ArchiveBounds` | Yes | [ ] | Archive-level bounds |
+| `ArchiveBounds` | Yes | Yes | `archive_bounds()`, `archive_bounds_at_time()` |
 | `FilmBackXformOp` | Yes | Yes | Camera film back transforms |
 
 ---
@@ -485,7 +485,7 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | Interface parameters | Yes | Yes | `MaterialSample::interface_params` |
 | Material assignment | Yes | Yes | `get_material_assignment()` |
 | FaceSet assignments | Yes | Yes | `get_faceset_material_assignments()` |
-| Material flattening | Yes | [ ] | |
+| Material flattening | Yes | Yes | `flatten()`, `flatten_for_target()`, `flatten_surface()` |
 
 ---
 
@@ -635,8 +635,8 @@ Can be added later if needed.
 ### Overall (excluding HDF5, AbcCoreLayer, ErrorHandler)
 
 - **Total Applicable Features**: ~365
-- **Fully Implemented**: ~360 (99%)
-- **Partially Implemented**: ~5 (1%)
+- **Fully Implemented**: ~363 (99.5%)
+- **Partially Implemented**: ~2 (<1%)
 - **N/A (Architectural)**: ~8 (Rust ownership model)
 
 ### Out of Scope
@@ -672,6 +672,9 @@ Can be added later if needed.
 23. **OTypedGeomParam**: Output geometry parameters with indexed/non-indexed support
 24. **FilmBackXformOp**: Camera film back transforms (translate, scale, matrix)
 25. **ChildBoundsProperty**: Child bounds on IXform, ICamera, IPolyMesh, ISubD, ILight
+26. **ITypedScalarProperty<T>**: Type-safe scalar property access with 20+ type aliases
+27. **Array getAs/getKey/getDimensions**: Full array property type conversion and metadata
+28. **Material flattening**: `flatten()`, `flatten_from_terminal()`, `flatten_surface()`
 
 ---
 

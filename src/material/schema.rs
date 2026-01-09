@@ -186,6 +186,87 @@ impl ShaderNetwork {
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
+    
+    /// Flatten the network into a single set of parameters.
+    /// 
+    /// This follows all connections and collects parameters from all nodes,
+    /// prefixing parameter names with their node name for uniqueness.
+    /// 
+    /// # Returns
+    /// HashMap of "node_name.param_name" -> ShaderParamValue
+    pub fn flatten(&self) -> HashMap<String, ShaderParamValue> {
+        let mut result = HashMap::new();
+        
+        for (node_name, node) in &self.nodes {
+            for param in &node.parameters {
+                let key = format!("{}.{}", node_name, param.name);
+                result.insert(key, param.value.clone());
+            }
+        }
+        
+        result
+    }
+    
+    /// Flatten starting from a specific terminal node.
+    /// 
+    /// Only includes parameters from nodes that are connected to the terminal.
+    /// 
+    /// # Arguments
+    /// * `terminal_type` - The terminal type (e.g., "surface", "displacement")
+    pub fn flatten_from_terminal(&self, terminal_type: &str) -> HashMap<String, ShaderParamValue> {
+        let mut result = HashMap::new();
+        let mut visited = std::collections::HashSet::new();
+        
+        if let Some(terminal_node) = self.terminals.get(terminal_type) {
+            self.collect_node_params(terminal_node, &mut result, &mut visited);
+        }
+        
+        result
+    }
+    
+    /// Recursively collect parameters from a node and its connections.
+    fn collect_node_params(
+        &self,
+        node_name: &str,
+        result: &mut HashMap<String, ShaderParamValue>,
+        visited: &mut std::collections::HashSet<String>,
+    ) {
+        if visited.contains(node_name) {
+            return; // Prevent infinite loops
+        }
+        visited.insert(node_name.to_string());
+        
+        if let Some(node) = self.nodes.get(node_name) {
+            // Add this node's parameters
+            for param in &node.parameters {
+                let key = format!("{}.{}", node_name, param.name);
+                result.insert(key, param.value.clone());
+            }
+            
+            // Follow connections to source nodes
+            for (_, (source_node, _)) in &node.connections {
+                self.collect_node_params(source_node, result, visited);
+            }
+        }
+    }
+    
+    /// Get the surface shader node if defined.
+    pub fn surface_shader(&self) -> Option<&ShaderNode> {
+        self.terminals.get("surface")
+            .and_then(|name| self.nodes.get(name))
+    }
+    
+    /// Get the displacement shader node if defined.
+    pub fn displacement_shader(&self) -> Option<&ShaderNode> {
+        self.terminals.get("displacement")
+            .and_then(|name| self.nodes.get(name))
+    }
+    
+    /// Get the volume shader node if defined.
+    pub fn volume_shader(&self) -> Option<&ShaderNode> {
+        self.terminals.get("volume")
+            .and_then(|name| self.nodes.get(name))
+    }
 }
 
 /// Material sample data.
@@ -216,6 +297,68 @@ impl MaterialSample {
     /// Check if the material has any networks.
     pub fn is_empty(&self) -> bool {
         self.networks.is_empty()
+    }
+    
+    /// Flatten material into a combined parameter set.
+    /// 
+    /// Flattens all shader networks and combines with interface parameters.
+    /// Parameters are prefixed with target name: "target.node.param".
+    pub fn flatten(&self) -> HashMap<String, ShaderParamValue> {
+        let mut result = HashMap::new();
+        
+        // Add interface parameters first
+        for param in &self.interface_params {
+            result.insert(param.name.clone(), param.value.clone());
+        }
+        
+        // Add parameters from each network
+        for (target, network) in &self.networks {
+            for (key, value) in network.flatten() {
+                let full_key = format!("{}.{}", target, key);
+                result.insert(full_key, value);
+            }
+        }
+        
+        result
+    }
+    
+    /// Flatten material for a specific target.
+    /// 
+    /// Returns flattened parameters for the specified renderer target.
+    pub fn flatten_for_target(&self, target: &str) -> HashMap<String, ShaderParamValue> {
+        let mut result = HashMap::new();
+        
+        // Add interface parameters
+        for param in &self.interface_params {
+            result.insert(param.name.clone(), param.value.clone());
+        }
+        
+        // Add parameters from the target network
+        if let Some(network) = self.networks.get(target) {
+            for (key, value) in network.flatten() {
+                result.insert(key, value);
+            }
+        }
+        
+        result
+    }
+    
+    /// Get flattened surface parameters for a target.
+    /// 
+    /// Only includes parameters from nodes connected to the surface terminal.
+    pub fn flatten_surface(&self, target: &str) -> HashMap<String, ShaderParamValue> {
+        let mut result = HashMap::new();
+        
+        if let Some(network) = self.networks.get(target) {
+            result = network.flatten_from_terminal("surface");
+        }
+        
+        // Add relevant interface parameters
+        for param in &self.interface_params {
+            result.insert(param.name.clone(), param.value.clone());
+        }
+        
+        result
     }
 }
 

@@ -822,6 +822,138 @@ pub struct OScalarProperty<'a> {
     _phantom: std::marker::PhantomData<&'a ()>,
 }
 
+// ============================================================================
+// Typed Scalar Property
+// ============================================================================
+
+/// Typed input scalar property.
+/// 
+/// Provides type-safe access to scalar property values.
+/// Use this when you know the exact type of the property data.
+/// 
+/// # Example
+/// ```ignore
+/// let prop: ITypedScalarProperty<f32> = ITypedScalarProperty::new(scalar_reader)?;
+/// let value: f32 = prop.get_value(0)?;
+/// ```
+pub struct ITypedScalarProperty<'a, T> {
+    reader: &'a dyn ScalarPropertyReader,
+    _phantom: std::marker::PhantomData<T>,
+}
+
+impl<'a, T: bytemuck::Pod + Default> ITypedScalarProperty<'a, T> {
+    /// Create from a scalar property reader.
+    /// Returns None if the data type size doesn't match T.
+    pub fn new(reader: &'a dyn ScalarPropertyReader) -> Option<Self> {
+        let expected_size = std::mem::size_of::<T>();
+        let actual_size = reader.header().data_type.num_bytes();
+        if expected_size == actual_size {
+            Some(Self { reader, _phantom: std::marker::PhantomData })
+        } else {
+            None
+        }
+    }
+    
+    /// Create from IScalarProperty.
+    pub fn from_scalar(prop: &'a IScalarProperty<'a>) -> Option<Self> {
+        Self::new(prop.reader)
+    }
+    
+    /// Get the property header.
+    pub fn header(&self) -> &PropertyHeader {
+        self.reader.header()
+    }
+    
+    /// Get the number of samples.
+    pub fn num_samples(&self) -> usize {
+        self.reader.num_samples()
+    }
+    
+    /// Check if this property is constant.
+    pub fn is_constant(&self) -> bool {
+        self.reader.is_constant()
+    }
+    
+    /// Get a typed value at the given sample index.
+    pub fn get_value(&self, index: usize) -> Result<T> {
+        let mut value = T::default();
+        let bytes = bytemuck::bytes_of_mut(&mut value);
+        self.reader.read_sample(index, bytes)?;
+        Ok(value)
+    }
+    
+    /// Get a typed value using a sample selector.
+    pub fn get(&self, sel: impl Into<SampleSelector>) -> Result<T> {
+        let sel = sel.into();
+        let index = match sel {
+            SampleSelector::Index(i) => i.min(self.num_samples().saturating_sub(1)),
+            _ => 0,
+        };
+        self.get_value(index)
+    }
+    
+    /// Get a typed value with time-based selection.
+    pub fn get_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<T> {
+        let index = sel.into().get_index(ts, self.num_samples());
+        self.get_value(index)
+    }
+    
+    /// Get the time sampling index.
+    pub fn time_sampling_index(&self) -> u32 {
+        self.reader.header().time_sampling_index
+    }
+    
+    /// Check if valid.
+    pub fn valid(&self) -> bool {
+        true
+    }
+}
+
+// Type aliases for common typed scalar properties
+
+/// Bool scalar property.
+pub type IBoolProperty<'a> = ITypedScalarProperty<'a, u8>;
+/// Int8 scalar property.
+pub type ICharProperty<'a> = ITypedScalarProperty<'a, i8>;
+/// UInt8 scalar property.
+pub type IUcharProperty<'a> = ITypedScalarProperty<'a, u8>;
+/// Int16 scalar property.
+pub type IInt16Property<'a> = ITypedScalarProperty<'a, i16>;
+/// UInt16 scalar property.
+pub type IUInt16Property<'a> = ITypedScalarProperty<'a, u16>;
+/// Int32 scalar property.
+pub type IInt32Property<'a> = ITypedScalarProperty<'a, i32>;
+/// UInt32 scalar property.
+pub type IUInt32Property<'a> = ITypedScalarProperty<'a, u32>;
+/// Int64 scalar property.
+pub type IInt64Property<'a> = ITypedScalarProperty<'a, i64>;
+/// UInt64 scalar property.
+pub type IUInt64Property<'a> = ITypedScalarProperty<'a, u64>;
+/// Float scalar property.
+pub type IFloatProperty<'a> = ITypedScalarProperty<'a, f32>;
+/// Double scalar property.
+pub type IDoubleProperty<'a> = ITypedScalarProperty<'a, f64>;
+/// Vec2f scalar property.
+pub type IV2fProperty<'a> = ITypedScalarProperty<'a, [f32; 2]>;
+/// Vec3f scalar property.
+pub type IV3fProperty<'a> = ITypedScalarProperty<'a, [f32; 3]>;
+/// Vec2d scalar property.
+pub type IV2dProperty<'a> = ITypedScalarProperty<'a, [f64; 2]>;
+/// Vec3d scalar property.
+pub type IV3dProperty<'a> = ITypedScalarProperty<'a, [f64; 3]>;
+/// Box3f scalar property (min + max).
+pub type IBox3fProperty<'a> = ITypedScalarProperty<'a, [f32; 6]>;
+/// Box3d scalar property (min + max).
+pub type IBox3dProperty<'a> = ITypedScalarProperty<'a, [f64; 6]>;
+/// Mat33f scalar property.
+pub type IM33fProperty<'a> = ITypedScalarProperty<'a, [[f32; 3]; 3]>;
+/// Mat44f scalar property.
+pub type IM44fProperty<'a> = ITypedScalarProperty<'a, [[f32; 4]; 4]>;
+/// Mat33d scalar property.
+pub type IM33dProperty<'a> = ITypedScalarProperty<'a, [[f64; 3]; 3]>;
+/// Mat44d scalar property.
+pub type IM44dProperty<'a> = ITypedScalarProperty<'a, [[f64; 4]; 4]>;
+
 /// Input array property (array of values per sample).
 pub struct IArrayProperty<'a> {
     reader: &'a dyn ArrayPropertyReader,
@@ -921,6 +1053,43 @@ impl<'a> IArrayProperty<'a> {
     pub fn get_dimensions_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<Vec<usize>> {
         let index = sel.into().get_index(ts, self.num_samples());
         self.reader.sample_dimensions(index)
+    }
+    
+    /// Read sample and convert to a different POD type.
+    /// 
+    /// Useful when you need data in a different format than stored.
+    /// Supports conversions between numeric types (int <-> float, etc.).
+    /// 
+    /// # Example
+    /// ```ignore
+    /// // Read float data as doubles
+    /// let doubles: Vec<f64> = prop.get_as::<f32, f64>(0)?;
+    /// ```
+    pub fn get_as<Src, Dst>(&self, sel: impl Into<SampleSelector>) -> Result<Vec<Dst>>
+    where
+        Src: bytemuck::Pod + Copy,
+        Dst: From<Src> + Clone,
+    {
+        let sel = sel.into();
+        let index = match sel {
+            SampleSelector::Index(i) => i.min(self.num_samples().saturating_sub(1)),
+            _ => 0,
+        };
+        let data = self.reader.read_sample_vec(index)?;
+        let src_slice: &[Src] = bytemuck::cast_slice(&data);
+        Ok(src_slice.iter().map(|&v| Dst::from(v)).collect())
+    }
+    
+    /// Read sample and convert with time-based selection.
+    pub fn get_as_with_ts<Src, Dst>(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<Vec<Dst>>
+    where
+        Src: bytemuck::Pod + Copy,
+        Dst: From<Src> + Clone,
+    {
+        let index = sel.into().get_index(ts, self.num_samples());
+        let data = self.reader.read_sample_vec(index)?;
+        let src_slice: &[Src] = bytemuck::cast_slice(&data);
+        Ok(src_slice.iter().map(|&v| Dst::from(v)).collect())
     }
     
     /// Check if this array property behaves like a scalar (single element per sample).
