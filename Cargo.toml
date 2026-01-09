@@ -1,0 +1,43 @@
+[package]
+name = "alembic"
+version = "0.1.0"
+edition = "2021"
+license = "BSD-3-Clause"
+description = "Rust implementation of Alembic (.abc) 3D interchange format"
+keywords = ["3d", "graphics", "animation", "vfx", "alembic"]
+categories = ["multimedia", "graphics", "parser-implementations"]
+readme = "README.md"
+repository = "https://github.com/example/alembic-rs"
+
+[dependencies]
+# Half-precision floats (f16)
+half = { version = "2.4", features = ["bytemuck"] }
+
+# Memory-mapped file I/O
+memmap2 = "0.9"
+
+# 3D math library
+glam = { version = "0.29", features = ["bytemuck"] }
+
+# Binary I/O with endianness
+byteorder = "1.5"
+
+# Error handling
+thiserror = "2.0"
+
+# Fast synchronization primitives
+parking_lot = "0.12"
+
+# Small vector optimization
+smallvec = "1.13"
+
+# Zero-copy casting
+bytemuck = { version = "1.21", features = ["derive"] }
+
+[dev-dependencies]
+# Temporary files for tests
+tempfile = "3"
+
+[features]
+default = ["mmap"]
+mmap = []

@@ -1,0 +1,378 @@
+//! Xform (transform) schema implementation.
+//!
+//! Provides reading of transform data from Alembic files.
+
+use crate::abc::IObject;
+use crate::util::Result;
+
+/// Xform schema identifier.
+pub const XFORM_SCHEMA: &str = "AbcGeom_Xform_v3";
+
+/// Transform operation type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum XformOpType {
+    Scale,
+    Translate,
+    RotateX,
+    RotateY,
+    RotateZ,
+    RotateXYZ,
+    Matrix,
+}
+
+/// A single transform operation.
+#[derive(Clone, Debug)]
+pub struct XformOp {
+    pub op_type: XformOpType,
+    pub values: Vec<f64>,
+}
+
+impl XformOp {
+    /// Create a scale operation.
+    pub fn scale(x: f64, y: f64, z: f64) -> Self {
+        Self { op_type: XformOpType::Scale, values: vec![x, y, z] }
+    }
+    
+    /// Create a translate operation.
+    pub fn translate(x: f64, y: f64, z: f64) -> Self {
+        Self { op_type: XformOpType::Translate, values: vec![x, y, z] }
+    }
+    
+    /// Create a rotation around X axis (angle in degrees).
+    pub fn rotate_x(angle: f64) -> Self {
+        Self { op_type: XformOpType::RotateX, values: vec![angle] }
+    }
+    
+    /// Create a rotation around Y axis (angle in degrees).
+    pub fn rotate_y(angle: f64) -> Self {
+        Self { op_type: XformOpType::RotateY, values: vec![angle] }
+    }
+    
+    /// Create a rotation around Z axis (angle in degrees).
+    pub fn rotate_z(angle: f64) -> Self {
+        Self { op_type: XformOpType::RotateZ, values: vec![angle] }
+    }
+    
+    /// Create a 4x4 matrix operation.
+    pub fn matrix(m: [f64; 16]) -> Self {
+        Self { op_type: XformOpType::Matrix, values: m.to_vec() }
+    }
+}
+
+/// Transform sample with decomposed operations or matrix.
+#[derive(Clone, Debug)]
+pub struct XformSample {
+    /// Transform operations in order.
+    pub ops: Vec<XformOp>,
+    /// Whether this xform inherits from parent.
+    pub inherits: bool,
+}
+
+impl Default for XformSample {
+    fn default() -> Self {
+        Self { ops: Vec::new(), inherits: true }
+    }
+}
+
+impl XformSample {
+    /// Create identity xform.
+    pub fn identity() -> Self {
+        Self::default()
+    }
+    
+    /// Compute the final 4x4 transformation matrix.
+    pub fn matrix(&self) -> glam::Mat4 {
+        let mut result = glam::Mat4::IDENTITY;
+        
+        for op in &self.ops {
+            let m = match op.op_type {
+                XformOpType::Scale => {
+                    let (x, y, z) = (op.values[0] as f32, op.values[1] as f32, op.values[2] as f32);
+                    glam::Mat4::from_scale(glam::vec3(x, y, z))
+                }
+                XformOpType::Translate => {
+                    let (x, y, z) = (op.values[0] as f32, op.values[1] as f32, op.values[2] as f32);
+                    glam::Mat4::from_translation(glam::vec3(x, y, z))
+                }
+                XformOpType::RotateX => {
+                    let angle = (op.values[0] as f32).to_radians();
+                    glam::Mat4::from_rotation_x(angle)
+                }
+                XformOpType::RotateY => {
+                    let angle = (op.values[0] as f32).to_radians();
+                    glam::Mat4::from_rotation_y(angle)
+                }
+                XformOpType::RotateZ => {
+                    let angle = (op.values[0] as f32).to_radians();
+                    glam::Mat4::from_rotation_z(angle)
+                }
+                XformOpType::RotateXYZ => {
+                    let (x, y, z) = (
+                        (op.values[0] as f32).to_radians(),
+                        (op.values[1] as f32).to_radians(),
+                        (op.values[2] as f32).to_radians(),
+                    );
+                    glam::Mat4::from_euler(glam::EulerRot::XYZ, x, y, z)
+                }
+                XformOpType::Matrix => {
+                    let v: Vec<f32> = op.values.iter().map(|&x| x as f32).collect();
+                    glam::Mat4::from_cols_array(&[
+                        v[0], v[1], v[2], v[3],
+                        v[4], v[5], v[6], v[7],
+                        v[8], v[9], v[10], v[11],
+                        v[12], v[13], v[14], v[15],
+                    ])
+                }
+            };
+            result = result * m;
+        }
+        
+        result
+    }
+    
+    /// Get translation component.
+    pub fn translation(&self) -> glam::Vec3 {
+        for op in &self.ops {
+            if op.op_type == XformOpType::Translate {
+                return glam::vec3(
+                    op.values[0] as f32,
+                    op.values[1] as f32,
+                    op.values[2] as f32,
+                );
+            }
+        }
+        // Fall back to extracting from matrix
+        let m = self.matrix();
+        m.w_axis.truncate()
+    }
+    
+    /// Get scale component.
+    pub fn scale(&self) -> glam::Vec3 {
+        for op in &self.ops {
+            if op.op_type == XformOpType::Scale {
+                return glam::vec3(
+                    op.values[0] as f32,
+                    op.values[1] as f32,
+                    op.values[2] as f32,
+                );
+            }
+        }
+        glam::Vec3::ONE
+    }
+}
+
+/// Input Xform schema reader.
+pub struct IXform<'a> {
+    object: &'a IObject<'a>,
+}
+
+impl<'a> IXform<'a> {
+    /// Wrap an IObject as an IXform.
+    /// Returns None if the object doesn't have the Xform schema.
+    pub fn new(object: &'a IObject<'a>) -> Option<Self> {
+        if object.matches_schema(XFORM_SCHEMA) {
+            Some(Self { object })
+        } else {
+            None
+        }
+    }
+    
+    /// Get the underlying object.
+    pub fn object(&self) -> &IObject<'a> {
+        self.object
+    }
+    
+    /// Get the object name.
+    pub fn name(&self) -> &str {
+        self.object.name()
+    }
+    
+    /// Get the full path.
+    pub fn full_name(&self) -> &str {
+        self.object.full_name()
+    }
+    
+    /// Check if this is an inheriting xform.
+    pub fn is_inheriting(&self) -> bool {
+        // Read .inherits property if present
+        let props = self.object.properties();
+        if let Some(geom_prop) = props.property_by_name(".xform") {
+            if let Some(geom) = geom_prop.as_compound() {
+                if let Some(inh_prop) = geom.property_by_name(".inherits") {
+                    if let Some(scalar) = inh_prop.as_scalar() {
+                        let mut buf = [0u8; 1];
+                        if scalar.read_sample(0, &mut buf).is_ok() {
+                            return buf[0] != 0;
+                        }
+                    }
+                }
+            }
+        }
+        true // Default to inheriting
+    }
+    
+    /// Get number of samples.
+    pub fn num_samples(&self) -> usize {
+        // Read from .vals property
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".xform") else { return 1 };
+        let Some(geom) = geom_prop.as_compound() else { return 1 };
+        let Some(vals_prop) = geom.property_by_name(".vals") else { return 1 };
+        let Some(array_reader) = vals_prop.as_array() else { return 1 };
+        array_reader.num_samples()
+    }
+    
+    /// Check if this xform is constant (single sample).
+    pub fn is_constant(&self) -> bool {
+        self.num_samples() <= 1
+    }
+    
+    /// Read a sample at the given index.
+    pub fn get_sample(&self, index: usize) -> Result<XformSample> {
+        use crate::util::Error;
+        
+        let props = self.object.properties();
+        let geom_prop = props.property_by_name(".xform")
+            .ok_or_else(|| Error::invalid("No .xform property"))?;
+        let geom = geom_prop.as_compound()
+            .ok_or_else(|| Error::invalid(".xform is not compound"))?;
+        
+        let mut sample = XformSample::default();
+        
+        // Read .inherits (static scalar)
+        if let Some(inh_prop) = geom.property_by_name(".inherits") {
+            if let Some(scalar) = inh_prop.as_scalar() {
+                let mut buf = [0u8; 1];
+                if scalar.read_sample(0, &mut buf).is_ok() {
+                    sample.inherits = buf[0] != 0;
+                }
+            }
+        }
+        
+        // Read .ops (static scalar with uint8 operation codes)
+        // Try scalar first, then array (depends on Alembic version)
+        let ops_data = if let Some(ops_prop) = geom.property_by_name(".ops") {
+            if ops_prop.is_scalar() {
+                if let Some(scalar) = ops_prop.as_scalar() {
+                    // Read op codes - typically small buffer
+                    let mut buf = vec![0u8; 16];
+                    if scalar.read_sample(0, &mut buf).is_ok() {
+                        // Find actual length (non-zero entries)
+                        let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                        Some(buf[..len].to_vec())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else if let Some(array_reader) = ops_prop.as_array() {
+                array_reader.read_sample_vec(0).ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        // Read .vals (doubles - can be scalar or array)
+        let vals_data = if let Some(vals_prop) = geom.property_by_name(".vals") {
+            if vals_prop.is_scalar() {
+                if let Some(scalar) = vals_prop.as_scalar() {
+                    // Read up to 128 doubles (enough for most xforms)
+                    let mut buf = vec![0u8; 128 * 8];
+                    if scalar.read_sample(index, &mut buf).is_ok() {
+                        Some(buf)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else if let Some(array_reader) = vals_prop.as_array() {
+                array_reader.read_sample_vec(index).ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        // Parse ops and vals
+        if let (Some(ops), Some(vals)) = (ops_data, vals_data) {
+            let doubles: &[f64] = bytemuck::cast_slice(&vals);
+            let mut val_idx = 0;
+            
+            for &op_code in &ops {
+                let (op_type, num_vals) = decode_xform_op(op_code);
+                if val_idx + num_vals > doubles.len() {
+                    break;
+                }
+                
+                let values: Vec<f64> = doubles[val_idx..val_idx + num_vals].to_vec();
+                val_idx += num_vals;
+                
+                if let Some(op_type) = op_type {
+                    sample.ops.push(XformOp { op_type, values });
+                }
+            }
+        }
+        
+        Ok(sample)
+    }
+}
+
+/// Decode xform operation code to type and number of values.
+fn decode_xform_op(code: u8) -> (Option<XformOpType>, usize) {
+    // Alembic xform op encoding:
+    // Lower nibble is op type, upper nibble has flags
+    let op_type = code & 0x0F;
+    
+    match op_type {
+        0 => (Some(XformOpType::Scale), 3),      // kScaleOperation
+        1 => (Some(XformOpType::Translate), 3),  // kTranslateOperation
+        2 => (Some(XformOpType::RotateX), 1),    // kRotateXOperation
+        3 => (Some(XformOpType::RotateY), 1),    // kRotateYOperation
+        4 => (Some(XformOpType::RotateZ), 1),    // kRotateZOperation
+        5 => (Some(XformOpType::RotateXYZ), 3),  // kRotateOperation (axis+angle, simplified as XYZ)
+        6 => (Some(XformOpType::Matrix), 16),    // kMatrixOperation
+        _ => (None, 0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_xform_sample_identity() {
+        let sample = XformSample::identity();
+        let m = sample.matrix();
+        assert_eq!(m, glam::Mat4::IDENTITY);
+    }
+    
+    #[test]
+    fn test_xform_ops() {
+        let mut sample = XformSample::default();
+        sample.ops.push(XformOp::translate(1.0, 2.0, 3.0));
+        sample.ops.push(XformOp::scale(2.0, 2.0, 2.0));
+        
+        let t = sample.translation();
+        assert_eq!(t, glam::vec3(1.0, 2.0, 3.0));
+        
+        let s = sample.scale();
+        assert_eq!(s, glam::vec3(2.0, 2.0, 2.0));
+    }
+    
+    #[test]
+    fn test_xform_rotation() {
+        let mut sample = XformSample::default();
+        sample.ops.push(XformOp::rotate_z(90.0));
+        
+        let m = sample.matrix();
+        // 90 degree Z rotation should swap X and Y
+        let v = m.transform_vector3(glam::vec3(1.0, 0.0, 0.0));
+        assert!((v.x).abs() < 0.0001);
+        assert!((v.y - 1.0).abs() < 0.0001);
+    }
+}
