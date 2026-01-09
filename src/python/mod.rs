@@ -41,7 +41,7 @@ pub use materials::*;
 
 /// Alembic Python module.
 #[pymodule]
-fn alembic(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn alembic_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register Abc submodule (core types)
     let abc = PyModule::new(m.py(), "Abc")?;
     abc.add_class::<archive::PyIArchive>()?;
@@ -59,6 +59,12 @@ fn alembic(m: &Bound<'_, PyModule>) -> PyResult<()> {
     abc_geom.add_class::<geom::PyXformSample>()?;
     abc_geom.add_class::<geom::PyLightSample>()?;
     abc_geom.add_class::<geom::PyNuPatchSample>()?;
+    abc_geom.add_class::<geom::PyFaceSetSample>()?;
+    abc_geom.add_class::<geom::PyIFaceSet>()?;
+    abc_geom.add_class::<geom::PyGeomParamSample>()?;
+    abc_geom.add_class::<geom::PyIGeomParam>()?;
+    abc_geom.add_class::<geom::PyObjectVisibility>()?;
+    abc_geom.add_class::<geom::PyOVisibilityProperty>()?;
     m.add_submodule(&abc_geom)?;
     
     // Register property classes
@@ -79,6 +85,9 @@ fn alembic(m: &Bound<'_, PyModule>) -> PyResult<()> {
     abc.add_class::<write::PyOFaceSet>()?;
     abc.add_class::<write::PyOMaterial>()?;
     abc.add_class::<write::PyOCollections>()?;
+    abc.add_class::<write::PyOScalarProperty>()?;
+    abc.add_class::<write::PyOArrayProperty>()?;
+    abc.add_class::<write::PyOCompoundProperty>()?;
     
     // Register materials/collections classes
     abc.add_class::<materials::PyCollection>()?;

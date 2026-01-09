@@ -7,10 +7,12 @@ use pyo3::exceptions::PyValueError;
 use std::sync::Arc;
 
 use crate::abc::IArchive;
-use crate::geom::{IPolyMesh, ISubD, ICurves, IPoints, ICamera, ILight, IXform, INuPatch};
+use crate::geom::{IPolyMesh, ISubD, ICurves, IPoints, ICamera, ILight, IXform, INuPatch, IFaceSet, IGeomParam};
+use crate::geom::visibility::{get_visibility, is_visible};
 use super::geom::{
     PyPolyMeshSample, PySubDSample, PyCurvesSample, PyPointsSample,
     PyCameraSample, PyXformSample, PyLightSample, PyNuPatchSample,
+    PyFaceSetSample, PyIFaceSet, PyIGeomParam, PyObjectVisibility,
 };
 use super::properties::PyICompoundProperty;
 
@@ -202,6 +204,10 @@ impl PyIObject {
         self.with_object(|obj| Some(INuPatch::new(obj).is_some())).unwrap_or(false)
     }
     
+    fn isFaceSet(&self) -> bool {
+        self.with_object(|obj| Some(IFaceSet::new(obj).is_some())).unwrap_or(false)
+    }
+    
     // ========================================================================
     // Get samples
     // ========================================================================
@@ -276,6 +282,232 @@ impl PyIObject {
             let nupatch = INuPatch::new(obj)?;
             nupatch.get_sample(index).ok().map(|s| s.into())
         }).ok_or_else(|| PyValueError::new_err("Not a NuPatch or failed to get sample"))
+    }
+    
+    /// Get FaceSet sample at index.
+    #[pyo3(signature = (index=0))]
+    fn getFaceSetSample(&self, index: usize) -> PyResult<PyFaceSetSample> {
+        self.with_object(|obj| {
+            let faceset = IFaceSet::new(obj)?;
+            faceset.get_sample(index).ok().map(|s| s.into())
+        }).ok_or_else(|| PyValueError::new_err("Not a FaceSet or failed to get sample"))
+    }
+    
+    /// Get list of FaceSet child names (for meshes).
+    fn getFaceSetNames(&self) -> Vec<String> {
+        self.with_object(|obj| {
+            let mut names = Vec::new();
+            for i in 0..obj.num_children() {
+                if let Some(child) = obj.child(i) {
+                    if IFaceSet::new(&child).is_some() {
+                        names.push(child.name().to_string());
+                    }
+                }
+            }
+            Some(names)
+        }).unwrap_or_default()
+    }
+    
+    /// Get FaceSet child by name.
+    fn getFaceSet(&self, name: &str) -> PyResult<PyIFaceSet> {
+        let exists = self.with_object(|obj| {
+            if let Some(child) = obj.child_by_name(name) {
+                if IFaceSet::new(&child).is_some() {
+                    return Some(true);
+                }
+            }
+            None
+        });
+        
+        if !exists.unwrap_or(false) {
+            return Err(PyValueError::new_err(format!("FaceSet '{}' not found", name)));
+        }
+        
+        let path = if self.path.is_empty() {
+            format!("/{}", name)
+        } else {
+            format!("/{}/{}", self.path.join("/"), name)
+        };
+        
+        Ok(PyIFaceSet::new(self.archive.clone(), path))
+    }
+    
+    /// Get geometry parameter by name (for meshes, etc).
+    fn getGeomParam(&self, name: &str) -> PyResult<PyIGeomParam> {
+        let exists = self.with_object(|obj| {
+            let props = obj.properties();
+            let geom_box = props.property_by_name(".geom")?;
+            let geom = geom_box.as_compound()?;
+            if IGeomParam::new(&geom, name).is_some() {
+                Some(true)
+            } else {
+                None
+            }
+        });
+        
+        if !exists.unwrap_or(false) {
+            return Err(PyValueError::new_err(format!("GeomParam '{}' not found", name)));
+        }
+        
+        let obj_path = if self.path.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", self.path.join("/"))
+        };
+        
+        Ok(PyIGeomParam::new(self.archive.clone(), obj_path, name.to_string()))
+    }
+    
+    /// List available geometry parameter names.
+    fn getGeomParamNames(&self) -> Vec<String> {
+        self.with_object(|obj| {
+            let props = obj.properties();
+            let geom_box = props.property_by_name(".geom")?;
+            let geom = geom_box.as_compound()?;
+            let mut names = Vec::new();
+            for i in 0..geom.num_properties() {
+                if let Some(prop) = geom.property(i) {
+                    let name = prop.name();
+                    // Filter out standard properties
+                    if !name.starts_with('.') && !name.is_empty() {
+                        names.push(name.to_string());
+                    }
+                }
+            }
+            Some(names)
+        }).unwrap_or_default()
+    }
+    
+    // ========================================================================
+    // Visibility
+    // ========================================================================
+    
+    /// Get visibility at sample index.
+    #[pyo3(signature = (index=0))]
+    fn getVisibility(&self, index: usize) -> PyObjectVisibility {
+        self.with_object(|obj| {
+            Some(get_visibility(obj, index).into())
+        }).unwrap_or_else(|| PyObjectVisibility::from(crate::geom::visibility::ObjectVisibility::Deferred))
+    }
+    
+    /// Check if object is visible at sample index.
+    #[pyo3(signature = (index=0))]
+    fn isVisible(&self, index: usize) -> bool {
+        self.with_object(|obj| {
+            Some(is_visible(obj, index))
+        }).unwrap_or(true)
+    }
+    
+    /// Check if object is hidden at sample index.
+    #[pyo3(signature = (index=0))]
+    fn isHidden(&self, index: usize) -> bool {
+        !self.isVisible(index)
+    }
+    
+    // ========================================================================
+    // Time Sampling
+    // ========================================================================
+    
+    /// Get the time sampling index for this object's primary data.
+    /// Returns 0 (identity/static) if no time sampling found.
+    fn getTimeSamplingIndex(&self) -> u32 {
+        self.with_object(|obj| {
+            let props = obj.properties();
+            let geom_box = props.property_by_name(".geom")?;
+            let geom = geom_box.as_compound()?;
+            
+            // Try common property names in priority order
+            for name in &["P", ".vals", ".xform", ".camera", ".light", ".userProperties"] {
+                if let Some(prop) = geom.property_by_name(name) {
+                    return Some(prop.header().time_sampling_index);
+                }
+            }
+            
+            // Fallback: first property
+            if geom.num_properties() > 0 {
+                if let Some(prop) = geom.property(0) {
+                    return Some(prop.header().time_sampling_index);
+                }
+            }
+            
+            None
+        }).unwrap_or(0)
+    }
+    
+    // ========================================================================
+    // Bounds
+    // ========================================================================
+    
+    /// Get self bounds at sample index.
+    /// Returns ((min_x, min_y, min_z), (max_x, max_y, max_z)) or None.
+    #[pyo3(signature = (index=0))]
+    fn getSelfBounds(&self, index: usize) -> Option<([f64; 3], [f64; 3])> {
+        self.with_object(|obj| {
+            let props = obj.properties();
+            let geom_box = props.property_by_name(".geom")?;
+            let geom = geom_box.as_compound()?;
+            let bnds_prop = geom.property_by_name(".selfBnds")?;
+            let scalar = bnds_prop.as_scalar()?;
+            
+            let mut buf = [0u8; 48]; // 6 x f64
+            scalar.read_sample(index, &mut buf).ok()?;
+            let doubles: &[f64] = bytemuck::cast_slice(&buf);
+            
+            if doubles.len() >= 6 {
+                Some((
+                    [doubles[0], doubles[1], doubles[2]],
+                    [doubles[3], doubles[4], doubles[5]],
+                ))
+            } else {
+                None
+            }
+        })
+    }
+    
+    /// Get child bounds at sample index.
+    /// Returns ((min_x, min_y, min_z), (max_x, max_y, max_z)) or None.
+    #[pyo3(signature = (index=0))]
+    fn getChildBounds(&self, index: usize) -> Option<([f64; 3], [f64; 3])> {
+        self.with_object(|obj| {
+            let props = obj.properties();
+            let geom_box = props.property_by_name(".geom")?;
+            let geom = geom_box.as_compound()?;
+            let bnds_prop = geom.property_by_name(".childBnds")?;
+            let scalar = bnds_prop.as_scalar()?;
+            
+            let mut buf = [0u8; 48]; // 6 x f64
+            scalar.read_sample(index, &mut buf).ok()?;
+            let doubles: &[f64] = bytemuck::cast_slice(&buf);
+            
+            if doubles.len() >= 6 {
+                Some((
+                    [doubles[0], doubles[1], doubles[2]],
+                    [doubles[3], doubles[4], doubles[5]],
+                ))
+            } else {
+                None
+            }
+        })
+    }
+    
+    /// Check if object has self bounds property.
+    fn hasSelfBounds(&self) -> bool {
+        self.with_object(|obj| {
+            let props = obj.properties();
+            let geom_box = props.property_by_name(".geom")?;
+            let geom = geom_box.as_compound()?;
+            Some(geom.has_property(".selfBnds"))
+        }).unwrap_or(false)
+    }
+    
+    /// Check if object has child bounds property.
+    fn hasChildBounds(&self) -> bool {
+        self.with_object(|obj| {
+            let props = obj.properties();
+            let geom_box = props.property_by_name(".geom")?;
+            let geom = geom_box.as_compound()?;
+            Some(geom.has_property(".childBnds"))
+        }).unwrap_or(false)
     }
     
     // ========================================================================

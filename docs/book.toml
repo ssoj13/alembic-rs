@@ -1,0 +1,14 @@
+[book]
+title = "alembic-rs Documentation"
+authors = ["alembic-rs contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "coal"
+git-repository-url = "https://github.com/your-repo/alembic-rs"
+edit-url-template = "https://github.com/your-repo/alembic-rs/edit/main/book/{path}"

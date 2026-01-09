@@ -6,8 +6,11 @@ use pyo3::prelude::*;
 
 use crate::geom::{
     PolyMeshSample, SubDSample, CurvesSample, PointsSample, CameraSample,
-    XformSample, LightSample, NuPatchSample,
+    XformSample, LightSample, NuPatchSample, FaceSetSample, GeomParamSample,
+    IFaceSet, IGeomParam,
+    visibility::{ObjectVisibility, OVisibilityProperty},
 };
+use std::sync::Arc;
 
 // ============================================================================
 // PolyMesh
@@ -103,6 +106,350 @@ impl From<PolyMeshSample> for PyPolyMeshSample {
                 [b.max.x, b.max.y, b.max.z]
             )),
         }
+    }
+}
+
+// ============================================================================
+// FaceSet
+// ============================================================================
+
+/// Python wrapper for FaceSet sample data.
+#[pyclass(name = "FaceSetSample")]
+pub struct PyFaceSetSample {
+    pub faces: Vec<i32>,
+    pub self_bounds: Option<([f64; 3], [f64; 3])>,
+}
+
+#[pymethods]
+impl PyFaceSetSample {
+    /// Face indices in this face set.
+    #[getter]
+    pub fn faces(&self) -> Vec<i32> {
+        self.faces.clone()
+    }
+    
+    /// Bounding box (optional).
+    #[getter]
+    pub fn selfBounds(&self) -> Option<([f64; 3], [f64; 3])> {
+        self.self_bounds
+    }
+    
+    /// Number of faces in this set.
+    pub fn getNumFaces(&self) -> usize {
+        self.faces.len()
+    }
+    
+    /// Check if face index is in this set.
+    pub fn contains(&self, face_index: i32) -> bool {
+        self.faces.contains(&face_index)
+    }
+    
+    fn __len__(&self) -> usize {
+        self.faces.len()
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<FaceSetSample {} faces>", self.faces.len())
+    }
+}
+
+impl From<FaceSetSample> for PyFaceSetSample {
+    fn from(s: FaceSetSample) -> Self {
+        Self {
+            faces: s.faces,
+            self_bounds: s.self_bounds.map(|b| (
+                [b.min.x, b.min.y, b.min.z],
+                [b.max.x, b.max.y, b.max.z]
+            )),
+        }
+    }
+}
+
+/// Python wrapper for IFaceSet schema reader.
+#[pyclass(name = "IFaceSet")]
+pub struct PyIFaceSet {
+    archive: Arc<crate::abc::IArchive>,
+    path: String,
+}
+
+#[pymethods]
+impl PyIFaceSet {
+    /// Get object name.
+    fn getName(&self) -> String {
+        self.path.rsplit('/').next().unwrap_or("").to_string()
+    }
+    
+    /// Get full path.
+    fn getFullName(&self) -> &str {
+        &self.path
+    }
+    
+    /// Get number of samples.
+    fn getNumSamples(&self) -> usize {
+        self.with_faceset(|fs| fs.num_samples()).unwrap_or(1)
+    }
+    
+    /// Check if constant (single sample).
+    fn isConstant(&self) -> bool {
+        self.getNumSamples() <= 1
+    }
+    
+    /// Get face exclusivity setting.
+    fn getFaceExclusivity(&self) -> String {
+        self.with_faceset(|fs| format!("{:?}", fs.face_exclusivity()))
+            .unwrap_or_else(|| "NonExclusive".to_string())
+    }
+    
+    /// Read a sample at given index.
+    #[pyo3(signature = (index=0))]
+    fn getSample(&self, index: usize) -> PyResult<PyFaceSetSample> {
+        self.with_faceset(|fs| {
+            fs.get_sample(index).ok().map(|s| s.into())
+        })
+        .flatten()
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Failed to read sample"))
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<IFaceSet '{}'>", self.getName())
+    }
+}
+
+impl PyIFaceSet {
+    /// Create from archive and path.
+    pub fn new(archive: Arc<crate::abc::IArchive>, path: String) -> Self {
+        Self { archive, path }
+    }
+    
+    /// Helper to work with IFaceSet using recursive traversal.
+    fn with_faceset<T, F>(&self, f: F) -> Option<T>
+    where
+        F: FnOnce(&IFaceSet<'_>) -> T,
+    {
+        let root = self.archive.root();
+        let parts: Vec<&str> = self.path.trim_start_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+        
+        fn traverse<'a, T>(
+            obj: crate::abc::IObject<'a>,
+            path: &[&str],
+            f: impl FnOnce(&IFaceSet<'_>) -> T,
+        ) -> Option<T> {
+            if path.is_empty() {
+                let fs = IFaceSet::new(&obj)?;
+                Some(f(&fs))
+            } else {
+                let child = obj.child_by_name(path[0])?;
+                traverse(child, &path[1..], f)
+            }
+        }
+        
+        traverse(root, &parts, f)
+    }
+}
+
+// ============================================================================
+// GeomParam
+// ============================================================================
+
+/// Python wrapper for GeomParam sample data.
+#[pyclass(name = "GeomParamSample")]
+pub struct PyGeomParamSample {
+    pub values: Vec<f32>,
+    pub indices: Option<Vec<u32>>,
+    pub scope: String,
+    pub is_indexed: bool,
+}
+
+#[pymethods]
+impl PyGeomParamSample {
+    /// Raw values as float array.
+    #[getter]
+    pub fn values(&self) -> Vec<f32> {
+        self.values.clone()
+    }
+    
+    /// Indices for indexed params (None if not indexed).
+    #[getter]
+    pub fn indices(&self) -> Option<Vec<u32>> {
+        self.indices.clone()
+    }
+    
+    /// Geometry scope ("vertex", "facevarying", etc).
+    #[getter]
+    pub fn scope(&self) -> &str {
+        &self.scope
+    }
+    
+    /// Whether this param is indexed.
+    #[getter]
+    pub fn isIndexed(&self) -> bool {
+        self.is_indexed
+    }
+    
+    /// Get values as Vec2 array.
+    pub fn asVec2(&self) -> Vec<[f32; 2]> {
+        self.values.chunks_exact(2)
+            .map(|c| [c[0], c[1]])
+            .collect()
+    }
+    
+    /// Get values as Vec3 array.
+    pub fn asVec3(&self) -> Vec<[f32; 3]> {
+        self.values.chunks_exact(3)
+            .map(|c| [c[0], c[1], c[2]])
+            .collect()
+    }
+    
+    /// Get values as Vec4 array.
+    pub fn asVec4(&self) -> Vec<[f32; 4]> {
+        self.values.chunks_exact(4)
+            .map(|c| [c[0], c[1], c[2], c[3]])
+            .collect()
+    }
+    
+    fn __repr__(&self) -> String {
+        let count = self.values.len();
+        format!("<GeomParamSample {} values, scope={}, indexed={}>", 
+            count, self.scope, self.is_indexed)
+    }
+}
+
+impl From<GeomParamSample> for PyGeomParamSample {
+    fn from(s: GeomParamSample) -> Self {
+        Self {
+            values: s.values_as_f32().to_vec(),
+            indices: s.indices,
+            scope: format!("{:?}", s.scope),
+            is_indexed: s.is_indexed,
+        }
+    }
+}
+
+/// Python wrapper for IGeomParam schema reader.
+#[pyclass(name = "IGeomParam")]
+pub struct PyIGeomParam {
+    archive: Arc<crate::abc::IArchive>,
+    object_path: String,
+    param_name: String,
+}
+
+#[pymethods]
+impl PyIGeomParam {
+    /// Get parameter name.
+    fn getName(&self) -> &str {
+        &self.param_name
+    }
+    
+    /// Get number of samples.
+    fn getNumSamples(&self) -> usize {
+        self.with_geomparam(|gp| gp.num_samples()).unwrap_or(0)
+    }
+    
+    /// Check if constant.
+    fn isConstant(&self) -> bool {
+        self.getNumSamples() <= 1
+    }
+    
+    /// Check if indexed.
+    fn isIndexed(&self) -> bool {
+        self.with_geomparam(|gp| gp.is_indexed()).unwrap_or(false)
+    }
+    
+    /// Get geometry scope.
+    fn getScope(&self) -> String {
+        self.with_geomparam(|gp| format!("{:?}", gp.scope()))
+            .unwrap_or_else(|| "Unknown".to_string())
+    }
+    
+    /// Read a sample at given index.
+    #[pyo3(signature = (index=0))]
+    fn getSample(&self, index: usize) -> PyResult<PyGeomParamSample> {
+        self.with_geomparam(|gp| {
+            gp.get_sample(index).ok().map(|s| s.into())
+        })
+        .flatten()
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Failed to read sample"))
+    }
+    
+    /// Read expanded sample (indices applied).
+    #[pyo3(signature = (index=0))]
+    fn getExpandedSample(&self, index: usize) -> PyResult<PyGeomParamSample> {
+        self.with_geomparam(|gp| {
+            gp.get_expanded_sample(index).ok().map(|s| s.into())
+        })
+        .flatten()
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Failed to read sample"))
+    }
+    
+    /// Get UVs directly as Vec2 array.
+    #[pyo3(signature = (index=0))]
+    fn getUVs(&self, index: usize) -> PyResult<Vec<[f32; 2]>> {
+        self.with_geomparam(|gp| {
+            gp.get_uvs(index).ok().map(|v| v.iter().map(|u| [u.x, u.y]).collect())
+        })
+        .flatten()
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Failed to read UVs"))
+    }
+    
+    /// Get normals directly as Vec3 array.
+    #[pyo3(signature = (index=0))]
+    fn getNormals(&self, index: usize) -> PyResult<Vec<[f32; 3]>> {
+        self.with_geomparam(|gp| {
+            gp.get_normals(index).ok().map(|v| v.iter().map(|n| [n.x, n.y, n.z]).collect())
+        })
+        .flatten()
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Failed to read normals"))
+    }
+    
+    /// Get colors as Vec3 array.
+    #[pyo3(signature = (index=0))]
+    fn getColors3(&self, index: usize) -> PyResult<Vec<[f32; 3]>> {
+        self.with_geomparam(|gp| {
+            gp.get_colors3(index).ok().map(|v| v.iter().map(|c| [c.x, c.y, c.z]).collect())
+        })
+        .flatten()
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Failed to read colors"))
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<IGeomParam '{}'>", self.param_name)
+    }
+}
+
+impl PyIGeomParam {
+    /// Create from archive, object path and param name.
+    pub fn new(archive: Arc<crate::abc::IArchive>, object_path: String, param_name: String) -> Self {
+        Self { archive, object_path, param_name }
+    }
+    
+    /// Helper to work with IGeomParam using recursive traversal.
+    fn with_geomparam<T, F>(&self, f: F) -> Option<T>
+    where
+        F: FnOnce(&IGeomParam<'_>) -> T,
+    {
+        let root = self.archive.root();
+        let parts: Vec<&str> = self.object_path.trim_start_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+        let param_name = self.param_name.clone();
+        
+        fn traverse<'a, T>(
+            obj: crate::abc::IObject<'a>,
+            path: &[&str],
+            param_name: &str,
+            f: impl FnOnce(&IGeomParam<'_>) -> T,
+        ) -> Option<T> {
+            if path.is_empty() {
+                let props = obj.properties();
+                let geom_box = props.property_by_name(".geom")?;
+                let geom_prop = geom_box.as_compound()?;
+                let gp = IGeomParam::new(&geom_prop, param_name)?;
+                Some(f(&gp))
+            } else {
+                let child = obj.child_by_name(path[0])?;
+                traverse(child, &path[1..], param_name, f)
+            }
+        }
+        
+        traverse(root, &parts, &param_name, f)
     }
 }
 
@@ -392,6 +739,103 @@ impl PyXformSample {
         [sx, sy, sz]
     }
     
+    /// Get rotation as Euler angles (XYZ order) in degrees.
+    /// Assumes matrix has no shear; scale is removed before extraction.
+    pub fn getRotation(&self) -> [f64; 3] {
+        // Get scale to normalize rotation matrix
+        let scale = self.getScale();
+        let sx = if scale[0].abs() > 1e-10 { scale[0] } else { 1.0 };
+        let sy = if scale[1].abs() > 1e-10 { scale[1] } else { 1.0 };
+        let sz = if scale[2].abs() > 1e-10 { scale[2] } else { 1.0 };
+        
+        // Normalized rotation matrix (column vectors)
+        let m00 = self.matrix[0][0] / sx;
+        let m01 = self.matrix[0][1] / sx;
+        let m02 = self.matrix[0][2] / sx;
+        let m10 = self.matrix[1][0] / sy;
+        let m11 = self.matrix[1][1] / sy;
+        let m12 = self.matrix[1][2] / sy;
+        let _m20 = self.matrix[2][0] / sz;
+        let _m21 = self.matrix[2][1] / sz;
+        let m22 = self.matrix[2][2] / sz;
+        
+        // Extract Euler angles (XYZ order)
+        let (rx, ry, rz);
+        
+        if m02.abs() < 0.9999 {
+            ry = (-m02).asin();
+            let cos_ry = ry.cos();
+            rx = (m12 / cos_ry).atan2(m22 / cos_ry);
+            rz = (m01 / cos_ry).atan2(m00 / cos_ry);
+        } else {
+            // Gimbal lock
+            rz = 0.0;
+            if m02 < 0.0 {
+                ry = std::f64::consts::FRAC_PI_2;
+                rx = m10.atan2(m11);
+            } else {
+                ry = -std::f64::consts::FRAC_PI_2;
+                rx = (-m10).atan2(m11);
+            }
+        }
+        
+        // Convert to degrees
+        [rx.to_degrees(), ry.to_degrees(), rz.to_degrees()]
+    }
+    
+    /// Get rotation as quaternion [x, y, z, w].
+    pub fn getRotationQuaternion(&self) -> [f64; 4] {
+        // Get scale to normalize
+        let scale = self.getScale();
+        let sx = if scale[0].abs() > 1e-10 { scale[0] } else { 1.0 };
+        let sy = if scale[1].abs() > 1e-10 { scale[1] } else { 1.0 };
+        let sz = if scale[2].abs() > 1e-10 { scale[2] } else { 1.0 };
+        
+        // Normalized rotation matrix
+        let m00 = self.matrix[0][0] / sx;
+        let m01 = self.matrix[0][1] / sx;
+        let m02 = self.matrix[0][2] / sx;
+        let m10 = self.matrix[1][0] / sy;
+        let m11 = self.matrix[1][1] / sy;
+        let m12 = self.matrix[1][2] / sy;
+        let m20 = self.matrix[2][0] / sz;
+        let m21 = self.matrix[2][1] / sz;
+        let m22 = self.matrix[2][2] / sz;
+        
+        // Convert rotation matrix to quaternion
+        let trace = m00 + m11 + m22;
+        
+        let (x, y, z, w);
+        
+        if trace > 0.0 {
+            let s = 0.5 / (trace + 1.0).sqrt();
+            w = 0.25 / s;
+            x = (m12 - m21) * s;
+            y = (m20 - m02) * s;
+            z = (m01 - m10) * s;
+        } else if m00 > m11 && m00 > m22 {
+            let s = 2.0 * (1.0 + m00 - m11 - m22).sqrt();
+            w = (m12 - m21) / s;
+            x = 0.25 * s;
+            y = (m10 + m01) / s;
+            z = (m20 + m02) / s;
+        } else if m11 > m22 {
+            let s = 2.0 * (1.0 + m11 - m00 - m22).sqrt();
+            w = (m20 - m02) / s;
+            x = (m10 + m01) / s;
+            y = 0.25 * s;
+            z = (m21 + m12) / s;
+        } else {
+            let s = 2.0 * (1.0 + m22 - m00 - m11).sqrt();
+            w = (m01 - m10) / s;
+            x = (m20 + m02) / s;
+            y = (m21 + m12) / s;
+            z = 0.25 * s;
+        }
+        
+        [x, y, z, w]
+    }
+    
     fn __repr__(&self) -> String {
         let t = self.getTranslation();
         format!("<XformSample translate=[{:.2}, {:.2}, {:.2}]>", t[0], t[1], t[2])
@@ -551,5 +995,138 @@ impl From<NuPatchSample> for PyNuPatchSample {
                 [b.max.x, b.max.y, b.max.z]
             )),
         }
+    }
+}
+
+// ============================================================================
+// Visibility
+// ============================================================================
+
+/// Object visibility state.
+/// 
+/// Controls whether an object should be visible in the scene:
+/// - Deferred (-1): inherit from parent
+/// - Hidden (0): explicitly hidden
+/// - Visible (1): explicitly visible
+#[pyclass(name = "ObjectVisibility")]
+#[derive(Clone)]
+pub struct PyObjectVisibility {
+    inner: ObjectVisibility,
+}
+
+#[pymethods]
+impl PyObjectVisibility {
+    /// Create Deferred visibility (inherit from parent).
+    #[staticmethod]
+    fn deferred() -> Self {
+        Self { inner: ObjectVisibility::Deferred }
+    }
+    
+    /// Create Hidden visibility.
+    #[staticmethod]
+    fn hidden() -> Self {
+        Self { inner: ObjectVisibility::Hidden }
+    }
+    
+    /// Create Visible visibility.
+    #[staticmethod]
+    fn visible() -> Self {
+        Self { inner: ObjectVisibility::Visible }
+    }
+    
+    /// Create from integer value (-1=deferred, 0=hidden, 1=visible).
+    #[staticmethod]
+    fn fromValue(value: i8) -> Self {
+        Self { inner: ObjectVisibility::from_i8(value) }
+    }
+    
+    /// Get integer value (-1, 0, or 1).
+    #[getter]
+    fn value(&self) -> i8 {
+        self.inner.to_i8()
+    }
+    
+    /// Check if deferred (inherit from parent).
+    fn isDeferred(&self) -> bool {
+        self.inner.is_deferred()
+    }
+    
+    /// Check if explicitly hidden.
+    fn isHidden(&self) -> bool {
+        self.inner.is_hidden()
+    }
+    
+    /// Check if explicitly visible.
+    fn isVisible(&self) -> bool {
+        self.inner.is_visible()
+    }
+    
+    fn __repr__(&self) -> String {
+        match self.inner {
+            ObjectVisibility::Deferred => "<ObjectVisibility.Deferred>".to_string(),
+            ObjectVisibility::Hidden => "<ObjectVisibility.Hidden>".to_string(),
+            ObjectVisibility::Visible => "<ObjectVisibility.Visible>".to_string(),
+        }
+    }
+    
+    fn __eq__(&self, other: &PyObjectVisibility) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl From<ObjectVisibility> for PyObjectVisibility {
+    fn from(vis: ObjectVisibility) -> Self {
+        Self { inner: vis }
+    }
+}
+
+/// Output visibility property for writing.
+#[pyclass(name = "OVisibilityProperty")]
+pub struct PyOVisibilityProperty {
+    inner: OVisibilityProperty,
+}
+
+#[pymethods]
+impl PyOVisibilityProperty {
+    /// Create a new visibility property.
+    #[new]
+    fn new() -> Self {
+        Self { inner: OVisibilityProperty::new() }
+    }
+    
+    /// Set visibility to visible.
+    fn setVisible(&mut self) {
+        self.inner.set_visible();
+    }
+    
+    /// Set visibility to hidden.
+    fn setHidden(&mut self) {
+        self.inner.set_hidden();
+    }
+    
+    /// Set visibility to deferred (inherit from parent).
+    fn setDeferred(&mut self) {
+        self.inner.set_deferred();
+    }
+    
+    /// Set visibility from PyObjectVisibility.
+    fn set(&mut self, vis: &PyObjectVisibility) {
+        self.inner.set(vis.inner);
+    }
+    
+    fn __repr__(&self) -> String {
+        "<OVisibilityProperty>".to_string()
+    }
+}
+
+impl PyOVisibilityProperty {
+    /// Create a new visibility property (for Rust code).
+    pub fn create() -> Self {
+        Self { inner: OVisibilityProperty::new() }
+    }
+    
+    /// Get the underlying OProperty for adding to objects.
+    pub fn into_property(self) -> crate::ogawa::writer::OProperty {
+        self.inner.into_property()
     }
 }

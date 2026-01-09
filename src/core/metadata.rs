@@ -78,6 +78,11 @@ impl MetaData {
         self.entries.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
     
+    /// Get all keys.
+    pub fn keys(&self) -> Vec<String> {
+        self.entries.iter().map(|(k, _)| k.clone()).collect()
+    }
+    
     /// Get all entries as a HashMap.
     pub fn get_all(&self) -> HashMap<String, String> {
         self.entries.iter().cloned().collect()

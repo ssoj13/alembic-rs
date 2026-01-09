@@ -179,6 +179,10 @@ impl ArchiveReader for OgawaArchiveReader {
     fn max_num_samples_for_time_sampling(&self, index: usize) -> Option<usize> {
         self.max_samples.get(index).map(|&v| v as usize)
     }
+    
+    fn archive_metadata(&self) -> &MetaData {
+        &self.root_header.meta_data
+    }
 }
 
 // Implement ObjectReader for OgawaArchiveReader (as the root object)

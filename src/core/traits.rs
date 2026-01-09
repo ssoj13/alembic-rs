@@ -35,6 +35,10 @@ pub trait ArchiveReader: Send + Sync {
     fn max_num_samples_for_time_sampling(&self, _index: usize) -> Option<usize> {
         None // Default - not available
     }
+    
+    /// Get the archive-level metadata.
+    /// This includes info like application name, writer library, etc.
+    fn archive_metadata(&self) -> &MetaData;
 
     /// Find an object by full path.
     /// Note: Due to lifetime constraints, this only supports single-level paths.

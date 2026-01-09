@@ -11,8 +11,9 @@ use crate::ogawa::writer::{
     OArchive, OObject, OPolyMesh, OXform, OPolyMeshSample, OXformSample,
     OCurves, OCurvesSample, OPoints, OPointsSample, OSubD, OSubDSample,
     OCamera, ONuPatch, ONuPatchSample, OLight, OFaceSet, OFaceSetSample,
-    OMaterial, OMaterialSample, OCollections,
+    OMaterial, OMaterialSample, OCollections, OProperty,
 };
+use crate::util::DataType;
 use crate::core::TimeSampling;
 use crate::geom::{CurveType, CurvePeriodicity, BasisType, CameraSample};
 use crate::material::{ShaderParam, ShaderParamValue};
@@ -68,6 +69,38 @@ impl PyOArchive {
         let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
         let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
         archive.set_dedup_enabled(enabled);
+        Ok(())
+    }
+    
+    /// Set the application name (stored as _ai_Application in metadata).
+    fn setAppName(&self, name: &str) -> PyResult<()> {
+        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        archive.set_app_name(name);
+        Ok(())
+    }
+    
+    /// Set the date written (stored as _ai_DateWritten in metadata).
+    fn setDateWritten(&self, date: &str) -> PyResult<()> {
+        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        archive.set_date_written(date);
+        Ok(())
+    }
+    
+    /// Set the user description (stored as _ai_Description in metadata).
+    fn setDescription(&self, desc: &str) -> PyResult<()> {
+        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        archive.set_description(desc);
+        Ok(())
+    }
+    
+    /// Set the DCC FPS (stored as _ai_DCC_FPS in metadata).
+    fn setDccFps(&self, fps: f64) -> PyResult<()> {
+        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        archive.set_dcc_fps(fps);
         Ok(())
     }
     
@@ -265,6 +298,27 @@ impl PyOObject {
     fn addCollections(&mut self, collections: &mut PyOCollections) {
         let obj = std::mem::replace(&mut collections.inner, OCollections::new("_empty")).build();
         self.inner.add_child(obj);
+    }
+    
+    /// Add a scalar property to this object.
+    fn addScalarProperty(&mut self, prop: &PyOScalarProperty) {
+        self.inner.add_property(prop.inner.clone());
+    }
+    
+    /// Add an array property to this object.
+    fn addArrayProperty(&mut self, prop: &PyOArrayProperty) {
+        self.inner.add_property(prop.inner.clone());
+    }
+    
+    /// Add a compound property to this object.
+    fn addCompoundProperty(&mut self, prop: &PyOCompoundProperty) {
+        self.inner.add_property(prop.inner.clone());
+    }
+    
+    /// Add a visibility property to this object.
+    /// Returns the visibility property for writing visibility samples.
+    fn addVisibilityProperty(&mut self) -> super::geom::PyOVisibilityProperty {
+        super::geom::PyOVisibilityProperty::create()
     }
     
     fn __repr__(&self) -> String {
@@ -1097,5 +1151,260 @@ impl PyOCollections {
     
     fn __repr__(&self) -> String {
         format!("<OCollections '{}'>", self.name)
+    }
+}
+
+// ============================================================================
+// Property Writing Support
+// ============================================================================
+
+/// Parse data type string to DataType.
+fn parse_data_type(type_str: &str) -> Option<DataType> {
+    match type_str.to_lowercase().as_str() {
+        // Scalars
+        "bool" | "boolean" => Some(DataType::BOOL),
+        "uint8" | "u8" => Some(DataType::UINT8),
+        "int8" | "i8" => Some(DataType::INT8),
+        "uint16" | "u16" => Some(DataType::UINT16),
+        "int16" | "i16" => Some(DataType::INT16),
+        "uint32" | "u32" | "uint" => Some(DataType::UINT32),
+        "int32" | "i32" | "int" => Some(DataType::INT32),
+        "uint64" | "u64" => Some(DataType::UINT64),
+        "int64" | "i64" => Some(DataType::INT64),
+        "float16" | "f16" | "half" => Some(DataType::FLOAT16),
+        "float32" | "f32" | "float" => Some(DataType::FLOAT32),
+        "float64" | "f64" | "double" => Some(DataType::FLOAT64),
+        "string" | "str" => Some(DataType::STRING),
+        // Vectors
+        "vec2f" | "float2" | "v2f" => Some(DataType::VEC2F),
+        "vec3f" | "float3" | "v3f" => Some(DataType::VEC3F),
+        "vec4f" | "float4" | "v4f" => Some(DataType::VEC4F),
+        "vec2d" | "double2" | "v2d" => Some(DataType::VEC2D),
+        "vec3d" | "double3" | "v3d" => Some(DataType::VEC3D),
+        "vec4d" | "double4" | "v4d" => Some(DataType::VEC4D),
+        "vec2i" | "int2" | "v2i" => Some(DataType::VEC2I),
+        "vec3i" | "int3" | "v3i" => Some(DataType::VEC3I),
+        // Matrices
+        "mat33f" | "matrix3" | "m33f" => Some(DataType::MAT33F),
+        "mat44f" | "matrix4" | "m44f" => Some(DataType::MAT44F),
+        _ => None,
+    }
+}
+
+/// Python wrapper for output scalar property.
+#[pyclass(name = "OScalarProperty")]
+pub struct PyOScalarProperty {
+    inner: OProperty,
+}
+
+#[pymethods]
+impl PyOScalarProperty {
+    /// Create a new scalar property.
+    /// 
+    /// Type can be: "int", "float", "double", "bool", "string",
+    /// "vec2f", "vec3f", "vec4f", "vec2d", "vec3d", etc.
+    #[new]
+    #[pyo3(signature = (name, data_type, time_sampling_index=0))]
+    fn new(name: &str, data_type: &str, time_sampling_index: u32) -> PyResult<Self> {
+        let dt = parse_data_type(data_type)
+            .ok_or_else(|| PyValueError::new_err(format!("Unknown data type: {}", data_type)))?;
+        
+        let mut prop = OProperty::scalar(name, dt);
+        prop.time_sampling_index = time_sampling_index;
+        
+        Ok(Self { inner: prop })
+    }
+    
+    /// Get property name.
+    fn getName(&self) -> &str {
+        &self.inner.name
+    }
+    
+    /// Add an integer sample.
+    fn addSampleInt(&mut self, value: i32) {
+        self.inner.add_scalar_pod(&value);
+    }
+    
+    /// Add a float sample.
+    fn addSampleFloat(&mut self, value: f32) {
+        self.inner.add_scalar_pod(&value);
+    }
+    
+    /// Add a double sample.
+    fn addSampleDouble(&mut self, value: f64) {
+        self.inner.add_scalar_pod(&value);
+    }
+    
+    /// Add a boolean sample.
+    fn addSampleBool(&mut self, value: bool) {
+        let v: u8 = if value { 1 } else { 0 };
+        self.inner.add_scalar_pod(&v);
+    }
+    
+    /// Add a Vec2f sample.
+    fn addSampleVec2f(&mut self, value: [f32; 2]) {
+        self.inner.add_scalar_pod(&value);
+    }
+    
+    /// Add a Vec3f sample.
+    fn addSampleVec3f(&mut self, value: [f32; 3]) {
+        self.inner.add_scalar_pod(&value);
+    }
+    
+    /// Add a Vec4f sample.
+    fn addSampleVec4f(&mut self, value: [f32; 4]) {
+        self.inner.add_scalar_pod(&value);
+    }
+    
+    /// Add a Vec3d sample.
+    fn addSampleVec3d(&mut self, value: [f64; 3]) {
+        self.inner.add_scalar_pod(&value);
+    }
+    
+    /// Add a Mat44f sample (4x4 matrix as flat 16 floats).
+    fn addSampleMat44f(&mut self, value: [[f32; 4]; 4]) {
+        // Flatten to contiguous array
+        let flat: [f32; 16] = [
+            value[0][0], value[0][1], value[0][2], value[0][3],
+            value[1][0], value[1][1], value[1][2], value[1][3],
+            value[2][0], value[2][1], value[2][2], value[2][3],
+            value[3][0], value[3][1], value[3][2], value[3][3],
+        ];
+        self.inner.add_scalar_pod(&flat);
+    }
+    
+    /// Add a string sample.
+    fn addSampleString(&mut self, value: &str) {
+        // Strings in Alembic are stored as null-terminated bytes
+        let mut bytes = value.as_bytes().to_vec();
+        bytes.push(0); // null terminator
+        self.inner.add_scalar_sample(&bytes);
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<OScalarProperty '{}'>", self.inner.name)
+    }
+}
+
+/// Python wrapper for output array property.
+#[pyclass(name = "OArrayProperty")]
+pub struct PyOArrayProperty {
+    inner: OProperty,
+}
+
+#[pymethods]
+impl PyOArrayProperty {
+    /// Create a new array property.
+    #[new]
+    #[pyo3(signature = (name, data_type, time_sampling_index=0))]
+    fn new(name: &str, data_type: &str, time_sampling_index: u32) -> PyResult<Self> {
+        let dt = parse_data_type(data_type)
+            .ok_or_else(|| PyValueError::new_err(format!("Unknown data type: {}", data_type)))?;
+        
+        let mut prop = OProperty::array(name, dt);
+        prop.time_sampling_index = time_sampling_index;
+        
+        Ok(Self { inner: prop })
+    }
+    
+    /// Get property name.
+    fn getName(&self) -> &str {
+        &self.inner.name
+    }
+    
+    /// Add int array sample.
+    fn addSampleInts(&mut self, values: Vec<i32>) {
+        self.inner.add_array_pod(&values);
+    }
+    
+    /// Add float array sample.
+    fn addSampleFloats(&mut self, values: Vec<f32>) {
+        self.inner.add_array_pod(&values);
+    }
+    
+    /// Add double array sample.
+    fn addSampleDoubles(&mut self, values: Vec<f64>) {
+        self.inner.add_array_pod(&values);
+    }
+    
+    /// Add Vec2f array sample.
+    fn addSampleVec2fs(&mut self, values: Vec<[f32; 2]>) {
+        // Flatten Vec<[f32; 2]> to Vec<f32>
+        let flat: Vec<f32> = values.iter().flat_map(|v| v.iter().copied()).collect();
+        let data = bytemuck::cast_slice(&flat);
+        self.inner.add_array_sample(data, &[values.len()]);
+    }
+    
+    /// Add Vec3f array sample.
+    fn addSampleVec3fs(&mut self, values: Vec<[f32; 3]>) {
+        let flat: Vec<f32> = values.iter().flat_map(|v| v.iter().copied()).collect();
+        let data = bytemuck::cast_slice(&flat);
+        self.inner.add_array_sample(data, &[values.len()]);
+    }
+    
+    /// Add Vec4f array sample.
+    fn addSampleVec4fs(&mut self, values: Vec<[f32; 4]>) {
+        let flat: Vec<f32> = values.iter().flat_map(|v| v.iter().copied()).collect();
+        let data = bytemuck::cast_slice(&flat);
+        self.inner.add_array_sample(data, &[values.len()]);
+    }
+    
+    /// Add u32 array sample (for indices).
+    fn addSampleUints(&mut self, values: Vec<u32>) {
+        self.inner.add_array_pod(&values);
+    }
+    
+    /// Add string array sample.
+    fn addSampleStrings(&mut self, values: Vec<String>) {
+        // Strings are stored as concatenated null-terminated bytes
+        let mut bytes = Vec::new();
+        for s in &values {
+            bytes.extend_from_slice(s.as_bytes());
+            bytes.push(0); // null terminator
+        }
+        self.inner.add_array_sample(&bytes, &[values.len()]);
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<OArrayProperty '{}'>", self.inner.name)
+    }
+}
+
+/// Python wrapper for output compound property.
+#[pyclass(name = "OCompoundProperty")]
+pub struct PyOCompoundProperty {
+    inner: OProperty,
+}
+
+#[pymethods]
+impl PyOCompoundProperty {
+    /// Create a new compound property.
+    #[new]
+    fn new(name: &str) -> Self {
+        Self { inner: OProperty::compound(name) }
+    }
+    
+    /// Get property name.
+    fn getName(&self) -> &str {
+        &self.inner.name
+    }
+    
+    /// Add a scalar property as child.
+    fn addScalar(&mut self, prop: &PyOScalarProperty) {
+        self.inner.add_child(prop.inner.clone());
+    }
+    
+    /// Add an array property as child.
+    fn addArray(&mut self, prop: &PyOArrayProperty) {
+        self.inner.add_child(prop.inner.clone());
+    }
+    
+    /// Add a compound property as child.
+    fn addCompound(&mut self, prop: &PyOCompoundProperty) {
+        self.inner.add_child(prop.inner.clone());
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<OCompoundProperty '{}'>", self.inner.name)
     }
 }

@@ -869,3 +869,43 @@ fn test_acyclic_time_sampling() {
     
     println!("Acyclic time sampling test PASSED!");
 }
+
+#[test]
+fn test_roundtrip_archive_metadata() {
+    use std::fs;
+    
+    let path = "test_output/archive_metadata.abc";
+    fs::create_dir_all("test_output").ok();
+    
+    // Write with archive metadata
+    {
+        let mut archive = OArchive::create(path).expect("Failed to create");
+        
+        // Set various metadata
+        archive.set_app_name("Test Application v1.0");
+        archive.set_date_written("2025-01-09");
+        archive.set_description("A test archive with metadata");
+        archive.set_dcc_fps(24.0);
+        
+        let root = OObject::new("");
+        archive.write_archive(&root).expect("Failed to write");
+    }
+    
+    // Read back and verify metadata
+    {
+        let archive = IArchive::open(path).expect("Failed to open");
+        
+        assert_eq!(archive.app_name(), Some("Test Application v1.0"));
+        assert_eq!(archive.date_written(), Some("2025-01-09"));
+        assert_eq!(archive.user_description(), Some("A test archive with metadata"));
+        assert_eq!(archive.dcc_fps(), Some(24.0));
+        
+        // Also test raw metadata access
+        assert_eq!(
+            archive.archive_metadata().get("_ai_Application"),
+            Some("Test Application v1.0")
+        );
+    }
+    
+    println!("Archive metadata roundtrip test PASSED!");
+}

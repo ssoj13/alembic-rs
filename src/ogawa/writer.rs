@@ -223,6 +223,26 @@ impl OArchive {
         self.archive_metadata = md;
     }
     
+    /// Set the application name (stored as _ai_Application in metadata).
+    pub fn set_app_name(&mut self, name: &str) {
+        self.archive_metadata.set("_ai_Application", name);
+    }
+    
+    /// Set the date written (stored as _ai_DateWritten in metadata).
+    pub fn set_date_written(&mut self, date: &str) {
+        self.archive_metadata.set("_ai_DateWritten", date);
+    }
+    
+    /// Set the user description (stored as _ai_Description in metadata).
+    pub fn set_description(&mut self, desc: &str) {
+        self.archive_metadata.set("_ai_Description", desc);
+    }
+    
+    /// Set the DCC FPS (stored as _ai_DCC_FPS in metadata).
+    pub fn set_dcc_fps(&mut self, fps: f64) {
+        self.archive_metadata.set("_ai_DCC_FPS", fps.to_string());
+    }
+    
     /// Add a time sampling and return its index.
     pub fn add_time_sampling(&mut self, ts: TimeSampling) -> u32 {
         // Check if this time sampling already exists
@@ -445,7 +465,12 @@ impl OArchive {
         };
         
         // Write archive metadata
-        let archive_meta_str = self.archive_metadata.serialize();
+        // Include application_writer if not already set via set_app_name
+        let mut archive_meta = self.archive_metadata.clone();
+        if archive_meta.get("_ai_Application").is_none() && !self.application_writer.is_empty() {
+            archive_meta.set("_ai_Application", &self.application_writer);
+        }
+        let archive_meta_str = archive_meta.serialize();
         let archive_meta_pos = if archive_meta_str.is_empty() {
             0
         } else {

@@ -1,0 +1,70 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "alembic-rs"
+version = "0.1.0"
+description = "Fast Alembic (.abc) file reader/writer for Python, written in Rust"
+readme = "README.md"
+license = {text = "BSD-3-Clause"}
+requires-python = ">=3.8"
+authors = [
+    {name = "alembic-rs contributors"}
+]
+keywords = ["alembic", "abc", "3d", "graphics", "animation", "vfx", "geometry", "cache"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Topic :: Multimedia :: Graphics :: 3D Rendering",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/example/alembic-rs"
+Documentation = "https://github.com/example/alembic-rs#readme"
+Repository = "https://github.com/example/alembic-rs"
+Issues = "https://github.com/example/alembic-rs/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[tool.maturin]
+# Build with the python feature
+features = ["python"]
+# Python module name
+module-name = "alembic_rs"
+# Strip debug symbols for smaller binaries
+strip = true
+# Build for the Python extension
+python-source = "python"
+
+[tool.pytest.ini_options]
+testpaths = ["python_tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4"]
+ignore = ["E501"]

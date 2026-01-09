@@ -76,6 +76,36 @@ impl PyIArchive {
         self.inner.has_object(path)
     }
     
+    /// Get the application name that created this archive.
+    fn getAppName(&self) -> Option<String> {
+        self.inner.app_name().map(|s| s.to_string())
+    }
+    
+    /// Get the date the archive was written.
+    fn getDateWritten(&self) -> Option<String> {
+        self.inner.date_written().map(|s| s.to_string())
+    }
+    
+    /// Get the user description.
+    fn getUserDescription(&self) -> Option<String> {
+        self.inner.user_description().map(|s| s.to_string())
+    }
+    
+    /// Get the DCC FPS setting.
+    fn getDccFps(&self) -> Option<f64> {
+        self.inner.dcc_fps()
+    }
+    
+    /// Get a metadata value by key.
+    fn getMetadata(&self, key: &str) -> Option<String> {
+        self.inner.archive_metadata().get(key).map(|s| s.to_string())
+    }
+    
+    /// Get all metadata keys.
+    fn getMetadataKeys(&self) -> Vec<String> {
+        self.inner.archive_metadata().keys()
+    }
+    
     fn __repr__(&self) -> String {
         format!("<IArchive '{}' v{}>", self.inner.name(), self.getArchiveVersionString())
     }

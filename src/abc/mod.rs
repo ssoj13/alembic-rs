@@ -122,19 +122,31 @@ impl IArchive {
     /// Get the application name that created this archive.
     /// Returns None if not available.
     pub fn app_name(&self) -> Option<&str> {
-        None // TODO: Parse from archive metadata when implemented
-    }
-    
-    /// Get the writer library info.
-    /// Returns None if not available.
-    pub fn written_by(&self) -> Option<&str> {
-        None // TODO: Parse from archive metadata when implemented
+        self.reader.archive_metadata().get("_ai_Application")
     }
     
     /// Get the date the archive was written.
     /// Returns None if not available.
     pub fn date_written(&self) -> Option<&str> {
-        None // TODO: Parse from archive metadata when implemented
+        self.reader.archive_metadata().get("_ai_DateWritten")
+    }
+    
+    /// Get the user description.
+    /// Returns None if not available.
+    pub fn user_description(&self) -> Option<&str> {
+        self.reader.archive_metadata().get("_ai_Description")
+    }
+    
+    /// Get the DCC FPS setting.
+    /// Returns None if not available.
+    pub fn dcc_fps(&self) -> Option<f64> {
+        self.reader.archive_metadata().get("_ai_DCC_FPS")
+            .and_then(|s: &str| s.parse().ok())
+    }
+    
+    /// Get raw archive metadata.
+    pub fn archive_metadata(&self) -> &MetaData {
+        self.reader.archive_metadata()
     }
     
     /// Get the combined bounding box of all geometry in the archive.
