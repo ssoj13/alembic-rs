@@ -1,5 +1,7 @@
 //! Python bindings for TimeSampling.
 
+#![allow(non_snake_case)]
+
 use pyo3::prelude::*;
 use crate::core::{TimeSampling, TimeSamplingType};
 

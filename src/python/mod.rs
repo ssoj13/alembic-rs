@@ -27,11 +27,17 @@ mod archive;
 mod object;
 mod time_sampling;
 mod geom;
+mod properties;
+mod write;
+mod materials;
 
 pub use archive::*;
 pub use object::*;
 pub use time_sampling::*;
 pub use geom::*;
+pub use properties::*;
+pub use write::*;
+pub use materials::*;
 
 /// Alembic Python module.
 #[pymodule]
@@ -51,12 +57,32 @@ fn alembic(m: &Bound<'_, PyModule>) -> PyResult<()> {
     abc_geom.add_class::<geom::PyPointsSample>()?;
     abc_geom.add_class::<geom::PyCameraSample>()?;
     abc_geom.add_class::<geom::PyXformSample>()?;
+    abc_geom.add_class::<geom::PyLightSample>()?;
+    abc_geom.add_class::<geom::PyNuPatchSample>()?;
     m.add_submodule(&abc_geom)?;
+    
+    // Register property classes
+    abc.add_class::<properties::PyICompoundProperty>()?;
+    abc.add_class::<properties::PyPropertyInfo>()?;
+    
+    // Register write classes in Abc module
+    abc.add_class::<write::PyOArchive>()?;
+    abc.add_class::<write::PyOObject>()?;
+    abc.add_class::<write::PyOPolyMesh>()?;
+    abc.add_class::<write::PyOXform>()?;
+    
+    // Register materials/collections classes
+    abc.add_class::<materials::PyCollection>()?;
+    abc.add_class::<materials::PyICollections>()?;
+    abc.add_class::<materials::PyIMaterial>()?;
     
     // Also register at top level for convenience
     m.add_class::<archive::PyIArchive>()?;
     m.add_class::<object::PyIObject>()?;
     m.add_class::<time_sampling::PyTimeSampling>()?;
+    m.add_class::<write::PyOArchive>()?;
+    m.add_class::<write::PyOPolyMesh>()?;
+    m.add_class::<write::PyOXform>()?;
     
     Ok(())
 }

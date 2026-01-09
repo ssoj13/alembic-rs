@@ -1,13 +1,12 @@
 //! Python bindings for geometry schemas.
 
-use pyo3::prelude::*;
-use pyo3::exceptions::PyValueError;
+#![allow(non_snake_case)]
 
-use crate::abc::IObject;
+use pyo3::prelude::*;
+
 use crate::geom::{
-    IPolyMesh, ISubD, ICurves, IPoints, ICamera, ILight, IXform, INuPatch,
     PolyMeshSample, SubDSample, CurvesSample, PointsSample, CameraSample,
-    XformSample, NuPatchSample, LightSample,
+    XformSample, LightSample, NuPatchSample,
 };
 
 // ============================================================================
@@ -17,60 +16,69 @@ use crate::geom::{
 /// Python wrapper for PolyMesh sample data.
 #[pyclass(name = "PolyMeshSample")]
 pub struct PyPolyMeshSample {
-    positions: Vec<[f32; 3]>,
-    face_indices: Vec<i32>,
-    face_counts: Vec<i32>,
-    velocities: Option<Vec<[f32; 3]>>,
-    normals: Option<Vec<[f32; 3]>>,
-    uvs: Option<Vec<[f32; 2]>>,
-    self_bounds: Option<([f32; 3], [f32; 3])>,
+    pub positions: Vec<[f32; 3]>,
+    pub face_indices: Vec<i32>,
+    pub face_counts: Vec<i32>,
+    pub velocities: Option<Vec<[f32; 3]>>,
+    pub normals: Option<Vec<[f32; 3]>>,
+    pub uvs: Option<Vec<[f32; 2]>>,
+    pub self_bounds: Option<([f64; 3], [f64; 3])>,
 }
 
 #[pymethods]
 impl PyPolyMeshSample {
     /// Vertex positions as list of [x, y, z].
     #[getter]
-    fn positions(&self) -> Vec<[f32; 3]> {
+    pub fn positions(&self) -> Vec<[f32; 3]> {
         self.positions.clone()
     }
     
     /// Face vertex indices.
     #[getter]
-    fn faceIndices(&self) -> Vec<i32> {
+    pub fn faceIndices(&self) -> Vec<i32> {
         self.face_indices.clone()
     }
     
     /// Number of vertices per face.
     #[getter]
-    fn faceCounts(&self) -> Vec<i32> {
+    pub fn faceCounts(&self) -> Vec<i32> {
         self.face_counts.clone()
     }
     
     /// Vertex velocities (optional).
     #[getter]
-    fn velocities(&self) -> Option<Vec<[f32; 3]>> {
+    pub fn velocities(&self) -> Option<Vec<[f32; 3]>> {
         self.velocities.clone()
     }
     
     /// Vertex normals (optional).
     #[getter]
-    fn normals(&self) -> Option<Vec<[f32; 3]>> {
+    pub fn normals(&self) -> Option<Vec<[f32; 3]>> {
         self.normals.clone()
     }
     
     /// UV coordinates (optional).
     #[getter]
-    fn uvs(&self) -> Option<Vec<[f32; 2]>> {
+    pub fn uvs(&self) -> Option<Vec<[f32; 2]>> {
         self.uvs.clone()
     }
     
     /// Bounding box as (min, max).
     #[getter]
-    fn selfBounds(&self) -> Option<([f32; 3], [f32; 3])> {
+    pub fn selfBounds(&self) -> Option<([f64; 3], [f64; 3])> {
         self.self_bounds
     }
     
     /// Number of vertices.
+    pub fn getNumVertices(&self) -> usize {
+        self.positions.len()
+    }
+    
+    /// Number of faces.
+    pub fn getNumFaces(&self) -> usize {
+        self.face_counts.len()
+    }
+    
     fn __len__(&self) -> usize {
         self.positions.len()
     }
@@ -105,41 +113,44 @@ impl From<PolyMeshSample> for PyPolyMeshSample {
 /// Python wrapper for SubD sample data.
 #[pyclass(name = "SubDSample")]
 pub struct PySubDSample {
-    positions: Vec<[f32; 3]>,
-    face_indices: Vec<i32>,
-    face_counts: Vec<i32>,
-    subdivision_scheme: String,
-    crease_indices: Option<Vec<i32>>,
-    crease_lengths: Option<Vec<i32>>,
-    crease_sharpnesses: Option<Vec<f32>>,
-    corner_indices: Option<Vec<i32>>,
-    corner_sharpnesses: Option<Vec<f32>>,
+    pub positions: Vec<[f32; 3]>,
+    pub face_indices: Vec<i32>,
+    pub face_counts: Vec<i32>,
+    pub scheme: String,
+    pub crease_indices: Vec<i32>,
+    pub crease_lengths: Vec<i32>,
+    pub crease_sharpnesses: Vec<f32>,
+    pub corner_indices: Vec<i32>,
+    pub corner_sharpnesses: Vec<f32>,
+    pub holes: Vec<i32>,
 }
 
 #[pymethods]
 impl PySubDSample {
     #[getter]
-    fn positions(&self) -> Vec<[f32; 3]> { self.positions.clone() }
+    pub fn positions(&self) -> Vec<[f32; 3]> { self.positions.clone() }
     #[getter]
-    fn faceIndices(&self) -> Vec<i32> { self.face_indices.clone() }
+    pub fn faceIndices(&self) -> Vec<i32> { self.face_indices.clone() }
     #[getter]
-    fn faceCounts(&self) -> Vec<i32> { self.face_counts.clone() }
+    pub fn faceCounts(&self) -> Vec<i32> { self.face_counts.clone() }
     #[getter]
-    fn subdivisionScheme(&self) -> String { self.subdivision_scheme.clone() }
+    pub fn scheme(&self) -> String { self.scheme.clone() }
     #[getter]
-    fn creaseIndices(&self) -> Option<Vec<i32>> { self.crease_indices.clone() }
+    pub fn creaseIndices(&self) -> Vec<i32> { self.crease_indices.clone() }
     #[getter]
-    fn creaseLengths(&self) -> Option<Vec<i32>> { self.crease_lengths.clone() }
+    pub fn creaseLengths(&self) -> Vec<i32> { self.crease_lengths.clone() }
     #[getter]
-    fn creaseSharpnesses(&self) -> Option<Vec<f32>> { self.crease_sharpnesses.clone() }
+    pub fn creaseSharpnesses(&self) -> Vec<f32> { self.crease_sharpnesses.clone() }
     #[getter]
-    fn cornerIndices(&self) -> Option<Vec<i32>> { self.corner_indices.clone() }
+    pub fn cornerIndices(&self) -> Vec<i32> { self.corner_indices.clone() }
     #[getter]
-    fn cornerSharpnesses(&self) -> Option<Vec<f32>> { self.corner_sharpnesses.clone() }
+    pub fn cornerSharpnesses(&self) -> Vec<f32> { self.corner_sharpnesses.clone() }
+    #[getter]
+    pub fn holes(&self) -> Vec<i32> { self.holes.clone() }
     
     fn __repr__(&self) -> String {
         format!("<SubDSample {} verts, {} faces, scheme={}>", 
-            self.positions.len(), self.face_counts.len(), self.subdivision_scheme)
+            self.positions.len(), self.face_counts.len(), self.scheme)
     }
 }
 
@@ -149,12 +160,13 @@ impl From<SubDSample> for PySubDSample {
             positions: s.positions.iter().map(|p| [p.x, p.y, p.z]).collect(),
             face_indices: s.face_indices,
             face_counts: s.face_counts,
-            subdivision_scheme: s.subdivision_scheme,
-            crease_indices: if s.crease_indices.is_empty() { None } else { Some(s.crease_indices) },
-            crease_lengths: if s.crease_lengths.is_empty() { None } else { Some(s.crease_lengths) },
-            crease_sharpnesses: if s.crease_sharpnesses.is_empty() { None } else { Some(s.crease_sharpnesses) },
-            corner_indices: if s.corner_indices.is_empty() { None } else { Some(s.corner_indices) },
-            corner_sharpnesses: if s.corner_sharpnesses.is_empty() { None } else { Some(s.corner_sharpnesses) },
+            scheme: format!("{:?}", s.scheme),
+            crease_indices: s.crease_indices,
+            crease_lengths: s.crease_lengths,
+            crease_sharpnesses: s.crease_sharpnesses,
+            corner_indices: s.corner_indices,
+            corner_sharpnesses: s.corner_sharpnesses,
+            holes: s.holes,
         }
     }
 }
@@ -166,37 +178,37 @@ impl From<SubDSample> for PySubDSample {
 /// Python wrapper for Curves sample data.
 #[pyclass(name = "CurvesSample")]
 pub struct PyCurvesSample {
-    positions: Vec<[f32; 3]>,
-    num_vertices: Vec<i32>,
-    curve_type: String,
-    basis: String,
-    wrap: String,
-    widths: Option<Vec<f32>>,
-    orders: Option<Vec<u8>>,
-    knots: Option<Vec<f32>>,
+    pub positions: Vec<[f32; 3]>,
+    pub num_vertices: Vec<i32>,
+    pub curve_type: String,
+    pub basis: String,
+    pub wrap: String,
+    pub widths: Vec<f32>,
+    pub orders: Vec<i32>,
+    pub knots: Vec<f32>,
 }
 
 #[pymethods]
 impl PyCurvesSample {
     #[getter]
-    fn positions(&self) -> Vec<[f32; 3]> { self.positions.clone() }
+    pub fn positions(&self) -> Vec<[f32; 3]> { self.positions.clone() }
     #[getter]
-    fn numVertices(&self) -> Vec<i32> { self.num_vertices.clone() }
+    pub fn numVertices(&self) -> Vec<i32> { self.num_vertices.clone() }
     #[getter]
-    fn curveType(&self) -> String { self.curve_type.clone() }
+    pub fn curveType(&self) -> String { self.curve_type.clone() }
     #[getter]
-    fn basis(&self) -> String { self.basis.clone() }
+    pub fn basis(&self) -> String { self.basis.clone() }
     #[getter]
-    fn wrap(&self) -> String { self.wrap.clone() }
+    pub fn wrap(&self) -> String { self.wrap.clone() }
     #[getter]
-    fn widths(&self) -> Option<Vec<f32>> { self.widths.clone() }
+    pub fn widths(&self) -> Vec<f32> { self.widths.clone() }
     #[getter]
-    fn orders(&self) -> Option<Vec<u8>> { self.orders.clone() }
+    pub fn orders(&self) -> Vec<i32> { self.orders.clone() }
     #[getter]
-    fn knots(&self) -> Option<Vec<f32>> { self.knots.clone() }
+    pub fn knots(&self) -> Vec<f32> { self.knots.clone() }
     
     /// Number of curves.
-    fn getNumCurves(&self) -> usize { self.num_vertices.len() }
+    pub fn getNumCurves(&self) -> usize { self.num_vertices.len() }
     
     fn __repr__(&self) -> String {
         format!("<CurvesSample {} curves, type={}>", self.num_vertices.len(), self.curve_type)
@@ -210,7 +222,7 @@ impl From<CurvesSample> for PyCurvesSample {
             num_vertices: s.num_vertices,
             curve_type: format!("{:?}", s.curve_type),
             basis: format!("{:?}", s.basis),
-            wrap: format!("{:?}", s.periodicity),
+            wrap: format!("{:?}", s.wrap),
             widths: s.widths,
             orders: s.orders,
             knots: s.knots,
@@ -225,22 +237,22 @@ impl From<CurvesSample> for PyCurvesSample {
 /// Python wrapper for Points sample data.
 #[pyclass(name = "PointsSample")]
 pub struct PyPointsSample {
-    positions: Vec<[f32; 3]>,
-    ids: Vec<u64>,
-    velocities: Option<Vec<[f32; 3]>>,
-    widths: Option<Vec<f32>>,
+    pub positions: Vec<[f32; 3]>,
+    pub ids: Vec<u64>,
+    pub velocities: Vec<[f32; 3]>,
+    pub widths: Vec<f32>,
 }
 
 #[pymethods]
 impl PyPointsSample {
     #[getter]
-    fn positions(&self) -> Vec<[f32; 3]> { self.positions.clone() }
+    pub fn positions(&self) -> Vec<[f32; 3]> { self.positions.clone() }
     #[getter]
-    fn ids(&self) -> Vec<u64> { self.ids.clone() }
+    pub fn ids(&self) -> Vec<u64> { self.ids.clone() }
     #[getter]
-    fn velocities(&self) -> Option<Vec<[f32; 3]>> { self.velocities.clone() }
+    pub fn velocities(&self) -> Vec<[f32; 3]> { self.velocities.clone() }
     #[getter]
-    fn widths(&self) -> Option<Vec<f32>> { self.widths.clone() }
+    pub fn widths(&self) -> Vec<f32> { self.widths.clone() }
     
     fn __len__(&self) -> usize { self.positions.len() }
     
@@ -254,7 +266,7 @@ impl From<PointsSample> for PyPointsSample {
         Self {
             positions: s.positions.iter().map(|p| [p.x, p.y, p.z]).collect(),
             ids: s.ids,
-            velocities: s.velocities.map(|v| v.iter().map(|p| [p.x, p.y, p.z]).collect()),
+            velocities: s.velocities.iter().map(|p| [p.x, p.y, p.z]).collect(),
             widths: s.widths,
         }
     }
@@ -267,54 +279,54 @@ impl From<PointsSample> for PyPointsSample {
 /// Python wrapper for Camera sample data.
 #[pyclass(name = "CameraSample")]
 pub struct PyCameraSample {
-    focal_length: f64,
-    horizontal_aperture: f64,
-    vertical_aperture: f64,
-    horizontal_film_offset: f64,
-    vertical_film_offset: f64,
-    lens_squeeze_ratio: f64,
-    near_clipping_plane: f64,
-    far_clipping_plane: f64,
-    f_stop: f64,
-    focus_distance: f64,
-    shutter_open: f64,
-    shutter_close: f64,
+    pub focal_length: f64,
+    pub horizontal_aperture: f64,
+    pub vertical_aperture: f64,
+    pub horizontal_film_offset: f64,
+    pub vertical_film_offset: f64,
+    pub lens_squeeze_ratio: f64,
+    pub near_clipping_plane: f64,
+    pub far_clipping_plane: f64,
+    pub f_stop: f64,
+    pub focus_distance: f64,
+    pub shutter_open: f64,
+    pub shutter_close: f64,
 }
 
 #[pymethods]
 impl PyCameraSample {
     #[getter]
-    fn focalLength(&self) -> f64 { self.focal_length }
+    pub fn focalLength(&self) -> f64 { self.focal_length }
     #[getter]
-    fn horizontalAperture(&self) -> f64 { self.horizontal_aperture }
+    pub fn horizontalAperture(&self) -> f64 { self.horizontal_aperture }
     #[getter]
-    fn verticalAperture(&self) -> f64 { self.vertical_aperture }
+    pub fn verticalAperture(&self) -> f64 { self.vertical_aperture }
     #[getter]
-    fn horizontalFilmOffset(&self) -> f64 { self.horizontal_film_offset }
+    pub fn horizontalFilmOffset(&self) -> f64 { self.horizontal_film_offset }
     #[getter]
-    fn verticalFilmOffset(&self) -> f64 { self.vertical_film_offset }
+    pub fn verticalFilmOffset(&self) -> f64 { self.vertical_film_offset }
     #[getter]
-    fn lensSqueezeRatio(&self) -> f64 { self.lens_squeeze_ratio }
+    pub fn lensSqueezeRatio(&self) -> f64 { self.lens_squeeze_ratio }
     #[getter]
-    fn nearClippingPlane(&self) -> f64 { self.near_clipping_plane }
+    pub fn nearClippingPlane(&self) -> f64 { self.near_clipping_plane }
     #[getter]
-    fn farClippingPlane(&self) -> f64 { self.far_clipping_plane }
+    pub fn farClippingPlane(&self) -> f64 { self.far_clipping_plane }
     #[getter]
-    fn fStop(&self) -> f64 { self.f_stop }
+    pub fn fStop(&self) -> f64 { self.f_stop }
     #[getter]
-    fn focusDistance(&self) -> f64 { self.focus_distance }
+    pub fn focusDistance(&self) -> f64 { self.focus_distance }
     #[getter]
-    fn shutterOpen(&self) -> f64 { self.shutter_open }
+    pub fn shutterOpen(&self) -> f64 { self.shutter_open }
     #[getter]
-    fn shutterClose(&self) -> f64 { self.shutter_close }
+    pub fn shutterClose(&self) -> f64 { self.shutter_close }
     
     /// Get horizontal field of view in degrees.
-    fn getFovHorizontal(&self) -> f64 {
+    pub fn getFovHorizontal(&self) -> f64 {
         2.0 * (self.horizontal_aperture / (2.0 * self.focal_length)).atan().to_degrees()
     }
     
     /// Get vertical field of view in degrees.
-    fn getFovVertical(&self) -> f64 {
+    pub fn getFovVertical(&self) -> f64 {
         2.0 * (self.vertical_aperture / (2.0 * self.focal_length)).atan().to_degrees()
     }
     
@@ -349,31 +361,31 @@ impl From<CameraSample> for PyCameraSample {
 /// Python wrapper for Xform sample data.
 #[pyclass(name = "XformSample")]
 pub struct PyXformSample {
-    matrix: [[f64; 4]; 4],
-    inherits_xforms: bool,
+    pub matrix: [[f64; 4]; 4],
+    pub inherits: bool,
 }
 
 #[pymethods]
 impl PyXformSample {
     /// Get 4x4 transformation matrix (column-major).
     #[getter]
-    fn matrix(&self) -> [[f64; 4]; 4] {
+    pub fn matrix(&self) -> [[f64; 4]; 4] {
         self.matrix
     }
     
     /// Whether this transform inherits from parent.
     #[getter]
-    fn inheritsXforms(&self) -> bool {
-        self.inherits_xforms
+    pub fn inherits(&self) -> bool {
+        self.inherits
     }
     
     /// Get translation component.
-    fn getTranslation(&self) -> [f64; 3] {
+    pub fn getTranslation(&self) -> [f64; 3] {
         [self.matrix[3][0], self.matrix[3][1], self.matrix[3][2]]
     }
     
     /// Get scale component (approximate, assumes no shear).
-    fn getScale(&self) -> [f64; 3] {
+    pub fn getScale(&self) -> [f64; 3] {
         let sx = (self.matrix[0][0].powi(2) + self.matrix[0][1].powi(2) + self.matrix[0][2].powi(2)).sqrt();
         let sy = (self.matrix[1][0].powi(2) + self.matrix[1][1].powi(2) + self.matrix[1][2].powi(2)).sqrt();
         let sz = (self.matrix[2][0].powi(2) + self.matrix[2][1].powi(2) + self.matrix[2][2].powi(2)).sqrt();
@@ -396,65 +408,148 @@ impl From<XformSample> for PyXformSample {
                 [m.z_axis.x as f64, m.z_axis.y as f64, m.z_axis.z as f64, m.z_axis.w as f64],
                 [m.w_axis.x as f64, m.w_axis.y as f64, m.w_axis.z as f64, m.w_axis.w as f64],
             ],
-            inherits_xforms: s.inherits_xforms,
+            inherits: s.inherits,
         }
     }
 }
 
 // ============================================================================
-// Helper functions for creating samples from IObject
+// Light
 // ============================================================================
 
-/// Get PolyMesh sample from object.
-pub fn get_polymesh_sample(obj: &IObject, index: usize) -> PyResult<PyPolyMeshSample> {
-    let mesh = IPolyMesh::new(obj)
-        .ok_or_else(|| PyValueError::new_err("Object is not a PolyMesh"))?;
-    let sample = mesh.get_sample(index)
-        .map_err(|e| PyValueError::new_err(format!("Failed to get sample: {}", e)))?;
-    Ok(sample.into())
+/// Python wrapper for Light sample data.
+#[pyclass(name = "LightSample")]
+pub struct PyLightSample {
+    /// Camera-like parameters (lights share camera properties).
+    pub camera: PyCameraSample,
+    /// Child bounds (optional).
+    pub child_bounds: Option<([f64; 3], [f64; 3])>,
 }
 
-/// Get SubD sample from object.
-pub fn get_subd_sample(obj: &IObject, index: usize) -> PyResult<PySubDSample> {
-    let subd = ISubD::new(obj)
-        .ok_or_else(|| PyValueError::new_err("Object is not a SubD"))?;
-    let sample = subd.get_sample(index)
-        .map_err(|e| PyValueError::new_err(format!("Failed to get sample: {}", e)))?;
-    Ok(sample.into())
+#[pymethods]
+impl PyLightSample {
+    /// Get camera-like parameters.
+    #[getter]
+    pub fn camera(&self) -> PyCameraSample {
+        PyCameraSample {
+            focal_length: self.camera.focal_length,
+            horizontal_aperture: self.camera.horizontal_aperture,
+            vertical_aperture: self.camera.vertical_aperture,
+            horizontal_film_offset: self.camera.horizontal_film_offset,
+            vertical_film_offset: self.camera.vertical_film_offset,
+            lens_squeeze_ratio: self.camera.lens_squeeze_ratio,
+            near_clipping_plane: self.camera.near_clipping_plane,
+            far_clipping_plane: self.camera.far_clipping_plane,
+            f_stop: self.camera.f_stop,
+            focus_distance: self.camera.focus_distance,
+            shutter_open: self.camera.shutter_open,
+            shutter_close: self.camera.shutter_close,
+        }
+    }
+    
+    /// Child bounds (optional).
+    #[getter]
+    pub fn childBounds(&self) -> Option<([f64; 3], [f64; 3])> {
+        self.child_bounds
+    }
+    
+    fn __repr__(&self) -> String {
+        "<LightSample>".to_string()
+    }
 }
 
-/// Get Curves sample from object.
-pub fn get_curves_sample(obj: &IObject, index: usize) -> PyResult<PyCurvesSample> {
-    let curves = ICurves::new(obj)
-        .ok_or_else(|| PyValueError::new_err("Object is not a Curves"))?;
-    let sample = curves.get_sample(index)
-        .map_err(|e| PyValueError::new_err(format!("Failed to get sample: {}", e)))?;
-    Ok(sample.into())
+impl From<LightSample> for PyLightSample {
+    fn from(s: LightSample) -> Self {
+        Self {
+            camera: s.camera.into(),
+            child_bounds: s.child_bounds.map(|b| (
+                [b.min.x, b.min.y, b.min.z],
+                [b.max.x, b.max.y, b.max.z]
+            )),
+        }
+    }
 }
 
-/// Get Points sample from object.
-pub fn get_points_sample(obj: &IObject, index: usize) -> PyResult<PyPointsSample> {
-    let points = IPoints::new(obj)
-        .ok_or_else(|| PyValueError::new_err("Object is not a Points"))?;
-    let sample = points.get_sample(index)
-        .map_err(|e| PyValueError::new_err(format!("Failed to get sample: {}", e)))?;
-    Ok(sample.into())
+// ============================================================================
+// NuPatch
+// ============================================================================
+
+/// Python wrapper for NuPatch (NURBS surface) sample data.
+#[pyclass(name = "NuPatchSample")]
+pub struct PyNuPatchSample {
+    pub positions: Vec<[f32; 3]>,
+    pub num_u: i32,
+    pub num_v: i32,
+    pub u_order: i32,
+    pub v_order: i32,
+    pub u_knots: Vec<f32>,
+    pub v_knots: Vec<f32>,
+    pub position_weights: Option<Vec<f32>>,
+    pub normals: Option<Vec<[f32; 3]>>,
+    pub uvs: Option<Vec<[f32; 2]>>,
+    pub self_bounds: Option<([f64; 3], [f64; 3])>,
 }
 
-/// Get Camera sample from object.
-pub fn get_camera_sample(obj: &IObject, index: usize) -> PyResult<PyCameraSample> {
-    let camera = ICamera::new(obj)
-        .ok_or_else(|| PyValueError::new_err("Object is not a Camera"))?;
-    let sample = camera.get_sample(index)
-        .map_err(|e| PyValueError::new_err(format!("Failed to get sample: {}", e)))?;
-    Ok(sample.into())
+#[pymethods]
+impl PyNuPatchSample {
+    #[getter]
+    pub fn positions(&self) -> Vec<[f32; 3]> { self.positions.clone() }
+    #[getter]
+    pub fn numU(&self) -> i32 { self.num_u }
+    #[getter]
+    pub fn numV(&self) -> i32 { self.num_v }
+    #[getter]
+    pub fn uOrder(&self) -> i32 { self.u_order }
+    #[getter]
+    pub fn vOrder(&self) -> i32 { self.v_order }
+    #[getter]
+    pub fn uKnots(&self) -> Vec<f32> { self.u_knots.clone() }
+    #[getter]
+    pub fn vKnots(&self) -> Vec<f32> { self.v_knots.clone() }
+    #[getter]
+    pub fn positionWeights(&self) -> Option<Vec<f32>> { self.position_weights.clone() }
+    #[getter]
+    pub fn normals(&self) -> Option<Vec<[f32; 3]>> { self.normals.clone() }
+    #[getter]
+    pub fn uvs(&self) -> Option<Vec<[f32; 2]>> { self.uvs.clone() }
+    #[getter]
+    pub fn selfBounds(&self) -> Option<([f64; 3], [f64; 3])> { self.self_bounds }
+    
+    /// Get U degree (order - 1).
+    pub fn uDegree(&self) -> i32 { self.u_order - 1 }
+    
+    /// Get V degree (order - 1).
+    pub fn vDegree(&self) -> i32 { self.v_order - 1 }
+    
+    /// Number of control vertices.
+    pub fn getNumCVs(&self) -> usize { self.positions.len() }
+    
+    /// Check if rational (has weights).
+    pub fn isRational(&self) -> bool { self.position_weights.is_some() }
+    
+    fn __repr__(&self) -> String {
+        format!("<NuPatchSample {}x{} CVs, order=({}, {})>",
+            self.num_u, self.num_v, self.u_order, self.v_order)
+    }
 }
 
-/// Get Xform sample from object.
-pub fn get_xform_sample(obj: &IObject, index: usize) -> PyResult<PyXformSample> {
-    let xform = IXform::new(obj)
-        .ok_or_else(|| PyValueError::new_err("Object is not an Xform"))?;
-    let sample = xform.get_sample(index)
-        .map_err(|e| PyValueError::new_err(format!("Failed to get sample: {}", e)))?;
-    Ok(sample.into())
+impl From<NuPatchSample> for PyNuPatchSample {
+    fn from(s: NuPatchSample) -> Self {
+        Self {
+            positions: s.positions.iter().map(|p| [p.x, p.y, p.z]).collect(),
+            num_u: s.num_u,
+            num_v: s.num_v,
+            u_order: s.u_order,
+            v_order: s.v_order,
+            u_knots: s.u_knots,
+            v_knots: s.v_knots,
+            position_weights: s.position_weights,
+            normals: s.normals.map(|v| v.iter().map(|p| [p.x, p.y, p.z]).collect()),
+            uvs: s.uvs.map(|v| v.iter().map(|p| [p.x, p.y]).collect()),
+            self_bounds: s.self_bounds.map(|b| (
+                [b.min.x, b.min.y, b.min.z],
+                [b.max.x, b.max.y, b.max.z]
+            )),
+        }
+    }
 }

@@ -10,9 +10,9 @@ use crate::abc::IArchive;
 use crate::geom::{IPolyMesh, ISubD, ICurves, IPoints, ICamera, ILight, IXform, INuPatch};
 use super::geom::{
     PyPolyMeshSample, PySubDSample, PyCurvesSample, PyPointsSample,
-    PyCameraSample, PyXformSample,
+    PyCameraSample, PyXformSample, PyLightSample, PyNuPatchSample,
 };
-use super::time_sampling::PyTimeSampling;
+use super::properties::PyICompoundProperty;
 
 /// Python wrapper for IObject.
 /// 
@@ -32,7 +32,7 @@ impl PyIObject {
         }
     }
     
-    /// Execute closure with resolved object.
+    /// Execute closure with resolved object (recursive traversal).
     fn with_object<T, F>(&self, f: F) -> Option<T>
     where
         F: FnOnce(&crate::abc::IObject) -> Option<T>,
@@ -43,12 +43,21 @@ impl PyIObject {
             return f(&root);
         }
         
-        // Traverse path
-        let mut current = root;
-        for name in &self.path {
-            current = current.child_by_name(name)?;
+        // Use recursive helper to avoid borrow checker issues
+        fn traverse<'a, T>(
+            obj: crate::abc::IObject<'a>,
+            path: &[String],
+            f: impl FnOnce(&crate::abc::IObject) -> Option<T>,
+        ) -> Option<T> {
+            if path.is_empty() {
+                f(&obj)
+            } else {
+                let child = obj.child_by_name(&path[0])?;
+                traverse(child, &path[1..], f)
+            }
         }
-        f(&current)
+        
+        traverse(root, &self.path, f)
     }
 }
 
@@ -131,7 +140,7 @@ impl PyIObject {
     /// Get schema type string.
     fn getSchemaType(&self) -> String {
         self.with_object(|obj| {
-            Some(obj.meta_data().get("schema").unwrap_or_default())
+            Some(obj.meta_data().get("schema").unwrap_or_default().to_string())
         }).unwrap_or_default()
     }
     
@@ -251,6 +260,24 @@ impl PyIObject {
         }).ok_or_else(|| PyValueError::new_err("Not an Xform or failed to get sample"))
     }
     
+    /// Get Light sample at index.
+    #[pyo3(signature = (index=0))]
+    fn getLightSample(&self, index: usize) -> PyResult<PyLightSample> {
+        self.with_object(|obj| {
+            let light = ILight::new(obj)?;
+            light.get_sample(index).ok().map(|s| s.into())
+        }).ok_or_else(|| PyValueError::new_err("Not a Light or failed to get sample"))
+    }
+    
+    /// Get NuPatch sample at index.
+    #[pyo3(signature = (index=0))]
+    fn getNuPatchSample(&self, index: usize) -> PyResult<PyNuPatchSample> {
+        self.with_object(|obj| {
+            let nupatch = INuPatch::new(obj)?;
+            nupatch.get_sample(index).ok().map(|s| s.into())
+        }).ok_or_else(|| PyValueError::new_err("Not a NuPatch or failed to get sample"))
+    }
+    
     // ========================================================================
     // Convenience methods (backward compatible)
     // ========================================================================
@@ -277,6 +304,19 @@ impl PyIObject {
     #[pyo3(signature = (index=0))]
     fn getMatrix(&self, index: usize) -> Option<[[f64; 4]; 4]> {
         self.getXformSample(index).ok().map(|s| s.matrix())
+    }
+    
+    // ========================================================================
+    // Properties access
+    // ========================================================================
+    
+    /// Get compound property for this object.
+    fn getProperties(&self) -> PyICompoundProperty {
+        PyICompoundProperty {
+            archive: self.archive.clone(),
+            object_path: self.path.clone(),
+            property_path: Vec::new(),
+        }
     }
     
     fn __repr__(&self) -> String {
