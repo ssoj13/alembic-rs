@@ -7,11 +7,16 @@ use pyo3::exceptions::PyValueError;
 use std::sync::Arc;
 
 use crate::abc::IArchive;
+use crate::geom::{IPolyMesh, ISubD, ICurves, IPoints, ICamera, ILight, IXform, INuPatch};
+use super::geom::{
+    PyPolyMeshSample, PySubDSample, PyCurvesSample, PyPointsSample,
+    PyCameraSample, PyXformSample,
+};
+use super::time_sampling::PyTimeSampling;
 
 /// Python wrapper for IObject.
 /// 
-/// Note: Due to Rust's borrowing rules, we store path as a vector of names
-/// and traverse fresh each time we need to access the underlying object.
+/// Stores path and traverses fresh each time (Rust ownership workaround).
 #[pyclass(name = "IObject")]
 pub struct PyIObject {
     pub(crate) archive: Arc<IArchive>,
@@ -26,81 +31,32 @@ impl PyIObject {
             path: Vec::new(),
         }
     }
-}
-
-/// Macro to traverse path and execute code with the final object.
-/// This works around Rust's borrowing limitations by using a macro
-/// that generates the nested match statements.
-macro_rules! with_object {
-    ($self:expr, $obj:ident => $body:expr) => {{
-        let root = $self.archive.root();
-        match $self.path.len() {
-            0 => {
-                let $obj = root;
-                $body
-            }
-            1 => {
-                if let Some($obj) = root.child_by_name(&$self.path[0]) {
-                    $body
-                } else {
-                    None
-                }
-            }
-            2 => {
-                if let Some(c1) = root.child_by_name(&$self.path[0]) {
-                    if let Some($obj) = c1.child_by_name(&$self.path[1]) {
-                        $body
-                    } else { None }
-                } else { None }
-            }
-            3 => {
-                if let Some(c1) = root.child_by_name(&$self.path[0]) {
-                    if let Some(c2) = c1.child_by_name(&$self.path[1]) {
-                        if let Some($obj) = c2.child_by_name(&$self.path[2]) {
-                            $body
-                        } else { None }
-                    } else { None }
-                } else { None }
-            }
-            4 => {
-                if let Some(c1) = root.child_by_name(&$self.path[0]) {
-                    if let Some(c2) = c1.child_by_name(&$self.path[1]) {
-                        if let Some(c3) = c2.child_by_name(&$self.path[2]) {
-                            if let Some($obj) = c3.child_by_name(&$self.path[3]) {
-                                $body
-                            } else { None }
-                        } else { None }
-                    } else { None }
-                } else { None }
-            }
-            5 => {
-                if let Some(c1) = root.child_by_name(&$self.path[0]) {
-                    if let Some(c2) = c1.child_by_name(&$self.path[1]) {
-                        if let Some(c3) = c2.child_by_name(&$self.path[2]) {
-                            if let Some(c4) = c3.child_by_name(&$self.path[3]) {
-                                if let Some($obj) = c4.child_by_name(&$self.path[4]) {
-                                    $body
-                                } else { None }
-                            } else { None }
-                        } else { None }
-                    } else { None }
-                } else { None }
-            }
-            _ => {
-                // For deeper paths (rare), we'll just return None
-                // A proper implementation would need a recursive approach
-                // that doesn't have the borrow checker issues
-                None
-            }
+    
+    /// Execute closure with resolved object.
+    fn with_object<T, F>(&self, f: F) -> Option<T>
+    where
+        F: FnOnce(&crate::abc::IObject) -> Option<T>,
+    {
+        let root = self.archive.root();
+        
+        if self.path.is_empty() {
+            return f(&root);
         }
-    }};
+        
+        // Traverse path
+        let mut current = root;
+        for name in &self.path {
+            current = current.child_by_name(name)?;
+        }
+        f(&current)
+    }
 }
 
 #[pymethods]
 impl PyIObject {
     /// Get object name.
     fn getName(&self) -> String {
-        self.path.last().cloned().unwrap_or_default()
+        self.path.last().cloned().unwrap_or_else(|| "ABC".to_string())
     }
     
     /// Get full path.
@@ -114,20 +70,17 @@ impl PyIObject {
     
     /// Get number of children.
     fn getNumChildren(&self) -> usize {
-        with_object!(self, obj => Some(obj.num_children())).unwrap_or(0)
+        self.with_object(|obj| Some(obj.num_children())).unwrap_or(0)
     }
     
     /// Get child by index.
     fn getChild(&self, index: usize) -> PyResult<PyIObject> {
-        let child_name: Option<String> = with_object!(self, obj => {
+        let child_name = self.with_object(|obj| {
             obj.child(index).map(|c| c.name().to_string())
-        });
-        
-        let name = child_name
-            .ok_or_else(|| PyValueError::new_err("Child index out of range"))?;
+        }).ok_or_else(|| PyValueError::new_err("Child index out of range"))?;
         
         let mut new_path = self.path.clone();
-        new_path.push(name);
+        new_path.push(child_name);
         
         Ok(PyIObject {
             archive: self.archive.clone(),
@@ -138,10 +91,8 @@ impl PyIObject {
     /// Get child by name.
     #[pyo3(signature = (name))]
     fn getChildByName(&self, name: &str) -> PyResult<PyIObject> {
-        // Verify child exists
-        let exists: bool = with_object!(self, obj => {
-            let has_child = obj.child_by_name(name).is_some();
-            Some(has_child)
+        let exists = self.with_object(|obj| {
+            Some(obj.child_by_name(name).is_some())
         }).unwrap_or(false);
         
         if !exists {
@@ -174,7 +125,14 @@ impl PyIObject {
     
     /// Check if valid.
     fn valid(&self) -> bool {
-        with_object!(self, _obj => Some(true)).unwrap_or(false)
+        self.with_object(|_| Some(true)).unwrap_or(false)
+    }
+    
+    /// Get schema type string.
+    fn getSchemaType(&self) -> String {
+        self.with_object(|obj| {
+            Some(obj.meta_data().get("schema").unwrap_or_default())
+        }).unwrap_or_default()
     }
     
     /// Children as list.
@@ -186,102 +144,194 @@ impl PyIObject {
             .collect()
     }
     
-    /// Get positions if this is a PolyMesh.
-    #[pyo3(signature = (index=None))]
-    fn getPositions(&self, index: Option<usize>) -> Option<Vec<[f32; 3]>> {
-        use crate::geom::IPolyMesh;
-        
-        with_object!(self, obj => {
-            IPolyMesh::new(&obj).and_then(|mesh| {
-                mesh.get_sample(index.unwrap_or(0)).ok().map(|s| {
-                    s.positions.iter().map(|p| [p.x, p.y, p.z]).collect()
-                })
-            })
-        })
-    }
-    
-    /// Get face counts if this is a PolyMesh.
-    #[pyo3(signature = (index=None))]
-    fn getFaceCounts(&self, index: Option<usize>) -> Option<Vec<i32>> {
-        use crate::geom::IPolyMesh;
-        
-        with_object!(self, obj => {
-            IPolyMesh::new(&obj).and_then(|mesh| {
-                mesh.get_sample(index.unwrap_or(0)).ok().map(|s| s.face_counts)
-            })
-        })
-    }
-    
-    /// Get face indices if this is a PolyMesh.
-    #[pyo3(signature = (index=None))]
-    fn getFaceIndices(&self, index: Option<usize>) -> Option<Vec<i32>> {
-        use crate::geom::IPolyMesh;
-        
-        with_object!(self, obj => {
-            IPolyMesh::new(&obj).and_then(|mesh| {
-                mesh.get_sample(index.unwrap_or(0)).ok().map(|s| s.face_indices)
-            })
-        })
-    }
-    
-    /// Get 4x4 transformation matrix if this is an Xform.
-    #[pyo3(signature = (index=None))]
-    fn getMatrix(&self, index: Option<usize>) -> Option<[[f64; 4]; 4]> {
-        use crate::geom::IXform;
-        
-        with_object!(self, obj => {
-            IXform::new(&obj).and_then(|xform| {
-                xform.get_sample(index.unwrap_or(0)).ok().map(|s| {
-                    let m = s.matrix();
-                    [
-                        [m.x_axis.x as f64, m.x_axis.y as f64, m.x_axis.z as f64, m.x_axis.w as f64],
-                        [m.y_axis.x as f64, m.y_axis.y as f64, m.y_axis.z as f64, m.y_axis.w as f64],
-                        [m.z_axis.x as f64, m.z_axis.y as f64, m.z_axis.z as f64, m.z_axis.w as f64],
-                        [m.w_axis.x as f64, m.w_axis.y as f64, m.w_axis.z as f64, m.w_axis.w as f64],
-                    ]
-                })
-            })
-        })
-    }
-    
-    /// Get number of samples for this object's schema.
+    /// Get number of samples.
     fn getNumSamples(&self) -> usize {
-        use crate::geom::{IPolyMesh, IXform, ICamera, IPoints, ICurves, ISubD};
-        
-        with_object!(self, obj => {
-            if let Some(m) = IPolyMesh::new(&obj) { Some(m.num_samples()) }
-            else if let Some(x) = IXform::new(&obj) { Some(x.num_samples()) }
-            else if let Some(c) = ICamera::new(&obj) { Some(c.num_samples()) }
-            else if let Some(p) = IPoints::new(&obj) { Some(p.num_samples()) }
-            else if let Some(c) = ICurves::new(&obj) { Some(c.num_samples()) }
-            else if let Some(s) = ISubD::new(&obj) { Some(s.num_samples()) }
-            else { Some(0) }
+        self.with_object(|obj| {
+            if let Some(m) = IPolyMesh::new(obj) { return Some(m.num_samples()); }
+            if let Some(x) = IXform::new(obj) { return Some(x.num_samples()); }
+            if let Some(c) = ICamera::new(obj) { return Some(c.num_samples()); }
+            if let Some(p) = IPoints::new(obj) { return Some(p.num_samples()); }
+            if let Some(c) = ICurves::new(obj) { return Some(c.num_samples()); }
+            if let Some(s) = ISubD::new(obj) { return Some(s.num_samples()); }
+            Some(0)
         }).unwrap_or(0)
     }
     
-    /// Check if this is a PolyMesh.
+    // ========================================================================
+    // Type checks
+    // ========================================================================
+    
     fn isPolyMesh(&self) -> bool {
-        use crate::geom::IPolyMesh;
-        with_object!(self, obj => Some(IPolyMesh::new(&obj).is_some())).unwrap_or(false)
+        self.with_object(|obj| Some(IPolyMesh::new(obj).is_some())).unwrap_or(false)
     }
     
-    /// Check if this is an Xform.
-    fn isXform(&self) -> bool {
-        use crate::geom::IXform;
-        with_object!(self, obj => Some(IXform::new(&obj).is_some())).unwrap_or(false)
+    fn isSubD(&self) -> bool {
+        self.with_object(|obj| Some(ISubD::new(obj).is_some())).unwrap_or(false)
     }
     
-    /// Check if this is a Camera.
+    fn isCurves(&self) -> bool {
+        self.with_object(|obj| Some(ICurves::new(obj).is_some())).unwrap_or(false)
+    }
+    
+    fn isPoints(&self) -> bool {
+        self.with_object(|obj| Some(IPoints::new(obj).is_some())).unwrap_or(false)
+    }
+    
     fn isCamera(&self) -> bool {
-        use crate::geom::ICamera;
-        with_object!(self, obj => Some(ICamera::new(&obj).is_some())).unwrap_or(false)
+        self.with_object(|obj| Some(ICamera::new(obj).is_some())).unwrap_or(false)
+    }
+    
+    fn isLight(&self) -> bool {
+        self.with_object(|obj| Some(ILight::new(obj).is_some())).unwrap_or(false)
+    }
+    
+    fn isXform(&self) -> bool {
+        self.with_object(|obj| Some(IXform::new(obj).is_some())).unwrap_or(false)
+    }
+    
+    fn isNuPatch(&self) -> bool {
+        self.with_object(|obj| Some(INuPatch::new(obj).is_some())).unwrap_or(false)
+    }
+    
+    // ========================================================================
+    // Get samples
+    // ========================================================================
+    
+    /// Get PolyMesh sample at index.
+    #[pyo3(signature = (index=0))]
+    fn getPolyMeshSample(&self, index: usize) -> PyResult<PyPolyMeshSample> {
+        self.with_object(|obj| {
+            let mesh = IPolyMesh::new(obj)?;
+            mesh.get_sample(index).ok().map(|s| s.into())
+        }).ok_or_else(|| PyValueError::new_err("Not a PolyMesh or failed to get sample"))
+    }
+    
+    /// Get SubD sample at index.
+    #[pyo3(signature = (index=0))]
+    fn getSubDSample(&self, index: usize) -> PyResult<PySubDSample> {
+        self.with_object(|obj| {
+            let subd = ISubD::new(obj)?;
+            subd.get_sample(index).ok().map(|s| s.into())
+        }).ok_or_else(|| PyValueError::new_err("Not a SubD or failed to get sample"))
+    }
+    
+    /// Get Curves sample at index.
+    #[pyo3(signature = (index=0))]
+    fn getCurvesSample(&self, index: usize) -> PyResult<PyCurvesSample> {
+        self.with_object(|obj| {
+            let curves = ICurves::new(obj)?;
+            curves.get_sample(index).ok().map(|s| s.into())
+        }).ok_or_else(|| PyValueError::new_err("Not a Curves or failed to get sample"))
+    }
+    
+    /// Get Points sample at index.
+    #[pyo3(signature = (index=0))]
+    fn getPointsSample(&self, index: usize) -> PyResult<PyPointsSample> {
+        self.with_object(|obj| {
+            let points = IPoints::new(obj)?;
+            points.get_sample(index).ok().map(|s| s.into())
+        }).ok_or_else(|| PyValueError::new_err("Not a Points or failed to get sample"))
+    }
+    
+    /// Get Camera sample at index.
+    #[pyo3(signature = (index=0))]
+    fn getCameraSample(&self, index: usize) -> PyResult<PyCameraSample> {
+        self.with_object(|obj| {
+            let camera = ICamera::new(obj)?;
+            camera.get_sample(index).ok().map(|s| s.into())
+        }).ok_or_else(|| PyValueError::new_err("Not a Camera or failed to get sample"))
+    }
+    
+    /// Get Xform sample at index.
+    #[pyo3(signature = (index=0))]
+    fn getXformSample(&self, index: usize) -> PyResult<PyXformSample> {
+        self.with_object(|obj| {
+            let xform = IXform::new(obj)?;
+            xform.get_sample(index).ok().map(|s| s.into())
+        }).ok_or_else(|| PyValueError::new_err("Not an Xform or failed to get sample"))
+    }
+    
+    // ========================================================================
+    // Convenience methods (backward compatible)
+    // ========================================================================
+    
+    /// Get positions if this is a PolyMesh.
+    #[pyo3(signature = (index=0))]
+    fn getPositions(&self, index: usize) -> Option<Vec<[f32; 3]>> {
+        self.getPolyMeshSample(index).ok().map(|s| s.positions())
+    }
+    
+    /// Get face counts if this is a PolyMesh.
+    #[pyo3(signature = (index=0))]
+    fn getFaceCounts(&self, index: usize) -> Option<Vec<i32>> {
+        self.getPolyMeshSample(index).ok().map(|s| s.faceCounts())
+    }
+    
+    /// Get face indices if this is a PolyMesh.
+    #[pyo3(signature = (index=0))]
+    fn getFaceIndices(&self, index: usize) -> Option<Vec<i32>> {
+        self.getPolyMeshSample(index).ok().map(|s| s.faceIndices())
+    }
+    
+    /// Get 4x4 transformation matrix if this is an Xform.
+    #[pyo3(signature = (index=0))]
+    fn getMatrix(&self, index: usize) -> Option<[[f64; 4]; 4]> {
+        self.getXformSample(index).ok().map(|s| s.matrix())
     }
     
     fn __repr__(&self) -> String {
-        format!("<IObject '{}'>", self.getFullName())
+        let schema = self.getSchemaType();
+        let type_str = if schema.contains("PolyMesh") { "PolyMesh" }
+            else if schema.contains("SubD") { "SubD" }
+            else if schema.contains("Curves") { "Curves" }
+            else if schema.contains("Points") { "Points" }
+            else if schema.contains("Camera") { "Camera" }
+            else if schema.contains("Light") { "Light" }
+            else if schema.contains("Xform") { "Xform" }
+            else { "Object" };
+        format!("<IObject '{}' [{}]>", self.getFullName(), type_str)
     }
     
     fn __len__(&self) -> usize {
         self.getNumChildren()
+    }
+    
+    /// Iterator support.
+    fn __iter__(slf: PyRef<'_, Self>) -> PyResult<Py<PyIObjectIter>> {
+        let children: Vec<PyIObject> = slf.children();
+        Py::new(slf.py(), PyIObjectIter { children, index: 0 })
+    }
+}
+
+/// Iterator for IObject children.
+#[pyclass]
+pub struct PyIObjectIter {
+    children: Vec<PyIObject>,
+    index: usize,
+}
+
+#[pymethods]
+impl PyIObjectIter {
+    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
+        slf
+    }
+    
+    fn __next__(mut slf: PyRefMut<'_, Self>) -> Option<PyIObject> {
+        if slf.index < slf.children.len() {
+            let child = slf.children[slf.index].clone();
+            slf.index += 1;
+            Some(child)
+        } else {
+            None
+        }
+    }
+}
+
+impl Clone for PyIObject {
+    fn clone(&self) -> Self {
+        Self {
+            archive: self.archive.clone(),
+            path: self.path.clone(),
+        }
     }
 }

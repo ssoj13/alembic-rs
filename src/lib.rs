@@ -49,5 +49,7 @@ pub use ogawa::{IArchive as OgawaIArchive, OArchive as OgawaOArchive};
 pub mod prelude {
     pub use crate::util::{DataType, PlainOldDataType, Error, Result};
     pub use crate::abc::{IArchive, OArchive, IObject, OObject};
+    pub use crate::ogawa::{IArchive as OgawaIArchive, OArchive as OgawaOArchive};
+    pub use crate::core::{TimeSampling, SampleSelector};
     pub use crate::geom::*;
 }

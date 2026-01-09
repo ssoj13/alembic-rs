@@ -60,8 +60,8 @@ impl IArchive {
     }
 
     /// Get a time sampling by index.
-    pub fn time_sampling(&self, index: u32) -> Option<&TimeSampling> {
-        self.reader.time_sampling(index as usize)
+    pub fn time_sampling(&self, index: usize) -> Option<&TimeSampling> {
+        self.reader.time_sampling(index)
     }
 
     /// Get the root object of the archive.
@@ -81,8 +81,8 @@ impl IArchive {
     /// 
     /// Returns None if the index is invalid or the information isn't available
     /// (for archives created before version 1.1.3).
-    pub fn max_num_samples_for_time_sampling(&self, index: u32) -> Option<usize> {
-        self.reader.max_num_samples_for_time_sampling(index as usize)
+    pub fn max_num_samples_for_time_sampling(&self, index: usize) -> Option<usize> {
+        self.reader.max_num_samples_for_time_sampling(index)
     }
     
     /// Check if this archive is valid.

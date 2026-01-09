@@ -379,9 +379,9 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | Feature | C++ | Rust | Notes |
 |---------|-----|------|-------|
 | `TimeSampling` class | Yes | Yes | |
-| Uniform sampling | Yes | Yes | |
-| Cyclic sampling | Yes | [~] | Parsed but not fully used |
-| Acyclic sampling | Yes | [~] | Parsed but not fully used |
+| Uniform sampling | Yes | Yes | Full support |
+| Cyclic sampling | Yes | Yes | Full support with multi-sample cycles |
+| Acyclic sampling | Yes | Yes | Full support |
 | `getNumStoredTimes()` | Yes | Yes | |
 | `getStoredTimes()` | Yes | Yes | |
 | `getTimeSamplingType()` | Yes | Yes | |
@@ -389,6 +389,10 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | `getFloorIndex(time)` | Yes | Yes | `floor_index()` |
 | `getCeilIndex(time)` | Yes | Yes | `ceil_index()` |
 | `getNearIndex(time)` | Yes | Yes | `near_index()` |
+| `getBracketingTimeSamples()` | Yes | Yes | `get_bracketing_time_samples()` |
+| `validate()` | No | Yes | Rust-only validation method |
+| `time_range()` | No | Yes | Rust-only convenience method |
+| `needs_interpolation()` | No | Yes | Rust-only convenience method |
 
 ### TimeSamplingType
 | Feature | C++ | Rust | Notes |
@@ -634,8 +638,8 @@ Can be added later if needed.
 
 ### Overall (excluding HDF5, AbcCoreLayer, ErrorHandler)
 
-- **Total Applicable Features**: ~365
-- **Fully Implemented**: ~363 (99.5%)
+- **Total Applicable Features**: ~370
+- **Fully Implemented**: ~368 (99.5%)
 - **Partially Implemented**: ~2 (<1%)
 - **N/A (Architectural)**: ~8 (Rust ownership model)
 
@@ -675,6 +679,8 @@ Can be added later if needed.
 26. **ITypedScalarProperty<T>**: Type-safe scalar property access with 20+ type aliases
 27. **Array getAs/getKey/getDimensions**: Full array property type conversion and metadata
 28. **Material flattening**: `flatten()`, `flatten_from_terminal()`, `flatten_surface()`
+29. **TimeSampling complete**: Uniform, Cyclic, Acyclic with `get_bracketing_time_samples()` for interpolation
+30. **CLI tool**: `alembic-cli` with info/tree/stats commands and verbose logging
 
 ---
 
