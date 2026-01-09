@@ -85,8 +85,14 @@ pub fn read_time_samplings_and_max(
         const ACYCLIC_TIME_PER_CYCLE: f64 = -f64::MAX;
         
         let ts = if (tpc - ACYCLIC_TIME_PER_CYCLE).abs() < f64::EPSILON {
+            // Acyclic: explicit times for each sample
             TimeSampling::acyclic(sample_times)
+        } else if num_samples == 1 {
+            // Uniform: single stored time = start_time, tpc = time between samples
+            let start_time = sample_times[0];
+            TimeSampling::uniform(tpc, start_time)
         } else {
+            // Cyclic: multiple times per cycle that repeat
             TimeSampling::cyclic(tpc, sample_times)
         };
         

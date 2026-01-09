@@ -325,6 +325,137 @@ impl TimeSampling {
             (ceil_idx, ceil_time)
         }
     }
+    
+    /// Get bracketing time samples for interpolation.
+    /// 
+    /// Returns (floor_index, ceil_index, interpolation_amount) where:
+    /// - floor_index: index of sample at or before the given time
+    /// - ceil_index: index of sample at or after the given time  
+    /// - interp: interpolation factor [0.0, 1.0] between floor and ceil
+    ///   - 0.0 means exactly at floor time
+    ///   - 1.0 means exactly at ceil time
+    ///   - Values in between for linear interpolation
+    /// 
+    /// This is the primary method for time-based sample interpolation.
+    pub fn get_bracketing_time_samples(
+        &self,
+        time: Chrono,
+        num_samples: usize,
+    ) -> (usize, usize, Chrono) {
+        if num_samples == 0 {
+            return (0, 0, 0.0);
+        }
+        
+        if num_samples == 1 {
+            return (0, 0, 0.0);
+        }
+        
+        let (floor_idx, floor_time) = self.floor_index(time, num_samples);
+        
+        // If we're at or past the last sample, no interpolation needed
+        if floor_idx >= num_samples - 1 {
+            return (floor_idx, floor_idx, 0.0);
+        }
+        
+        let ceil_idx = floor_idx + 1;
+        let ceil_time = self.sample_time(ceil_idx, num_samples);
+        
+        // Calculate interpolation factor
+        let time_span = ceil_time - floor_time;
+        let interp = if time_span.abs() < 1e-10 {
+            0.0 // Avoid division by zero
+        } else {
+            ((time - floor_time) / time_span).clamp(0.0, 1.0)
+        };
+        
+        (floor_idx, ceil_idx, interp)
+    }
+    
+    /// Check if interpolation is needed for a given time.
+    /// 
+    /// Returns true if the time falls between two samples (interp != 0.0 and interp != 1.0).
+    pub fn needs_interpolation(&self, time: Chrono, num_samples: usize) -> bool {
+        let (floor_idx, ceil_idx, interp) = self.get_bracketing_time_samples(time, num_samples);
+        floor_idx != ceil_idx && interp > 1e-10 && interp < (1.0 - 1e-10)
+    }
+    
+    /// Get the time range covered by the samples.
+    /// 
+    /// Returns (min_time, max_time) or (0.0, 0.0) if no samples.
+    pub fn time_range(&self, num_samples: usize) -> (Chrono, Chrono) {
+        if num_samples == 0 {
+            return (0.0, 0.0);
+        }
+        
+        let min_time = self.sample_time(0, num_samples);
+        let max_time = self.sample_time(num_samples - 1, num_samples);
+        (min_time, max_time)
+    }
+    
+    /// Validate the time sampling configuration.
+    /// 
+    /// Returns Ok(()) if valid, Err with description if invalid.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        match &self.sampling_type {
+            TimeSamplingType::Identity => Ok(()),
+            TimeSamplingType::Uniform { time_per_cycle, .. } => {
+                if *time_per_cycle <= 0.0 {
+                    Err("Uniform sampling requires positive time_per_cycle")
+                } else if !time_per_cycle.is_finite() {
+                    Err("Uniform sampling time_per_cycle must be finite")
+                } else {
+                    Ok(())
+                }
+            }
+            TimeSamplingType::Cyclic { time_per_cycle, times } => {
+                if times.is_empty() {
+                    return Err("Cyclic sampling requires at least one time");
+                }
+                if *time_per_cycle <= 0.0 {
+                    return Err("Cyclic sampling requires positive time_per_cycle");
+                }
+                if !time_per_cycle.is_finite() {
+                    return Err("Cyclic sampling time_per_cycle must be finite");
+                }
+                // Check times are within cycle and monotonically increasing
+                for i in 0..times.len() {
+                    if !times[i].is_finite() {
+                        return Err("Cyclic sampling times must be finite");
+                    }
+                    if times[i] < 0.0 || times[i] >= *time_per_cycle {
+                        return Err("Cyclic times must be in [0, time_per_cycle)");
+                    }
+                    if i > 0 && times[i] <= times[i - 1] {
+                        return Err("Cyclic times must be monotonically increasing");
+                    }
+                }
+                Ok(())
+            }
+            TimeSamplingType::Acyclic { times } => {
+                if times.is_empty() {
+                    return Err("Acyclic sampling requires at least one time");
+                }
+                // Check times are finite and monotonically increasing
+                for i in 0..times.len() {
+                    if !times[i].is_finite() {
+                        return Err("Acyclic sampling times must be finite");
+                    }
+                    if i > 0 && times[i] <= times[i - 1] {
+                        return Err("Acyclic times must be monotonically increasing");
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+    
+    /// Check if this is a static (non-animated) time sampling.
+    /// 
+    /// Returns true for Identity sampling or any sampling with only one sample.
+    #[inline]
+    pub fn is_static(&self) -> bool {
+        self.sampling_type.is_identity()
+    }
 }
 
 impl Default for TimeSampling {
@@ -385,5 +516,97 @@ mod tests {
         assert!(cyclic.is_cyclic());
         assert_eq!(cyclic.samples_per_cycle(), 3);
         assert_eq!(cyclic.time_per_cycle(), 1.0);
+    }
+    
+    #[test]
+    fn test_bracketing_time_samples() {
+        // Uniform 24fps
+        let ts = TimeSampling::uniform(1.0 / 24.0, 0.0);
+        
+        // Exactly at frame 0
+        let (f, c, interp) = ts.get_bracketing_time_samples(0.0, 100);
+        assert_eq!(f, 0);
+        assert_eq!(c, 1);
+        assert!(interp < 1e-10);
+        
+        // Halfway between frame 0 and 1
+        let (f, c, interp) = ts.get_bracketing_time_samples(1.0 / 48.0, 100);
+        assert_eq!(f, 0);
+        assert_eq!(c, 1);
+        assert!((interp - 0.5).abs() < 1e-10);
+        
+        // Exactly at frame 24 (1 second)
+        let (f, c, interp) = ts.get_bracketing_time_samples(1.0, 100);
+        assert_eq!(f, 24);
+        assert_eq!(c, 25);
+        assert!(interp < 1e-10);
+    }
+    
+    #[test]
+    fn test_cyclic_sampling() {
+        // 3 samples per cycle, cycle = 1 second
+        // times within cycle: 0.0, 0.25, 0.5
+        let ts = TimeSampling::cyclic(1.0, vec![0.0, 0.25, 0.5]);
+        
+        // First cycle
+        assert!((ts.sample_time(0, 9) - 0.0).abs() < 1e-10);
+        assert!((ts.sample_time(1, 9) - 0.25).abs() < 1e-10);
+        assert!((ts.sample_time(2, 9) - 0.5).abs() < 1e-10);
+        
+        // Second cycle (add 1.0)
+        assert!((ts.sample_time(3, 9) - 1.0).abs() < 1e-10);
+        assert!((ts.sample_time(4, 9) - 1.25).abs() < 1e-10);
+        assert!((ts.sample_time(5, 9) - 1.5).abs() < 1e-10);
+        
+        // Third cycle (add 2.0)
+        assert!((ts.sample_time(6, 9) - 2.0).abs() < 1e-10);
+        assert!((ts.sample_time(7, 9) - 2.25).abs() < 1e-10);
+        assert!((ts.sample_time(8, 9) - 2.5).abs() < 1e-10);
+    }
+    
+    #[test]
+    fn test_time_range() {
+        let ts = TimeSampling::uniform(1.0 / 24.0, 0.0);
+        let (min, max) = ts.time_range(241); // 10 seconds + 1 frame
+        assert!(min.abs() < 1e-10);
+        assert!((max - 10.0).abs() < 1e-10);
+        
+        let acyclic = TimeSampling::acyclic(vec![1.0, 2.5, 5.0]);
+        let (min, max) = acyclic.time_range(3);
+        assert!((min - 1.0).abs() < 1e-10);
+        assert!((max - 5.0).abs() < 1e-10);
+    }
+    
+    #[test]
+    fn test_validation() {
+        // Valid samplings
+        assert!(TimeSampling::identity().validate().is_ok());
+        assert!(TimeSampling::uniform(1.0 / 24.0, 0.0).validate().is_ok());
+        assert!(TimeSampling::acyclic(vec![0.0, 1.0, 2.0]).validate().is_ok());
+        assert!(TimeSampling::cyclic(1.0, vec![0.0, 0.25, 0.5]).validate().is_ok());
+        
+        // Invalid: negative time_per_cycle
+        assert!(TimeSampling::uniform(-1.0, 0.0).validate().is_err());
+        
+        // Invalid: empty acyclic
+        assert!(TimeSampling::acyclic(vec![]).validate().is_err());
+        
+        // Invalid: non-monotonic acyclic
+        assert!(TimeSampling::acyclic(vec![0.0, 2.0, 1.0]).validate().is_err());
+    }
+    
+    #[test]
+    fn test_needs_interpolation() {
+        let ts = TimeSampling::uniform(1.0, 0.0); // 1 sample per second
+        
+        // Exactly at sample - no interpolation
+        assert!(!ts.needs_interpolation(0.0, 10));
+        assert!(!ts.needs_interpolation(1.0, 10));
+        assert!(!ts.needs_interpolation(5.0, 10));
+        
+        // Between samples - needs interpolation
+        assert!(ts.needs_interpolation(0.5, 10));
+        assert!(ts.needs_interpolation(1.3, 10));
+        assert!(ts.needs_interpolation(4.7, 10));
     }
 }
