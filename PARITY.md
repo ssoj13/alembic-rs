@@ -25,7 +25,7 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | `getReadArraySampleCachePtr()` | Yes | [ ] | Array sample caching |
 | `setReadArraySampleCachePtr()` | Yes | [ ] | |
 | `getCoreArchive()` | Yes | [ ] | Access to underlying AbcCoreAbstract |
-| `valid()` | Yes | [ ] | |
+| `valid()` | Yes | Yes | Always returns true in Rust |
 | Error handler policy | Yes | [ ] | |
 | Multiple archive formats (Ogawa/HDF5) | Yes | [~] | Only Ogawa implemented |
 
@@ -52,8 +52,8 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | `getName()` | Yes | Yes | `name()` |
 | `getFullName()` | Yes | Yes | `full_name()` |
 | `getMetaData()` | Yes | Yes | `meta_data()` |
-| `getArchive()` | Yes | [ ] | |
-| `getParent()` | Yes | [ ] | |
+| `getArchive()` | Yes | [ ] | Architectural limitation |
+| `getParent()` | Yes | Partial | `parent_full_name()` returns path string, `is_root()` |
 | `getNumChildren()` | Yes | Yes | `num_children()` |
 | `getChildHeader(index)` | Yes | Yes | `child_header()` |
 | `getChild(index)` | Yes | Yes | `child()` |
@@ -66,7 +66,7 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | `getPropertiesHash()` | Yes | Yes | `properties_hash()` |
 | `getChildrenHash()` | Yes | Yes | `children_hash()` |
 | Schema matching | Yes | Yes | `matches_schema()` |
-| `valid()` | Yes | [ ] | |
+| `valid()` | Yes | Yes | Always returns true in Rust |
 | Error handler policy | Yes | [ ] | |
 
 ### OObject (Output Object)
@@ -83,7 +83,7 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | `getArchive()` | Yes | [ ] | |
 | `getParent()` | Yes | [ ] | |
 | Add child object | Yes | [ ] | |
-| `valid()` | Yes | [ ] | |
+| `valid()` | Yes | Yes | Always returns true in Rust |
 
 ### ICompoundProperty
 | Feature | C++ | Rust | Notes |
@@ -99,7 +99,7 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | `getScalarProperty()` | Yes | [~] | Via `as_scalar()` |
 | `getArrayProperty()` | Yes | [~] | Via `as_array()` |
 | `getCompoundProperty()` | Yes | [~] | Via `as_compound()` |
-| `valid()` | Yes | [ ] | |
+| `valid()` | Yes | Yes | Always returns true in Rust |
 
 ### OCompoundProperty
 | Feature | C++ | Rust | Notes |
@@ -120,7 +120,7 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | `getTimeSampling()` | Yes | [ ] | |
 | `get(sample, selector)` | Yes | Yes | `read_sample()` |
 | `getParent()` | Yes | [ ] | |
-| `valid()` | Yes | [ ] | |
+| `valid()` | Yes | Yes | Always returns true in Rust |
 | Typed property access | Yes | [ ] | `ITypedScalarProperty<T>` |
 
 ### IArrayProperty
@@ -137,7 +137,7 @@ Comprehensive comparison of alembic-rs implementation vs original C++ Alembic li
 | `getKey(key, selector)` | Yes | [ ] | Array sample key |
 | `getDimensions(dims, selector)` | Yes | [ ] | |
 | `getParent()` | Yes | [ ] | |
-| `valid()` | Yes | [ ] | |
+| `valid()` | Yes | Yes | Always returns true in Rust |
 | Typed property access | Yes | [ ] | `ITypedArrayProperty<T>` |
 
 ### OScalarProperty / OArrayProperty

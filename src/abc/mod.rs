@@ -172,6 +172,40 @@ impl<'a> IObject<'a> {
     pub fn full_name(&self) -> &str {
         self.reader.as_ref().full_name()
     }
+    
+    /// Check if this is the root object.
+    /// 
+    /// Root objects have an empty name and path "/".
+    pub fn is_root(&self) -> bool {
+        let name = self.name();
+        name.is_empty() || name == "ABC"
+    }
+    
+    /// Get the full path of the parent object.
+    /// 
+    /// Returns None if this is the root object.
+    /// Use this path with archive traversal to access the parent.
+    /// 
+    /// Note: Due to Rust's ownership model, we cannot return a direct
+    /// reference to the parent. Use `archive.root()` and navigate
+    /// to the returned path to get the parent object.
+    pub fn parent_full_name(&self) -> Option<String> {
+        if self.is_root() {
+            return None;
+        }
+        let full = self.full_name();
+        // Find last '/' and return everything before it
+        if let Some(pos) = full.rfind('/') {
+            if pos == 0 {
+                // Parent is root
+                Some("/".to_string())
+            } else {
+                Some(full[..pos].to_string())
+            }
+        } else {
+            Some("/".to_string())
+        }
+    }
 
     /// Get the number of child objects.
     pub fn num_children(&self) -> usize {
