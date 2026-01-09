@@ -3,6 +3,7 @@
 //! Samples represent a single time slice of data for a property.
 
 use crate::util::Chrono;
+use crate::core::TimeSampling;
 
 /// Sample selector for reading property samples.
 #[derive(Clone, Copy, Debug)]
@@ -41,6 +42,85 @@ impl SampleSelector {
     /// Create a selector for nearest time.
     pub const fn time_near(t: Chrono) -> Self {
         Self::TimeNear(t)
+    }
+    
+    /// Resolve the actual sample index given a time sampling and sample count.
+    /// 
+    /// For index-based selectors, returns the index clamped to valid range.
+    /// For time-based selectors, uses the time sampling to find the appropriate index.
+    pub fn get_index(&self, ts: &TimeSampling, num_samples: usize) -> usize {
+        if num_samples == 0 {
+            return 0;
+        }
+        
+        let idx = match self {
+            Self::Index(i) => *i,
+            Self::TimeFloor(t) => ts.floor_index(*t, num_samples).0,
+            Self::TimeCeil(t) => ts.ceil_index(*t, num_samples).0,
+            Self::TimeNear(t) => ts.near_index(*t, num_samples).0,
+        };
+        
+        // Clamp to valid range
+        idx.min(num_samples.saturating_sub(1))
+    }
+    
+    /// Check if this selector requests a specific index (not time-based).
+    pub fn is_index(&self) -> bool {
+        matches!(self, Self::Index(_))
+    }
+    
+    /// Check if this selector is time-based.
+    pub fn is_time_based(&self) -> bool {
+        !self.is_index()
+    }
+    
+    /// Get the requested index if this is an index-based selector.
+    pub fn requested_index(&self) -> Option<usize> {
+        match self {
+            Self::Index(i) => Some(*i),
+            _ => None,
+        }
+    }
+    
+    /// Get the requested time if this is a time-based selector.
+    pub fn requested_time(&self) -> Option<Chrono> {
+        match self {
+            Self::TimeFloor(t) | Self::TimeCeil(t) | Self::TimeNear(t) => Some(*t),
+            Self::Index(_) => None,
+        }
+    }
+    
+    /// Get interpolation information for time-based sampling.
+    /// 
+    /// Returns a SampleInterp containing floor/ceil indices and interpolation factor.
+    /// For index-based selectors, returns exact interpolation at that index.
+    pub fn get_sample_interp(&self, ts: &TimeSampling, num_samples: usize) -> SampleInterp {
+        if num_samples == 0 {
+            return SampleInterp::exact(0);
+        }
+        
+        match self {
+            Self::Index(i) => {
+                let idx = (*i).min(num_samples.saturating_sub(1));
+                SampleInterp::exact(idx)
+            }
+            Self::TimeFloor(t) | Self::TimeCeil(t) | Self::TimeNear(t) => {
+                let time = *t;
+                
+                // Get floor and ceil
+                let (floor_idx, floor_time) = ts.floor_index(time, num_samples);
+                let (ceil_idx, ceil_time) = ts.ceil_index(time, num_samples);
+                
+                if floor_idx == ceil_idx || (ceil_time - floor_time).abs() < 1e-12 {
+                    // Exact sample or zero-length interval
+                    SampleInterp::exact(floor_idx)
+                } else {
+                    // Compute interpolation factor
+                    let alpha = (time - floor_time) / (ceil_time - floor_time);
+                    SampleInterp::lerp(floor_idx, ceil_idx, alpha)
+                }
+            }
+        }
     }
 }
 
@@ -99,19 +179,29 @@ impl SampleInterp {
 }
 
 /// Scope/extent of data in a geom schema sample.
+/// 
+/// This corresponds to Renderman's "Primitive Variable Class":
+/// - Constant: One value for the entire primitive
+/// - Uniform: One value per face/patch
+/// - Varying: One value per parametric corner (interpolated)
+/// - Vertex: One value per control vertex
+/// - FaceVarying: One value per face-vertex (allows discontinuities)
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum GeometryScope {
-    /// Constant for entire object.
+    /// Constant for entire object (1 value).
     #[default]
-    Constant,
-    /// Per-face varying.
-    Uniform,
-    /// Per-vertex.
-    Varying,
-    /// Per-face-vertex.
-    Vertex,
-    /// Per-face-vertex (indexed).
-    FaceVarying,
+    Constant = 0,
+    /// Per-face/patch uniform (1 value per face).
+    Uniform = 1,
+    /// Per-vertex varying (interpolated at corners).
+    Varying = 2,
+    /// Per control vertex.
+    Vertex = 3,
+    /// Per-face-vertex (allows discontinuities at edges).
+    FaceVarying = 4,
+    /// Unknown scope.
+    Unknown = 127,
 }
 
 impl GeometryScope {
@@ -123,7 +213,8 @@ impl GeometryScope {
             "var" | "varying" => Self::Varying,
             "vtx" | "vertex" => Self::Vertex,
             "fvr" | "facevarying" => Self::FaceVarying,
-            _ => Self::Constant,
+            "unk" | "unknown" => Self::Unknown,
+            _ => Self::Unknown, // Unknown for unrecognized values
         }
     }
 
@@ -135,6 +226,7 @@ impl GeometryScope {
             Self::Varying => "var",
             Self::Vertex => "vtx",
             Self::FaceVarying => "fvr",
+            Self::Unknown => "unk",
         }
     }
 }
@@ -184,5 +276,67 @@ mod tests {
     fn test_geometry_scope() {
         assert_eq!(GeometryScope::from_str("fvr"), GeometryScope::FaceVarying);
         assert_eq!(GeometryScope::Vertex.as_str(), "vtx");
+    }
+    
+    #[test]
+    fn test_sample_selector_get_index() {
+        // Uniform sampling at 24 fps
+        let ts = TimeSampling::uniform(1.0 / 24.0, 0.0);
+        let num_samples = 100;
+        
+        // Index-based
+        let sel = SampleSelector::index(5);
+        assert_eq!(sel.get_index(&ts, num_samples), 5);
+        
+        // Index clamped to range
+        let sel = SampleSelector::index(200);
+        assert_eq!(sel.get_index(&ts, num_samples), 99);
+        
+        // Time-based near: 1.0 second = frame 24
+        let sel = SampleSelector::time_near(1.0);
+        assert_eq!(sel.get_index(&ts, num_samples), 24);
+        
+        // Time-based floor
+        let sel = SampleSelector::time_floor(1.02); // Slightly after frame 24
+        assert_eq!(sel.get_index(&ts, num_samples), 24);
+        
+        // Time-based ceil  
+        let sel = SampleSelector::time_ceil(1.02);
+        assert_eq!(sel.get_index(&ts, num_samples), 25);
+    }
+    
+    #[test]
+    fn test_sample_selector_interp() {
+        let ts = TimeSampling::uniform(1.0, 0.0); // 1 fps
+        let num_samples = 10;
+        
+        // Exactly at sample
+        let sel = SampleSelector::time_near(5.0);
+        let interp = sel.get_sample_interp(&ts, num_samples);
+        assert!(interp.is_exact());
+        assert_eq!(interp.floor_index, 5);
+        
+        // Between samples
+        let sel = SampleSelector::time_near(5.5);
+        let interp = sel.get_sample_interp(&ts, num_samples);
+        assert!(!interp.is_exact());
+        assert_eq!(interp.floor_index, 5);
+        assert_eq!(interp.ceil_index, 6);
+        assert!((interp.alpha - 0.5).abs() < 0.01);
+    }
+    
+    #[test]
+    fn test_sample_selector_helpers() {
+        let sel = SampleSelector::index(5);
+        assert!(sel.is_index());
+        assert!(!sel.is_time_based());
+        assert_eq!(sel.requested_index(), Some(5));
+        assert_eq!(sel.requested_time(), None);
+        
+        let sel = SampleSelector::time_near(1.5);
+        assert!(!sel.is_index());
+        assert!(sel.is_time_based());
+        assert_eq!(sel.requested_index(), None);
+        assert_eq!(sel.requested_time(), Some(1.5));
     }
 }

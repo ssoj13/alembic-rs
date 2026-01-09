@@ -3,7 +3,7 @@
 //! Provides reading of point cloud / particle data from Alembic files.
 
 use crate::abc::IObject;
-use crate::util::Result;
+use crate::util::{Result, BBox3d};
 
 /// Points schema identifier.
 pub const POINTS_SCHEMA: &str = "AbcGeom_Points_v1";
@@ -19,6 +19,8 @@ pub struct PointsSample {
     pub velocities: Vec<glam::Vec3>,
     /// Optional widths (radius per point).
     pub widths: Vec<f32>,
+    /// Self bounds - bounding box of this geometry (optional).
+    pub self_bounds: Option<BBox3d>,
 }
 
 impl PointsSample {
@@ -45,6 +47,11 @@ impl PointsSample {
     /// Check if sample has ID data.
     pub fn has_ids(&self) -> bool {
         !self.ids.is_empty()
+    }
+    
+    /// Check if sample has self bounds.
+    pub fn has_self_bounds(&self) -> bool {
+        self.self_bounds.is_some()
     }
     
     /// Check if sample is valid.
@@ -127,6 +134,66 @@ impl<'a> IPoints<'a> {
         self.num_samples() <= 1
     }
     
+    /// Check if points have arbitrary geometry parameters.
+    pub fn has_arb_geom_params(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return false;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return false;
+        };
+        geom.has_property(".arbGeomParams")
+    }
+    
+    /// Get names of arbitrary geometry parameters.
+    pub fn arb_geom_param_names(&self) -> Vec<String> {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return Vec::new();
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return Vec::new();
+        };
+        let Some(arb_prop) = geom.property_by_name(".arbGeomParams") else {
+            return Vec::new();
+        };
+        let Some(arb) = arb_prop.as_compound() else {
+            return Vec::new();
+        };
+        arb.property_names()
+    }
+    
+    /// Check if points have user properties.
+    pub fn has_user_properties(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return false;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return false;
+        };
+        geom.has_property(".userProperties")
+    }
+    
+    /// Get names of user properties.
+    pub fn user_property_names(&self) -> Vec<String> {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return Vec::new();
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return Vec::new();
+        };
+        let Some(user_prop) = geom.property_by_name(".userProperties") else {
+            return Vec::new();
+        };
+        let Some(user) = user_prop.as_compound() else {
+            return Vec::new();
+        };
+        user.property_names()
+    }
+    
     /// Read a sample at the given index.
     pub fn get_sample(&self, index: usize) -> Result<PointsSample> {
         use crate::util::Error;
@@ -160,8 +227,10 @@ impl<'a> IPoints<'a> {
             }
         }
         
-        // Read velocity
-        if let Some(v_prop) = geom.property_by_name("velocity") {
+        // Read velocity (try both "velocity" and ".velocities")
+        let v_prop = geom.property_by_name("velocity")
+            .or_else(|| geom.property_by_name(".velocities"));
+        if let Some(v_prop) = v_prop {
             if let Some(array) = v_prop.as_array() {
                 if let Ok(data) = array.read_sample_vec(index) {
                     let floats: &[f32] = bytemuck::cast_slice(&data);
@@ -177,6 +246,22 @@ impl<'a> IPoints<'a> {
             if let Some(array) = w_prop.as_array() {
                 if let Ok(data) = array.read_sample_vec(index) {
                     sample.widths = bytemuck::cast_slice::<u8, f32>(&data).to_vec();
+                }
+            }
+        }
+        
+        // Read .selfBnds if present
+        if let Some(bnds_prop) = geom.property_by_name(".selfBnds") {
+            if let Some(scalar) = bnds_prop.as_scalar() {
+                let mut buf = [0u8; 48]; // 6 x f64
+                if scalar.read_sample(index, &mut buf).is_ok() {
+                    let doubles: &[f64] = bytemuck::cast_slice(&buf);
+                    if doubles.len() >= 6 {
+                        sample.self_bounds = Some(BBox3d::new(
+                            glam::dvec3(doubles[0], doubles[1], doubles[2]),
+                            glam::dvec3(doubles[3], doubles[4], doubles[5]),
+                        ));
+                    }
                 }
             }
         }

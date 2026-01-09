@@ -21,7 +21,7 @@ use std::path::Path;
 use crate::core::{
     ArchiveReader, ObjectReader, CompoundPropertyReader, PropertyReader,
     ScalarPropertyReader, ArrayPropertyReader,
-    ObjectHeader, PropertyHeader, TimeSampling, SampleSelector,
+    ObjectHeader, PropertyHeader, TimeSampling, SampleSelector, MetaData,
 };
 use crate::ogawa::OgawaArchiveReader;
 use crate::util::Result;
@@ -68,6 +68,31 @@ impl IArchive {
     pub fn root(&self) -> IObject<'_> {
         IObject::new(self.reader.root())
     }
+    
+    /// Get the archive version.
+    /// 
+    /// Returns the Alembic library version this archive was written with.
+    /// Format: AABBCC where AA=major, BB=minor, CC=patch (e.g., 10703 = 1.7.3)
+    pub fn archive_version(&self) -> i32 {
+        self.reader.archive_version()
+    }
+    
+    /// Get the maximum number of samples for a given time sampling index.
+    /// 
+    /// Returns None if the index is invalid or the information isn't available
+    /// (for archives created before version 1.1.3).
+    pub fn max_num_samples_for_time_sampling(&self, index: u32) -> Option<usize> {
+        self.reader.max_num_samples_for_time_sampling(index as usize)
+    }
+    
+    /// Check if this archive is valid.
+    /// 
+    /// In Rust, this always returns true for a successfully constructed archive.
+    /// Provided for API parity with the C++ Alembic library.
+    #[inline]
+    pub fn valid(&self) -> bool {
+        true
+    }
 }
 
 /// Output archive for writing Alembic files.
@@ -86,6 +111,14 @@ impl OArchive {
     /// Get the root object of the archive.
     pub fn root(&mut self) -> OObject<'_> {
         OObject { _phantom: std::marker::PhantomData }
+    }
+    
+    /// Check if this archive is valid.
+    /// 
+    /// In Rust, this always returns true for a successfully constructed archive.
+    #[inline]
+    pub fn valid(&self) -> bool {
+        true
     }
 }
 
@@ -169,6 +202,89 @@ impl<'a> IObject<'a> {
     pub fn properties(&self) -> ICompoundProperty<'_> {
         ICompoundProperty::new(self.reader.as_ref().properties())
     }
+    
+    /// Get the metadata.
+    pub fn meta_data(&self) -> &MetaData {
+        self.reader.as_ref().meta_data()
+    }
+    
+    /// Get the header of a child object by index without creating a full object.
+    pub fn child_header(&self, index: usize) -> Option<&ObjectHeader> {
+        self.reader.as_ref().child_header(index)
+    }
+    
+    /// Get the header of a child object by name without creating a full object.
+    pub fn child_header_by_name(&self, name: &str) -> Option<&ObjectHeader> {
+        self.reader.as_ref().child_header_by_name(name)
+    }
+    
+    // ========================================================================
+    // Instance support
+    // ========================================================================
+    
+    /// Check if this object is an instance root (directly instances another object).
+    /// 
+    /// An object can reference another object in the same archive and act as
+    /// an instance. This method returns true if this object is such an instance.
+    pub fn is_instance_root(&self) -> bool {
+        self.reader.as_ref().is_instance_root()
+    }
+    
+    /// Check if this object has been reached via an instance path.
+    /// 
+    /// This returns true if this object is either an instance itself or
+    /// any of its ancestors is an instance.
+    pub fn is_instance_descendant(&self) -> bool {
+        self.reader.as_ref().is_instance_descendant()
+    }
+    
+    /// Get the source path if this is an instance.
+    /// 
+    /// If this object is an instance (is_instance_root() returns true),
+    /// this returns the path to the source object that is being instanced.
+    /// Otherwise returns an empty string.
+    pub fn instance_source_path(&self) -> &str {
+        self.reader.as_ref().instance_source_path()
+    }
+    
+    /// Check if the child at the given index is an instance.
+    pub fn is_child_instance(&self, index: usize) -> bool {
+        self.reader.as_ref().is_child_instance(index)
+    }
+    
+    /// Check if the child with the given name is an instance.
+    pub fn is_child_instance_by_name(&self, name: &str) -> bool {
+        self.reader.as_ref().is_child_instance_by_name(name)
+    }
+    
+    // ========================================================================
+    // Hash support
+    // ========================================================================
+    
+    /// Get the aggregated properties hash if available.
+    /// 
+    /// This returns a 16-byte digest that can be used to quickly
+    /// compare if the properties have changed between two objects.
+    pub fn properties_hash(&self) -> Option<[u8; 16]> {
+        self.reader.as_ref().properties_hash()
+    }
+    
+    /// Get the aggregated children hash if available.
+    /// 
+    /// This returns a 16-byte digest that can be used to quickly
+    /// compare if the child hierarchy has changed.
+    pub fn children_hash(&self) -> Option<[u8; 16]> {
+        self.reader.as_ref().children_hash()
+    }
+    
+    /// Check if this object is valid.
+    /// 
+    /// In Rust, this always returns true for a successfully constructed object.
+    /// Provided for API parity with the C++ Alembic library.
+    #[inline]
+    pub fn valid(&self) -> bool {
+        true
+    }
 }
 
 /// Output object for writing scene hierarchy.
@@ -180,6 +296,12 @@ impl OObject<'_> {
     /// Get the name of this object.
     pub fn name(&self) -> &str {
         ""
+    }
+    
+    /// Check if this object is valid.
+    #[inline]
+    pub fn valid(&self) -> bool {
+        true
     }
 }
 
@@ -225,6 +347,12 @@ impl<'a> ICompoundProperty<'a> {
     /// Get a property by name.
     pub fn property_by_name(&self, name: &str) -> Option<IProperty<'_>> {
         self.reader.property_by_name(name).map(IProperty::new)
+    }
+    
+    /// Check if this property is valid.
+    #[inline]
+    pub fn valid(&self) -> bool {
+        true
     }
 }
 
@@ -281,6 +409,12 @@ impl<'a> IProperty<'a> {
     /// Get as array property reader.
     pub fn as_array(&self) -> Option<&dyn ArrayPropertyReader> {
         self.reader.as_array()
+    }
+    
+    /// Check if this property is valid.
+    #[inline]
+    pub fn valid(&self) -> bool {
+        true
     }
 }
 

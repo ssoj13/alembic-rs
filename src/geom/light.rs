@@ -1,0 +1,237 @@
+//! Light schema implementation.
+//!
+//! Provides reading of light data from Alembic files.
+//! Lights in Alembic are container schemas that can contain
+//! camera-like properties for light parameters.
+
+use crate::abc::IObject;
+use crate::util::{Result, BBox3d};
+use super::camera::CameraSample;
+
+/// Light schema identifier.
+pub const LIGHT_SCHEMA: &str = "AbcGeom_Light_v1";
+
+/// Light sample data.
+/// 
+/// Lights in Alembic use camera-like parameters for their properties.
+/// The actual light type and parameters are determined by the application
+/// reading the file - Alembic itself doesn't define light types.
+#[derive(Clone, Debug, Default)]
+pub struct LightSample {
+    /// Camera parameters (shared with ICamera).
+    pub camera: CameraSample,
+    /// Child bounds (optional).
+    pub child_bounds: Option<BBox3d>,
+}
+
+impl LightSample {
+    /// Create an empty sample.
+    pub fn new() -> Self {
+        Self::default()
+    }
+    
+    /// Check if sample has valid data.
+    pub fn is_valid(&self) -> bool {
+        true // Light samples are always valid even if empty
+    }
+}
+
+/// Input Light schema reader.
+/// 
+/// The Light schema is a container that can hold camera-like parameters
+/// for representing light properties. The interpretation of these values
+/// depends on the application.
+pub struct ILight<'a> {
+    object: &'a IObject<'a>,
+}
+
+impl<'a> ILight<'a> {
+    /// Wrap an IObject as an ILight.
+    /// Returns None if the object doesn't have the Light schema.
+    pub fn new(object: &'a IObject<'a>) -> Option<Self> {
+        if object.matches_schema(LIGHT_SCHEMA) {
+            Some(Self { object })
+        } else {
+            None
+        }
+    }
+    
+    /// Get the underlying object.
+    pub fn object(&self) -> &IObject<'a> {
+        self.object
+    }
+    
+    /// Get the object name.
+    pub fn name(&self) -> &str {
+        self.object.name()
+    }
+    
+    /// Get the full path.
+    pub fn full_name(&self) -> &str {
+        self.object.full_name()
+    }
+    
+    /// Get number of samples.
+    pub fn num_samples(&self) -> usize {
+        // Lights may not have animated properties, default to 1
+        let props = self.object.properties();
+        
+        // Check for camera-like properties
+        if let Some(geom_prop) = props.property_by_name(".geom") {
+            if let Some(geom) = geom_prop.as_compound() {
+                // Check focalLength as it's commonly animated
+                if let Some(fl_prop) = geom.property_by_name("focalLength") {
+                    if let Some(scalar) = fl_prop.as_scalar() {
+                        return scalar.num_samples();
+                    }
+                }
+            }
+        }
+        1
+    }
+    
+    /// Check if this light is constant (single sample).
+    pub fn is_constant(&self) -> bool {
+        self.num_samples() <= 1
+    }
+    
+    /// Get available property names.
+    pub fn property_names(&self) -> Vec<String> {
+        self.object.properties().property_names()
+    }
+    
+    /// Read a sample at the given index.
+    pub fn get_sample(&self, index: usize) -> Result<LightSample> {
+        let mut sample = LightSample::new();
+        
+        let props = self.object.properties();
+        
+        // Try to read camera-like properties from .geom
+        if let Some(geom_prop) = props.property_by_name(".geom") {
+            if let Some(geom) = geom_prop.as_compound() {
+                // Read camera parameters
+                sample.camera = Self::read_camera_params(&geom, index);
+                
+                // Read .childBnds if present
+                if let Some(bnds_prop) = geom.property_by_name(".childBnds") {
+                    if let Some(scalar) = bnds_prop.as_scalar() {
+                        let mut buf = [0u8; 48];
+                        if scalar.read_sample(index, &mut buf).is_ok() {
+                            let values: &[f64] = bytemuck::cast_slice(&buf);
+                            if values.len() >= 6 {
+                                sample.child_bounds = Some(BBox3d::new(
+                                    glam::dvec3(values[0], values[1], values[2]),
+                                    glam::dvec3(values[3], values[4], values[5]),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(sample)
+    }
+    
+    /// Read camera-like parameters from a compound property.
+    fn read_camera_params(geom: &crate::abc::ICompoundProperty<'_>, index: usize) -> CameraSample {
+        let mut cam = CameraSample::default();
+        
+        // Read focal length
+        if let Some(prop) = geom.property_by_name("focalLength") {
+            if let Some(scalar) = prop.as_scalar() {
+                let mut buf = [0u8; 8];
+                if scalar.read_sample(index, &mut buf).is_ok() {
+                    cam.focal_length = f64::from_le_bytes(buf);
+                }
+            }
+        }
+        
+        // Read horizontal aperture
+        if let Some(prop) = geom.property_by_name("horizontalAperture") {
+            if let Some(scalar) = prop.as_scalar() {
+                let mut buf = [0u8; 8];
+                if scalar.read_sample(index, &mut buf).is_ok() {
+                    cam.horizontal_aperture = f64::from_le_bytes(buf);
+                }
+            }
+        }
+        
+        // Read vertical aperture
+        if let Some(prop) = geom.property_by_name("verticalAperture") {
+            if let Some(scalar) = prop.as_scalar() {
+                let mut buf = [0u8; 8];
+                if scalar.read_sample(index, &mut buf).is_ok() {
+                    cam.vertical_aperture = f64::from_le_bytes(buf);
+                }
+            }
+        }
+        
+        // Read near clipping plane
+        if let Some(prop) = geom.property_by_name("nearClippingPlane") {
+            if let Some(scalar) = prop.as_scalar() {
+                let mut buf = [0u8; 8];
+                if scalar.read_sample(index, &mut buf).is_ok() {
+                    cam.near_clipping_plane = f64::from_le_bytes(buf);
+                }
+            }
+        }
+        
+        // Read far clipping plane
+        if let Some(prop) = geom.property_by_name("farClippingPlane") {
+            if let Some(scalar) = prop.as_scalar() {
+                let mut buf = [0u8; 8];
+                if scalar.read_sample(index, &mut buf).is_ok() {
+                    cam.far_clipping_plane = f64::from_le_bytes(buf);
+                }
+            }
+        }
+        
+        cam
+    }
+    
+    /// Check if this light has child bounds.
+    pub fn has_child_bounds(&self) -> bool {
+        let props = self.object.properties();
+        if let Some(geom_prop) = props.property_by_name(".geom") {
+            if let Some(geom) = geom_prop.as_compound() {
+                return geom.has_property(".childBnds");
+            }
+        }
+        false
+    }
+    
+    /// Check if this light has arbitrary geometry params.
+    pub fn has_arb_geom_params(&self) -> bool {
+        let props = self.object.properties();
+        if let Some(geom_prop) = props.property_by_name(".geom") {
+            if let Some(geom) = geom_prop.as_compound() {
+                return geom.has_property(".arbGeomParams");
+            }
+        }
+        false
+    }
+    
+    /// Check if this light has user properties.
+    pub fn has_user_properties(&self) -> bool {
+        let props = self.object.properties();
+        if let Some(geom_prop) = props.property_by_name(".geom") {
+            if let Some(geom) = geom_prop.as_compound() {
+                return geom.has_property(".userProperties");
+            }
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_light_sample_default() {
+        let sample = LightSample::new();
+        assert!(sample.is_valid());
+        assert!(sample.child_bounds.is_none());
+    }
+}

@@ -171,6 +171,14 @@ impl ArchiveReader for OgawaArchiveReader {
         // For now, return self as a "root object"
         self
     }
+    
+    fn archive_version(&self) -> i32 {
+        self.archive_version
+    }
+    
+    fn max_num_samples_for_time_sampling(&self, index: usize) -> Option<usize> {
+        self.max_samples.get(index).map(|&v| v as usize)
+    }
 }
 
 // Implement ObjectReader for OgawaArchiveReader (as the root object)

@@ -18,12 +18,17 @@ pub mod curves;
 pub mod points;
 pub mod subd;
 pub mod camera;
+pub mod visibility;
+pub mod geom_param;
+pub mod faceset;
+pub mod nupatch;
+pub mod light;
 
 // Re-export xform types
 pub use xform::{IXform, XformSample, XformOp, XformOpType, XFORM_SCHEMA};
 
 // Re-export polymesh types
-pub use polymesh::{IPolyMesh, PolyMeshSample, MeshTopologyVariance, POLYMESH_SCHEMA};
+pub use polymesh::{IPolyMesh, PolyMeshSample, POLYMESH_SCHEMA};
 
 // Re-export curves types
 pub use curves::{ICurves, CurvesSample, CurveType, CurvePeriodicity, BasisType, CURVES_SCHEMA};
@@ -36,6 +41,27 @@ pub use subd::{ISubD, SubDSample, SubDScheme, SUBD_SCHEMA};
 
 // Re-export camera types
 pub use camera::{ICamera, CameraSample, CAMERA_SCHEMA};
+
+// Re-export visibility types
+pub use visibility::{ObjectVisibility, VISIBILITY_PROPERTY_NAME, get_visibility, is_visible, get_visibility_property};
+
+// Re-export geom_param types
+pub use geom_param::{
+    IGeomParam, GeomParamSample,
+    IV2fGeomParam, IV3fGeomParam, IN3fGeomParam,
+    IC3fGeomParam, IC4fGeomParam,
+    IInt32GeomParam, IUInt32GeomParam, IFloatGeomParam,
+    GEOM_SCOPE_KEY, VALS_PROPERTY_NAME, INDICES_PROPERTY_NAME,
+};
+
+// Re-export faceset types
+pub use faceset::{IFaceSet, FaceSetSample, FaceSetExclusivity, FACESET_SCHEMA};
+
+// Re-export nupatch types
+pub use nupatch::{INuPatch, NuPatchSample, TrimCurveData, NUPATCH_SCHEMA};
+
+// Re-export light types
+pub use light::{ILight, LightSample, LIGHT_SCHEMA};
 
 // ============================================================================
 // PolyMesh
@@ -95,45 +121,16 @@ pub struct OCamera {
 // FaceSet
 // ============================================================================
 
-/// Input face set schema.
-pub struct IFaceSet {
-    _phantom: PhantomData<()>,
-}
-
 /// Output face set schema.
 pub struct OFaceSet {
     _phantom: PhantomData<()>,
-}
-
-/// Face set sample data.
-#[derive(Clone, Debug, Default)]
-pub struct FaceSetSample {
-    pub faces: Vec<i32>,
 }
 
 // ============================================================================
 // NuPatch (NURBS)
 // ============================================================================
 
-/// Input NURBS patch schema.
-pub struct INuPatch {
-    _phantom: PhantomData<()>,
-}
-
 /// Output NURBS patch schema.
 pub struct ONuPatch {
     _phantom: PhantomData<()>,
-}
-
-/// NURBS patch sample data.
-#[derive(Clone, Debug, Default)]
-pub struct NuPatchSample {
-    pub positions: Vec<glam::Vec3>,
-    pub num_u: i32,
-    pub num_v: i32,
-    pub u_order: i32,
-    pub v_order: i32,
-    pub u_knots: Vec<f32>,
-    pub v_knots: Vec<f32>,
-    pub weights: Option<Vec<f32>>,
 }

@@ -3,7 +3,7 @@
 //! These traits define the interface between the low-level Ogawa layer
 //! and the high-level Abc API.
 
-use crate::core::{ObjectHeader, PropertyHeader, TimeSampling};
+use crate::core::{ObjectHeader, PropertyHeader, TimeSampling, MetaData};
 use crate::util::Result;
 
 // ============================================================================
@@ -23,6 +23,18 @@ pub trait ArchiveReader: Send + Sync {
 
     /// Get the root object.
     fn root(&self) -> &dyn ObjectReader;
+    
+    /// Get the archive version.
+    /// Returns the Alembic library version this archive was written with.
+    fn archive_version(&self) -> i32 {
+        0 // Default for older archives
+    }
+    
+    /// Get the maximum number of samples for a given time sampling index.
+    /// Returns None if the index is invalid or the info isn't available.
+    fn max_num_samples_for_time_sampling(&self, _index: usize) -> Option<usize> {
+        None // Default - not available
+    }
 
     /// Find an object by full path.
     fn find_object(&self, path: &str) -> Option<Box<dyn ObjectReader + '_>> {
@@ -99,6 +111,66 @@ pub trait ObjectReader: Send + Sync {
     /// Check if object matches a schema.
     fn matches_schema(&self, schema: &str) -> bool {
         self.header().meta_data.matches_schema(schema)
+    }
+    
+    /// Get metadata (convenience).
+    fn meta_data(&self) -> &MetaData {
+        &self.header().meta_data
+    }
+    
+    /// Get header of child object at index without creating full reader.
+    fn child_header(&self, _index: usize) -> Option<&ObjectHeader> {
+        None  // Default: not implemented
+    }
+    
+    /// Get header of child object by name without creating full reader.
+    fn child_header_by_name(&self, _name: &str) -> Option<&ObjectHeader> {
+        None  // Default: not implemented
+    }
+    
+    // ========================================================================
+    // Instance support
+    // ========================================================================
+    
+    /// Check if this object is an instance root (directly instances another object).
+    fn is_instance_root(&self) -> bool {
+        false
+    }
+    
+    /// Check if this object has been reached via an instance path.
+    fn is_instance_descendant(&self) -> bool {
+        false
+    }
+    
+    /// If this object is an instance, returns the source path. Empty string otherwise.
+    fn instance_source_path(&self) -> &str {
+        ""
+    }
+    
+    /// Check if child at index is an instance.
+    fn is_child_instance(&self, _index: usize) -> bool {
+        false
+    }
+    
+    /// Check if child with given name is an instance.
+    fn is_child_instance_by_name(&self, _name: &str) -> bool {
+        false
+    }
+    
+    // ========================================================================
+    // Hash support
+    // ========================================================================
+    
+    /// Get aggregated properties hash if available.
+    /// Returns 16-byte digest.
+    fn properties_hash(&self) -> Option<[u8; 16]> {
+        None
+    }
+    
+    /// Get aggregated children hash if available.
+    /// Returns 16-byte digest.
+    fn children_hash(&self) -> Option<[u8; 16]> {
+        None
     }
 }
 

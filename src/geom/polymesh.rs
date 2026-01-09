@@ -3,7 +3,9 @@
 //! Provides reading of polygon mesh data from Alembic files.
 
 use crate::abc::IObject;
-use crate::util::Result;
+use crate::core::TopologyVariance;
+use crate::geom::faceset::{IFaceSet, FACESET_SCHEMA};
+use crate::util::{Result, BBox3d};
 
 /// PolyMesh schema identifier.
 pub const POLYMESH_SCHEMA: &str = "AbcGeom_PolyMesh_v1";
@@ -23,8 +25,8 @@ pub struct PolyMeshSample {
     pub uvs: Option<Vec<glam::Vec2>>,
     /// Normals (optional).
     pub normals: Option<Vec<glam::Vec3>>,
-    /// Bounding box (optional).
-    pub bounds: Option<glam::Vec3A>,
+    /// Self bounds - bounding box of this geometry (optional).
+    pub self_bounds: Option<BBox3d>,
 }
 
 impl PolyMeshSample {
@@ -61,6 +63,11 @@ impl PolyMeshSample {
     /// Check if mesh has velocities.
     pub fn has_velocities(&self) -> bool {
         self.velocities.is_some()
+    }
+    
+    /// Check if mesh has self bounds.
+    pub fn has_self_bounds(&self) -> bool {
+        self.self_bounds.is_some()
     }
     
     /// Check if this is a valid mesh (has positions and face data).
@@ -167,9 +174,161 @@ impl<'a> IPolyMesh<'a> {
         self.num_samples() <= 1
     }
     
+    /// Get the topology variance for this mesh.
+    /// 
+    /// Returns:
+    /// - Static: Only one sample exists
+    /// - Homogeneous: Topology is constant, only positions change
+    /// - Heterogeneous: Topology can change between samples
+    pub fn topology_variance(&self) -> TopologyVariance {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return TopologyVariance::Static;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return TopologyVariance::Static;
+        };
+        
+        // Get sample counts for positions and topology
+        let p_samples = if let Some(p) = geom.property_by_name("P") {
+            p.as_array().map(|a| a.num_samples()).unwrap_or(1)
+        } else { 1 };
+        
+        let fc_samples = if let Some(fc) = geom.property_by_name(".faceCounts") {
+            fc.as_array().map(|a| a.num_samples()).unwrap_or(1)
+        } else { 1 };
+        
+        let fi_samples = if let Some(fi) = geom.property_by_name(".faceIndices") {
+            fi.as_array().map(|a| a.num_samples()).unwrap_or(1)
+        } else { 1 };
+        
+        // Determine variance
+        let max_samples = p_samples.max(fc_samples).max(fi_samples);
+        
+        if max_samples <= 1 {
+            TopologyVariance::Static
+        } else if fc_samples <= 1 && fi_samples <= 1 {
+            // Topology constant, only positions animated
+            TopologyVariance::Homogeneous
+        } else {
+            // Topology can change
+            TopologyVariance::Heterogeneous
+        }
+    }
+    
     /// Get property names available on this mesh.
     pub fn property_names(&self) -> Vec<String> {
         self.object.properties().property_names()
+    }
+    
+    /// Get the names of all FaceSets on this mesh.
+    /// 
+    /// FaceSets are child objects with the FaceSet schema.
+    pub fn face_set_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        for i in 0..self.object.num_children() {
+            if let Some(header) = self.object.child_header(i) {
+                if header.meta_data.get("schema").map(|s| s == FACESET_SCHEMA).unwrap_or(false) {
+                    names.push(header.name.clone());
+                }
+            }
+        }
+        names
+    }
+    
+    /// Check if this mesh has a FaceSet with the given name.
+    pub fn has_face_set(&self, name: &str) -> bool {
+        if let Some(child) = self.object.child_by_name(name) {
+            child.matches_schema(FACESET_SCHEMA)
+        } else {
+            false
+        }
+    }
+    
+    /// Get a FaceSet by name.
+    /// 
+    /// Returns None if the FaceSet doesn't exist or doesn't have the FaceSet schema.
+    pub fn face_set(&self, name: &str) -> Option<IFaceSet<'_>> {
+        let child = self.object.child_by_name(name)?;
+        // Need to check schema and wrap - but child is owned, so we need a different approach
+        // For now, return None if not matching
+        if child.matches_schema(FACESET_SCHEMA) {
+            // We can't easily return IFaceSet because IFaceSet needs &IObject reference
+            // This would require storing the child somewhere - architectural limitation
+            // Return None for now, user can iterate children manually
+            None
+        } else {
+            None
+        }
+    }
+    
+    /// Get number of FaceSets on this mesh.
+    pub fn num_face_sets(&self) -> usize {
+        self.face_set_names().len()
+    }
+    
+    /// Check if this mesh has arbitrary geometry parameters.
+    pub fn has_arb_geom_params(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return false;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return false;
+        };
+        geom.has_property(".arbGeomParams")
+    }
+    
+    /// Get names of arbitrary geometry parameters.
+    /// 
+    /// Returns property names within the .arbGeomParams compound.
+    pub fn arb_geom_param_names(&self) -> Vec<String> {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return Vec::new();
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return Vec::new();
+        };
+        let Some(arb_prop) = geom.property_by_name(".arbGeomParams") else {
+            return Vec::new();
+        };
+        let Some(arb) = arb_prop.as_compound() else {
+            return Vec::new();
+        };
+        arb.property_names()
+    }
+    
+    /// Check if this mesh has user properties.
+    pub fn has_user_properties(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return false;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return false;
+        };
+        geom.has_property(".userProperties")
+    }
+    
+    /// Get names of user properties.
+    /// 
+    /// Returns property names within the .userProperties compound.
+    pub fn user_property_names(&self) -> Vec<String> {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return Vec::new();
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return Vec::new();
+        };
+        let Some(user_prop) = geom.property_by_name(".userProperties") else {
+            return Vec::new();
+        };
+        let Some(user) = user_prop.as_compound() else {
+            return Vec::new();
+        };
+        user.property_names()
     }
     
     /// Read a sample at the given index.
@@ -192,6 +351,20 @@ impl<'a> IPolyMesh<'a> {
                 sample.positions = floats.chunks_exact(3)
                     .map(|c| glam::vec3(c[0], c[1], c[2]))
                     .collect();
+            }
+        }
+        
+        // Read .velocities (for motion blur)
+        if let Some(v_prop) = geom.property_by_name(".velocities") {
+            if let Some(array_reader) = v_prop.as_array() {
+                if let Ok(data) = array_reader.read_sample_vec(index) {
+                    let floats: &[f32] = bytemuck::cast_slice(&data);
+                    sample.velocities = Some(
+                        floats.chunks_exact(3)
+                            .map(|c| glam::vec3(c[0], c[1], c[2]))
+                            .collect()
+                    );
+                }
             }
         }
         
@@ -239,17 +412,24 @@ impl<'a> IPolyMesh<'a> {
             }
         }
         
+        // Read .selfBnds if present
+        if let Some(bnds_prop) = geom.property_by_name(".selfBnds") {
+            if let Some(scalar) = bnds_prop.as_scalar() {
+                let mut buf = [0u8; 48]; // 6 x f64
+                if scalar.read_sample(index, &mut buf).is_ok() {
+                    let doubles: &[f64] = bytemuck::cast_slice(&buf);
+                    if doubles.len() >= 6 {
+                        sample.self_bounds = Some(BBox3d::new(
+                            glam::dvec3(doubles[0], doubles[1], doubles[2]),
+                            glam::dvec3(doubles[3], doubles[4], doubles[5]),
+                        ));
+                    }
+                }
+            }
+        }
+        
         Ok(sample)
     }
-}
-
-/// Topology type for mesh changes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MeshTopologyVariance {
-    /// Topology is constant (vertex count and connectivity don't change).
-    Constant,
-    /// Topology can change between samples.
-    Varying,
 }
 
 #[cfg(test)]

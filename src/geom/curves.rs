@@ -3,7 +3,8 @@
 //! Provides reading of curve data (NURBS, Bezier, linear) from Alembic files.
 
 use crate::abc::IObject;
-use crate::util::Result;
+use crate::core::TopologyVariance;
+use crate::util::{Result, BBox3d};
 
 /// Curves schema identifier.
 pub const CURVES_SCHEMA: &str = "AbcGeom_Curve_v2";
@@ -100,6 +101,8 @@ impl BasisType {
 pub struct CurvesSample {
     /// Curve positions (all curves concatenated).
     pub positions: Vec<glam::Vec3>,
+    /// Vertex velocities (optional, for motion blur).
+    pub velocities: Option<Vec<glam::Vec3>>,
     /// Number of vertices per curve.
     pub num_vertices: Vec<i32>,
     /// Curve type.
@@ -118,6 +121,8 @@ pub struct CurvesSample {
     pub knots: Vec<f32>,
     /// Optional orders for NURBS curves.
     pub orders: Vec<i32>,
+    /// Self bounds (axis-aligned bounding box).
+    pub self_bounds: Option<BBox3d>,
 }
 
 impl CurvesSample {
@@ -149,6 +154,16 @@ impl CurvesSample {
     /// Check if sample has normal data.
     pub fn has_normals(&self) -> bool {
         !self.normals.is_empty()
+    }
+    
+    /// Check if sample has velocities.
+    pub fn has_velocities(&self) -> bool {
+        self.velocities.is_some()
+    }
+    
+    /// Check if sample has self bounds.
+    pub fn has_self_bounds(&self) -> bool {
+        self.self_bounds.is_some()
     }
     
     /// Check if sample is valid (has data).
@@ -250,6 +265,102 @@ impl<'a> ICurves<'a> {
         self.num_samples() <= 1
     }
     
+    /// Get the topology variance for these curves.
+    /// 
+    /// Returns:
+    /// - Static: Only one sample exists
+    /// - Homogeneous: Topology is constant, only positions change
+    /// - Heterogeneous: Topology can change between samples
+    pub fn topology_variance(&self) -> TopologyVariance {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return TopologyVariance::Static;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return TopologyVariance::Static;
+        };
+        
+        // Get sample counts for positions and topology
+        let p_samples = if let Some(p) = geom.property_by_name("P") {
+            p.as_array().map(|a| a.num_samples()).unwrap_or(1)
+        } else { 1 };
+        
+        let nv_samples = if let Some(nv) = geom.property_by_name("nVertices") {
+            nv.as_array().map(|a| a.num_samples()).unwrap_or(1)
+        } else { 1 };
+        
+        // Determine variance
+        let max_samples = p_samples.max(nv_samples);
+        
+        if max_samples <= 1 {
+            TopologyVariance::Static
+        } else if nv_samples <= 1 {
+            TopologyVariance::Homogeneous
+        } else {
+            TopologyVariance::Heterogeneous
+        }
+    }
+    
+    /// Check if curves have arbitrary geometry parameters.
+    pub fn has_arb_geom_params(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return false;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return false;
+        };
+        geom.has_property(".arbGeomParams")
+    }
+    
+    /// Get names of arbitrary geometry parameters.
+    pub fn arb_geom_param_names(&self) -> Vec<String> {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return Vec::new();
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return Vec::new();
+        };
+        let Some(arb_prop) = geom.property_by_name(".arbGeomParams") else {
+            return Vec::new();
+        };
+        let Some(arb) = arb_prop.as_compound() else {
+            return Vec::new();
+        };
+        arb.property_names()
+    }
+    
+    /// Check if curves have user properties.
+    pub fn has_user_properties(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return false;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return false;
+        };
+        geom.has_property(".userProperties")
+    }
+    
+    /// Get names of user properties.
+    pub fn user_property_names(&self) -> Vec<String> {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return Vec::new();
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return Vec::new();
+        };
+        let Some(user_prop) = geom.property_by_name(".userProperties") else {
+            return Vec::new();
+        };
+        let Some(user) = user_prop.as_compound() else {
+            return Vec::new();
+        };
+        user.property_names()
+    }
+    
     /// Read a sample at the given index.
     pub fn get_sample(&self, index: usize) -> Result<CurvesSample> {
         use crate::util::Error;
@@ -270,6 +381,20 @@ impl<'a> ICurves<'a> {
                     sample.positions = floats.chunks_exact(3)
                         .map(|c| glam::vec3(c[0], c[1], c[2]))
                         .collect();
+                }
+            }
+        }
+        
+        // Read .velocities (for motion blur)
+        if let Some(v_prop) = geom.property_by_name(".velocities") {
+            if let Some(array) = v_prop.as_array() {
+                if let Ok(data) = array.read_sample_vec(index) {
+                    let floats: &[f32] = bytemuck::cast_slice(&data);
+                    sample.velocities = Some(
+                        floats.chunks_exact(3)
+                            .map(|c| glam::vec3(c[0], c[1], c[2]))
+                            .collect()
+                    );
                 }
             }
         }
@@ -342,6 +467,22 @@ impl<'a> ICurves<'a> {
             if let Some(array) = o_prop.as_array() {
                 if let Ok(data) = array.read_sample_vec(index) {
                     sample.orders = bytemuck::cast_slice::<u8, i32>(&data).to_vec();
+                }
+            }
+        }
+        
+        // Read .selfBnds if present (bounding box as 6 x f64: min.xyz, max.xyz)
+        if let Some(bnds_prop) = geom.property_by_name(".selfBnds") {
+            if let Some(scalar) = bnds_prop.as_scalar() {
+                let mut buf = [0u8; 48]; // 6 x f64
+                if scalar.read_sample(index, &mut buf).is_ok() {
+                    let doubles: &[f64] = bytemuck::cast_slice(&buf);
+                    if doubles.len() >= 6 {
+                        sample.self_bounds = Some(BBox3d::new(
+                            glam::dvec3(doubles[0], doubles[1], doubles[2]),
+                            glam::dvec3(doubles[3], doubles[4], doubles[5]),
+                        ));
+                    }
                 }
             }
         }
