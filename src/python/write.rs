@@ -6,8 +6,16 @@ use pyo3::prelude::*;
 use pyo3::exceptions::{PyValueError, PyIOError};
 use std::sync::{Arc, Mutex};
 
-use crate::ogawa::writer::{OArchive, OObject, OPolyMesh, OXform, OPolyMeshSample, OXformSample};
+
+use crate::ogawa::writer::{
+    OArchive, OObject, OPolyMesh, OXform, OPolyMeshSample, OXformSample,
+    OCurves, OCurvesSample, OPoints, OPointsSample, OSubD, OSubDSample,
+    OCamera, ONuPatch, ONuPatchSample, OLight, OFaceSet, OFaceSetSample,
+    OMaterial, OMaterialSample, OCollections,
+};
 use crate::core::TimeSampling;
+use crate::geom::{CurveType, CurvePeriodicity, BasisType, CameraSample};
+use crate::material::{ShaderParam, ShaderParamValue};
 
 // ============================================================================
 // OArchive wrapper
@@ -63,8 +71,7 @@ impl PyOArchive {
         Ok(())
     }
     
-    /// Add uniform time sampling (fps-based).
-    /// Returns time sampling index.
+    /// Add uniform time sampling (fps-based). Returns time sampling index.
     #[pyo3(signature = (fps, start_time=0.0))]
     fn addUniformTimeSampling(&self, fps: f64, start_time: f64) -> PyResult<u32> {
         let time_per_cycle = 1.0 / fps;
@@ -75,8 +82,7 @@ impl PyOArchive {
         Ok(archive.add_time_sampling(ts))
     }
     
-    /// Add acyclic time sampling with explicit frame times.
-    /// Returns time sampling index.
+    /// Add acyclic time sampling with explicit frame times. Returns time sampling index.
     fn addAcyclicTimeSampling(&self, times: Vec<f64>) -> PyResult<u32> {
         let ts = TimeSampling::acyclic(times);
         
@@ -85,8 +91,7 @@ impl PyOArchive {
         Ok(archive.add_time_sampling(ts))
     }
     
-    /// Add cyclic time sampling.
-    /// Returns time sampling index.
+    /// Add cyclic time sampling. Returns time sampling index.
     fn addCyclicTimeSampling(&self, time_per_cycle: f64, times: Vec<f64>) -> PyResult<u32> {
         let ts = TimeSampling::cyclic(time_per_cycle, times);
         
@@ -111,9 +116,7 @@ impl PyOArchive {
         let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
         let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
         
-        // Take ownership of inner and build
         let obj = std::mem::replace(&mut mesh.inner, OPolyMesh::new("_empty")).build();
-        
         archive.write_archive(&obj)
             .map_err(|e| PyIOError::new_err(format!("Failed to write archive: {}", e)))?;
         
@@ -125,9 +128,7 @@ impl PyOArchive {
         let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
         let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
         
-        // Take ownership and build
         let obj = std::mem::replace(&mut xform.inner, OXform::new("_empty")).build();
-        
         archive.write_archive(&obj)
             .map_err(|e| PyIOError::new_err(format!("Failed to write archive: {}", e)))?;
         
@@ -158,7 +159,7 @@ impl PyOArchive {
         _exc_tb: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
         self.close()?;
-        Ok(false) // Don't suppress exceptions
+        Ok(false)
     }
     
     fn __repr__(&self) -> String {
@@ -187,9 +188,7 @@ impl PyOObject {
     /// Create a new object with name.
     #[new]
     fn new(name: &str) -> Self {
-        Self {
-            inner: OObject::new(name),
-        }
+        Self { inner: OObject::new(name) }
     }
     
     /// Get object name.
@@ -211,6 +210,60 @@ impl PyOObject {
     /// Add an Xform as child.
     fn addXform(&mut self, xform: &mut PyOXform) {
         let obj = std::mem::replace(&mut xform.inner, OXform::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
+    /// Add Curves as child.
+    fn addCurves(&mut self, curves: &mut PyOCurves) {
+        let obj = std::mem::replace(&mut curves.inner, OCurves::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
+    /// Add Points as child.
+    fn addPoints(&mut self, points: &mut PyOPoints) {
+        let obj = std::mem::replace(&mut points.inner, OPoints::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
+    /// Add SubD as child.
+    fn addSubD(&mut self, subd: &mut PyOSubD) {
+        let obj = std::mem::replace(&mut subd.inner, OSubD::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
+    /// Add Camera as child.
+    fn addCamera(&mut self, camera: &mut PyOCamera) {
+        let obj = std::mem::replace(&mut camera.inner, OCamera::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
+    /// Add NuPatch as child.
+    fn addNuPatch(&mut self, nupatch: &mut PyONuPatch) {
+        let obj = std::mem::replace(&mut nupatch.inner, ONuPatch::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
+    /// Add Light as child.
+    fn addLight(&mut self, light: &mut PyOLight) {
+        let obj = std::mem::replace(&mut light.inner, OLight::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
+    /// Add FaceSet as child.
+    fn addFaceSet(&mut self, faceset: &mut PyOFaceSet) {
+        let obj = std::mem::replace(&mut faceset.inner, OFaceSet::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
+    /// Add Material as child.
+    fn addMaterial(&mut self, material: &mut PyOMaterial) {
+        let obj = std::mem::replace(&mut material.inner, OMaterial::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
+    /// Add Collections as child.
+    fn addCollections(&mut self, collections: &mut PyOCollections) {
+        let obj = std::mem::replace(&mut collections.inner, OCollections::new("_empty")).build();
         self.inner.add_child(obj);
     }
     
@@ -256,21 +309,18 @@ impl PyOPolyMesh {
         normals: Option<Vec<[f32; 3]>>,
         uvs: Option<Vec<[f32; 2]>>,
     ) -> PyResult<()> {
-        // Convert positions to glam::Vec3
         let pos: Vec<glam::Vec3> = positions.iter()
             .map(|p| glam::Vec3::new(p[0], p[1], p[2]))
             .collect();
         
         let mut sample = OPolyMeshSample::new(pos, face_counts, face_indices);
         
-        // Add normals if provided
         if let Some(norms) = normals {
             sample.normals = Some(norms.iter()
                 .map(|n| glam::Vec3::new(n[0], n[1], n[2]))
                 .collect());
         }
         
-        // Add UVs if provided
         if let Some(uv_data) = uvs {
             sample.uvs = Some(uv_data.iter()
                 .map(|u| glam::Vec2::new(u[0], u[1]))
@@ -279,12 +329,6 @@ impl PyOPolyMesh {
         
         self.inner.add_sample(&sample);
         Ok(())
-    }
-    
-    /// Add a child object (note: mesh hierarchy is uncommon, consider using Xform).
-    fn addChild(&mut self, _child: &PyOObject) {
-        // OPolyMesh doesn't expose add_child directly
-        // Children should typically be added via Xform hierarchy
     }
     
     fn __repr__(&self) -> String {
@@ -360,7 +404,698 @@ impl PyOXform {
         self.inner.add_child(obj);
     }
     
+    /// Add Curves as child.
+    fn addCurves(&mut self, curves: &mut PyOCurves) {
+        let obj = std::mem::replace(&mut curves.inner, OCurves::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
+    /// Add Points as child.
+    fn addPoints(&mut self, points: &mut PyOPoints) {
+        let obj = std::mem::replace(&mut points.inner, OPoints::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
+    /// Add SubD as child.
+    fn addSubD(&mut self, subd: &mut PyOSubD) {
+        let obj = std::mem::replace(&mut subd.inner, OSubD::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
+    /// Add Camera as child.
+    fn addCamera(&mut self, camera: &mut PyOCamera) {
+        let obj = std::mem::replace(&mut camera.inner, OCamera::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
+    /// Add NuPatch as child.
+    fn addNuPatch(&mut self, nupatch: &mut PyONuPatch) {
+        let obj = std::mem::replace(&mut nupatch.inner, ONuPatch::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
+    /// Add Light as child.
+    fn addLight(&mut self, light: &mut PyOLight) {
+        let obj = std::mem::replace(&mut light.inner, OLight::new("_empty")).build();
+        self.inner.add_child(obj);
+    }
+    
     fn __repr__(&self) -> String {
         format!("<OXform '{}'>", self.name)
+    }
+}
+
+// ============================================================================
+// OCurves wrapper
+// ============================================================================
+
+/// Python wrapper for output Curves.
+#[pyclass(name = "OCurves")]
+pub struct PyOCurves {
+    pub(crate) inner: OCurves,
+    name: String,
+}
+
+#[pymethods]
+impl PyOCurves {
+    /// Create a new Curves with name.
+    #[new]
+    fn new(name: &str) -> Self {
+        Self {
+            inner: OCurves::new(name),
+            name: name.to_string(),
+        }
+    }
+    
+    /// Get object name.
+    fn getName(&self) -> &str {
+        &self.name
+    }
+    
+    /// Add a sample.
+    /// curve_type: "linear", "cubic", "bezier", "bspline", "catmullrom", "hermite"
+    /// wrap: "nonperiodic", "periodic"
+    /// basis: "nobasis", "bezier", "bspline", "catmullrom", "hermite", "power"
+    #[pyo3(signature = (
+        positions, num_vertices, 
+        curve_type="linear", wrap="nonperiodic", basis="nobasis",
+        velocities=None, widths=None, normals=None, uvs=None, knots=None, orders=None
+    ))]
+    fn addSample(
+        &mut self,
+        positions: Vec<[f32; 3]>,
+        num_vertices: Vec<i32>,
+        curve_type: &str,
+        wrap: &str,
+        basis: &str,
+        velocities: Option<Vec<[f32; 3]>>,
+        widths: Option<Vec<f32>>,
+        normals: Option<Vec<[f32; 3]>>,
+        uvs: Option<Vec<[f32; 2]>>,
+        knots: Option<Vec<f32>>,
+        orders: Option<Vec<i32>>,
+    ) -> PyResult<()> {
+        let pos: Vec<glam::Vec3> = positions.iter()
+            .map(|p| glam::Vec3::new(p[0], p[1], p[2]))
+            .collect();
+        
+        let ct = match curve_type.to_lowercase().as_str() {
+            "cubic" => CurveType::Cubic,
+            "bezier" => CurveType::Cubic,
+            "bspline" => CurveType::Cubic,
+            "catmullrom" => CurveType::Cubic,
+            "hermite" => CurveType::Cubic,
+            _ => CurveType::Linear,
+        };
+        
+        let w = match wrap.to_lowercase().as_str() {
+            "periodic" => CurvePeriodicity::Periodic,
+            _ => CurvePeriodicity::NonPeriodic,
+        };
+        
+        let b = match basis.to_lowercase().as_str() {
+            "bezier" => BasisType::Bezier,
+            "bspline" => BasisType::Bspline,
+            "catmullrom" => BasisType::CatmullRom,
+            "hermite" => BasisType::Hermite,
+            "power" => BasisType::Power,
+            _ => BasisType::NoBasis,
+        };
+        
+        let mut sample = OCurvesSample::new(pos, num_vertices)
+            .with_curve_type(ct)
+            .with_wrap(w)
+            .with_basis(b);
+        
+        if let Some(vels) = velocities {
+            sample.velocities = Some(vels.iter()
+                .map(|v| glam::Vec3::new(v[0], v[1], v[2]))
+                .collect());
+        }
+        
+        sample.widths = widths;
+        
+        if let Some(norms) = normals {
+            sample.normals = Some(norms.iter()
+                .map(|n| glam::Vec3::new(n[0], n[1], n[2]))
+                .collect());
+        }
+        
+        if let Some(uv_data) = uvs {
+            sample.uvs = Some(uv_data.iter()
+                .map(|u| glam::Vec2::new(u[0], u[1]))
+                .collect());
+        }
+        
+        sample.knots = knots;
+        sample.orders = orders;
+        
+        self.inner.add_sample(&sample);
+        Ok(())
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<OCurves '{}'>", self.name)
+    }
+}
+
+// ============================================================================
+// OPoints wrapper
+// ============================================================================
+
+/// Python wrapper for output Points.
+#[pyclass(name = "OPoints")]
+pub struct PyOPoints {
+    pub(crate) inner: OPoints,
+    name: String,
+}
+
+#[pymethods]
+impl PyOPoints {
+    /// Create a new Points with name.
+    #[new]
+    fn new(name: &str) -> Self {
+        Self {
+            inner: OPoints::new(name),
+            name: name.to_string(),
+        }
+    }
+    
+    /// Get object name.
+    fn getName(&self) -> &str {
+        &self.name
+    }
+    
+    /// Add a sample.
+    #[pyo3(signature = (positions, ids, velocities=None, widths=None))]
+    fn addSample(
+        &mut self,
+        positions: Vec<[f32; 3]>,
+        ids: Vec<u64>,
+        velocities: Option<Vec<[f32; 3]>>,
+        widths: Option<Vec<f32>>,
+    ) -> PyResult<()> {
+        let pos: Vec<glam::Vec3> = positions.iter()
+            .map(|p| glam::Vec3::new(p[0], p[1], p[2]))
+            .collect();
+        
+        let mut sample = OPointsSample::new(pos, ids);
+        
+        if let Some(vels) = velocities {
+            sample.velocities = Some(vels.iter()
+                .map(|v| glam::Vec3::new(v[0], v[1], v[2]))
+                .collect());
+        }
+        
+        sample.widths = widths;
+        
+        self.inner.add_sample(&sample);
+        Ok(())
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<OPoints '{}'>", self.name)
+    }
+}
+
+// ============================================================================
+// OSubD wrapper
+// ============================================================================
+
+/// Python wrapper for output SubD (subdivision surface).
+#[pyclass(name = "OSubD")]
+pub struct PyOSubD {
+    pub(crate) inner: OSubD,
+    name: String,
+}
+
+#[pymethods]
+impl PyOSubD {
+    /// Create a new SubD with name.
+    #[new]
+    fn new(name: &str) -> Self {
+        Self {
+            inner: OSubD::new(name),
+            name: name.to_string(),
+        }
+    }
+    
+    /// Get object name.
+    fn getName(&self) -> &str {
+        &self.name
+    }
+    
+    /// Add a sample.
+    /// scheme: "catmullClark", "loop", "bilinear"
+    #[pyo3(signature = (
+        positions, face_counts, face_indices, scheme="catmullClark",
+        velocities=None, crease_indices=None, crease_lengths=None, crease_sharpnesses=None,
+        corner_indices=None, corner_sharpnesses=None, holes=None, uvs=None, uv_indices=None
+    ))]
+    fn addSample(
+        &mut self,
+        positions: Vec<[f32; 3]>,
+        face_counts: Vec<i32>,
+        face_indices: Vec<i32>,
+        scheme: &str,
+        velocities: Option<Vec<[f32; 3]>>,
+        crease_indices: Option<Vec<i32>>,
+        crease_lengths: Option<Vec<i32>>,
+        crease_sharpnesses: Option<Vec<f32>>,
+        corner_indices: Option<Vec<i32>>,
+        corner_sharpnesses: Option<Vec<f32>>,
+        holes: Option<Vec<i32>>,
+        uvs: Option<Vec<[f32; 2]>>,
+        uv_indices: Option<Vec<i32>>,
+    ) -> PyResult<()> {
+        let pos: Vec<glam::Vec3> = positions.iter()
+            .map(|p| glam::Vec3::new(p[0], p[1], p[2]))
+            .collect();
+        
+        let mut sample = OSubDSample::new(pos, face_counts, face_indices)
+            .with_scheme(scheme);
+        
+        if let Some(vels) = velocities {
+            sample.velocities = Some(vels.iter()
+                .map(|v| glam::Vec3::new(v[0], v[1], v[2]))
+                .collect());
+        }
+        
+        sample.crease_indices = crease_indices;
+        sample.crease_lengths = crease_lengths;
+        sample.crease_sharpnesses = crease_sharpnesses;
+        sample.corner_indices = corner_indices;
+        sample.corner_sharpnesses = corner_sharpnesses;
+        sample.holes = holes;
+        
+        if let Some(uv_data) = uvs {
+            sample.uvs = Some(uv_data.iter()
+                .map(|u| glam::Vec2::new(u[0], u[1]))
+                .collect());
+        }
+        
+        sample.uv_indices = uv_indices;
+        
+        self.inner.add_sample(&sample);
+        Ok(())
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<OSubD '{}'>", self.name)
+    }
+}
+
+// ============================================================================
+// OCamera wrapper
+// ============================================================================
+
+/// Python wrapper for output Camera.
+#[pyclass(name = "OCamera")]
+pub struct PyOCamera {
+    pub(crate) inner: OCamera,
+    name: String,
+}
+
+#[pymethods]
+impl PyOCamera {
+    /// Create a new Camera with name.
+    #[new]
+    fn new(name: &str) -> Self {
+        Self {
+            inner: OCamera::new(name),
+            name: name.to_string(),
+        }
+    }
+    
+    /// Get object name.
+    fn getName(&self) -> &str {
+        &self.name
+    }
+    
+    /// Add a sample with camera parameters.
+    #[pyo3(signature = (
+        focal_length=35.0, horizontal_aperture=36.0, vertical_aperture=24.0,
+        horizontal_film_offset=0.0, vertical_film_offset=0.0, lens_squeeze_ratio=1.0,
+        overscan_left=0.0, overscan_right=0.0, overscan_top=0.0, overscan_bottom=0.0,
+        f_stop=5.6, focus_distance=5.0, shutter_open=0.0, shutter_close=0.0208333,
+        near_clipping_plane=0.1, far_clipping_plane=100000.0
+    ))]
+    fn addSample(
+        &mut self,
+        focal_length: f64,
+        horizontal_aperture: f64,
+        vertical_aperture: f64,
+        horizontal_film_offset: f64,
+        vertical_film_offset: f64,
+        lens_squeeze_ratio: f64,
+        overscan_left: f64,
+        overscan_right: f64,
+        overscan_top: f64,
+        overscan_bottom: f64,
+        f_stop: f64,
+        focus_distance: f64,
+        shutter_open: f64,
+        shutter_close: f64,
+        near_clipping_plane: f64,
+        far_clipping_plane: f64,
+    ) {
+        let sample = CameraSample {
+            focal_length,
+            horizontal_aperture,
+            horizontal_film_offset,
+            vertical_aperture,
+            vertical_film_offset,
+            lens_squeeze_ratio,
+            overscan_left,
+            overscan_right,
+            overscan_top,
+            overscan_bottom,
+            f_stop,
+            focus_distance,
+            shutter_open,
+            shutter_close,
+            near_clipping_plane,
+            far_clipping_plane,
+            ..Default::default()
+        };
+        self.inner.add_sample(sample);
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<OCamera '{}'>", self.name)
+    }
+}
+
+// ============================================================================
+// ONuPatch wrapper
+// ============================================================================
+
+/// Python wrapper for output NuPatch (NURBS patch).
+#[pyclass(name = "ONuPatch")]
+pub struct PyONuPatch {
+    pub(crate) inner: ONuPatch,
+    name: String,
+}
+
+#[pymethods]
+impl PyONuPatch {
+    /// Create a new NuPatch with name.
+    #[new]
+    fn new(name: &str) -> Self {
+        Self {
+            inner: ONuPatch::new(name),
+            name: name.to_string(),
+        }
+    }
+    
+    /// Get object name.
+    fn getName(&self) -> &str {
+        &self.name
+    }
+    
+    /// Add a sample.
+    #[pyo3(signature = (
+        positions, num_u, num_v, u_order, v_order, u_knot, v_knot,
+        position_weights=None, velocities=None, uvs=None, normals=None
+    ))]
+    fn addSample(
+        &mut self,
+        positions: Vec<[f32; 3]>,
+        num_u: i32,
+        num_v: i32,
+        u_order: i32,
+        v_order: i32,
+        u_knot: Vec<f32>,
+        v_knot: Vec<f32>,
+        position_weights: Option<Vec<f32>>,
+        velocities: Option<Vec<[f32; 3]>>,
+        uvs: Option<Vec<[f32; 2]>>,
+        normals: Option<Vec<[f32; 3]>>,
+    ) -> PyResult<()> {
+        let pos: Vec<glam::Vec3> = positions.iter()
+            .map(|p| glam::Vec3::new(p[0], p[1], p[2]))
+            .collect();
+        
+        let mut sample = ONuPatchSample::new(pos, num_u, num_v, u_order, v_order, u_knot, v_knot);
+        
+        sample.position_weights = position_weights;
+        
+        if let Some(vels) = velocities {
+            sample.velocities = Some(vels.iter()
+                .map(|v| glam::Vec3::new(v[0], v[1], v[2]))
+                .collect());
+        }
+        
+        if let Some(uv_data) = uvs {
+            sample.uvs = Some(uv_data.iter()
+                .map(|u| glam::Vec2::new(u[0], u[1]))
+                .collect());
+        }
+        
+        if let Some(norms) = normals {
+            sample.normals = Some(norms.iter()
+                .map(|n| glam::Vec3::new(n[0], n[1], n[2]))
+                .collect());
+        }
+        
+        self.inner.add_sample(&sample);
+        Ok(())
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<ONuPatch '{}'>", self.name)
+    }
+}
+
+// ============================================================================
+// OLight wrapper
+// ============================================================================
+
+/// Python wrapper for output Light.
+#[pyclass(name = "OLight")]
+pub struct PyOLight {
+    pub(crate) inner: OLight,
+    name: String,
+}
+
+#[pymethods]
+impl PyOLight {
+    /// Create a new Light with name.
+    #[new]
+    fn new(name: &str) -> Self {
+        Self {
+            inner: OLight::new(name),
+            name: name.to_string(),
+        }
+    }
+    
+    /// Get object name.
+    fn getName(&self) -> &str {
+        &self.name
+    }
+    
+    /// Add a camera sample (light uses camera schema for parameters).
+    #[pyo3(signature = (
+        focal_length=35.0, horizontal_aperture=36.0, vertical_aperture=24.0,
+        horizontal_film_offset=0.0, vertical_film_offset=0.0, lens_squeeze_ratio=1.0,
+        overscan_left=0.0, overscan_right=0.0, overscan_top=0.0, overscan_bottom=0.0,
+        f_stop=5.6, focus_distance=5.0, shutter_open=0.0, shutter_close=0.0208333,
+        near_clipping_plane=0.1, far_clipping_plane=100000.0
+    ))]
+    fn addCameraSample(
+        &mut self,
+        focal_length: f64,
+        horizontal_aperture: f64,
+        vertical_aperture: f64,
+        horizontal_film_offset: f64,
+        vertical_film_offset: f64,
+        lens_squeeze_ratio: f64,
+        overscan_left: f64,
+        overscan_right: f64,
+        overscan_top: f64,
+        overscan_bottom: f64,
+        f_stop: f64,
+        focus_distance: f64,
+        shutter_open: f64,
+        shutter_close: f64,
+        near_clipping_plane: f64,
+        far_clipping_plane: f64,
+    ) {
+        let sample = CameraSample {
+            focal_length,
+            horizontal_aperture,
+            horizontal_film_offset,
+            vertical_aperture,
+            vertical_film_offset,
+            lens_squeeze_ratio,
+            overscan_left,
+            overscan_right,
+            overscan_top,
+            overscan_bottom,
+            f_stop,
+            focus_distance,
+            shutter_open,
+            shutter_close,
+            near_clipping_plane,
+            far_clipping_plane,
+            ..Default::default()
+        };
+        self.inner.add_camera_sample(sample);
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<OLight '{}'>", self.name)
+    }
+}
+
+// ============================================================================
+// OFaceSet wrapper
+// ============================================================================
+
+/// Python wrapper for output FaceSet.
+#[pyclass(name = "OFaceSet")]
+pub struct PyOFaceSet {
+    pub(crate) inner: OFaceSet,
+    name: String,
+}
+
+#[pymethods]
+impl PyOFaceSet {
+    /// Create a new FaceSet with name.
+    #[new]
+    fn new(name: &str) -> Self {
+        Self {
+            inner: OFaceSet::new(name),
+            name: name.to_string(),
+        }
+    }
+    
+    /// Get object name.
+    fn getName(&self) -> &str {
+        &self.name
+    }
+    
+    /// Add a sample with face indices.
+    fn addSample(&mut self, faces: Vec<i32>) {
+        let sample = OFaceSetSample::new(faces);
+        self.inner.add_sample(&sample);
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<OFaceSet '{}'>", self.name)
+    }
+}
+
+// ============================================================================
+// OMaterial wrapper
+// ============================================================================
+
+/// Python wrapper for output Material.
+#[pyclass(name = "OMaterial")]
+pub struct PyOMaterial {
+    pub(crate) inner: OMaterial,
+    name: String,
+    sample: OMaterialSample,
+}
+
+#[pymethods]
+impl PyOMaterial {
+    /// Create a new Material with name.
+    #[new]
+    fn new(name: &str) -> Self {
+        Self {
+            inner: OMaterial::new(name),
+            name: name.to_string(),
+            sample: OMaterialSample::new(),
+        }
+    }
+    
+    /// Get object name.
+    fn getName(&self) -> &str {
+        &self.name
+    }
+    
+    /// Add a shader.
+    fn addShader(&mut self, target: &str, shader_type: &str, shader_name: &str) {
+        self.sample.add_shader(target, shader_type, shader_name);
+    }
+    
+    /// Add a float parameter.
+    fn addFloatParam(&mut self, name: &str, value: f32) {
+        self.sample.add_param(ShaderParam {
+            name: name.to_string(),
+            value: ShaderParamValue::Float(value),
+        });
+    }
+    
+    /// Add a vec3/color3 parameter.
+    fn addVec3Param(&mut self, name: &str, x: f32, y: f32, z: f32) {
+        self.sample.add_param(ShaderParam {
+            name: name.to_string(),
+            value: ShaderParamValue::Vec3(glam::Vec3::new(x, y, z)),
+        });
+    }
+    
+    /// Add an int parameter.
+    fn addIntParam(&mut self, name: &str, value: i32) {
+        self.sample.add_param(ShaderParam {
+            name: name.to_string(),
+            value: ShaderParamValue::Int(value),
+        });
+    }
+    
+    /// Add a string parameter.
+    fn addStringParam(&mut self, name: &str, value: &str) {
+        self.sample.add_param(ShaderParam {
+            name: name.to_string(),
+            value: ShaderParamValue::String(value.to_string()),
+        });
+    }
+    
+    /// Finalize and set sample on the material before building.
+    fn finalize(&mut self) {
+        let sample = std::mem::replace(&mut self.sample, OMaterialSample::new());
+        self.inner.set_sample(sample);
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<OMaterial '{}'>", self.name)
+    }
+}
+
+// ============================================================================
+// OCollections wrapper
+// ============================================================================
+
+/// Python wrapper for output Collections.
+#[pyclass(name = "OCollections")]
+pub struct PyOCollections {
+    pub(crate) inner: OCollections,
+    name: String,
+}
+
+#[pymethods]
+impl PyOCollections {
+    /// Create a new Collections with name.
+    #[new]
+    fn new(name: &str) -> Self {
+        Self {
+            inner: OCollections::new(name),
+            name: name.to_string(),
+        }
+    }
+    
+    /// Get object name.
+    fn getName(&self) -> &str {
+        &self.name
+    }
+    
+    /// Add a collection with name and list of object paths.
+    fn addCollection(&mut self, name: &str, paths: Vec<String>) {
+        self.inner.add_collection(name, paths);
+    }
+    
+    fn __repr__(&self) -> String {
+        format!("<OCollections '{}'>", self.name)
     }
 }

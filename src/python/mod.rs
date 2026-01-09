@@ -70,6 +70,15 @@ fn alembic(m: &Bound<'_, PyModule>) -> PyResult<()> {
     abc.add_class::<write::PyOObject>()?;
     abc.add_class::<write::PyOPolyMesh>()?;
     abc.add_class::<write::PyOXform>()?;
+    abc.add_class::<write::PyOCurves>()?;
+    abc.add_class::<write::PyOPoints>()?;
+    abc.add_class::<write::PyOSubD>()?;
+    abc.add_class::<write::PyOCamera>()?;
+    abc.add_class::<write::PyONuPatch>()?;
+    abc.add_class::<write::PyOLight>()?;
+    abc.add_class::<write::PyOFaceSet>()?;
+    abc.add_class::<write::PyOMaterial>()?;
+    abc.add_class::<write::PyOCollections>()?;
     
     // Register materials/collections classes
     abc.add_class::<materials::PyCollection>()?;
