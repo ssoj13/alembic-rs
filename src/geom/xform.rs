@@ -124,7 +124,7 @@ impl XformSample {
                     ])
                 }
             };
-            result = result * m;
+            result *= m;
         }
         
         result
@@ -227,6 +227,19 @@ impl<'a> IXform<'a> {
         self.num_samples() <= 1
     }
     
+    /// Check if this xform is constant AND identity transform.
+    pub fn is_constant_identity(&self) -> bool {
+        if !self.is_constant() {
+            return false;
+        }
+        if let Ok(sample) = self.get_sample(0) {
+            // Check if ops are empty (identity) or matrix is identity
+            sample.ops.is_empty() || sample.matrix() == glam::Mat4::IDENTITY
+        } else {
+            true // No samples = identity
+        }
+    }
+    
     /// Read a sample at the given index.
     pub fn get_sample(&self, index: usize) -> Result<XformSample> {
         use crate::util::Error;
@@ -320,6 +333,119 @@ impl<'a> IXform<'a> {
         
         Ok(sample)
     }
+    
+    /// Check if this xform has child bounds property.
+    pub fn has_child_bounds(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".xform") else {
+            return false;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return false;
+        };
+        geom.has_property(".childBnds")
+    }
+    
+    /// Read child bounds at the given sample index.
+    /// Returns the bounding box of all children.
+    pub fn child_bounds(&self, index: usize) -> Option<crate::util::BBox3d> {
+        let props = self.object.properties();
+        let geom_prop = props.property_by_name(".xform")?;
+        let geom = geom_prop.as_compound()?;
+        let bnds_prop = geom.property_by_name(".childBnds")?;
+        let scalar = bnds_prop.as_scalar()?;
+        
+        let mut buf = [0u8; 48]; // 6 x f64
+        if scalar.read_sample(index, &mut buf).is_ok() {
+            let doubles: &[f64] = bytemuck::cast_slice(&buf);
+            if doubles.len() >= 6 {
+                return Some(crate::util::BBox3d::new(
+                    glam::dvec3(doubles[0], doubles[1], doubles[2]),
+                    glam::dvec3(doubles[3], doubles[4], doubles[5]),
+                ));
+            }
+        }
+        None
+    }
+    
+    /// Get the number of child bounds samples.
+    pub fn child_bounds_num_samples(&self) -> usize {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".xform") else { return 0 };
+        let Some(geom) = geom_prop.as_compound() else { return 0 };
+        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
+        let Some(scalar) = bnds_prop.as_scalar() else { return 0 };
+        scalar.num_samples()
+    }
+    
+    /// Get the time sampling index for child bounds property.
+    pub fn child_bounds_time_sampling_index(&self) -> u32 {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".xform") else { return 0 };
+        let Some(geom) = geom_prop.as_compound() else { return 0 };
+        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
+        bnds_prop.header().time_sampling_index
+    }
+    
+    /// Check if this xform has arbitrary geometry parameters.
+    pub fn has_arb_geom_params(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".xform") else {
+            return false;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return false;
+        };
+        geom.has_property(".arbGeomParams")
+    }
+    
+    /// Get names of arbitrary geometry parameters.
+    pub fn arb_geom_param_names(&self) -> Vec<String> {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".xform") else {
+            return Vec::new();
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return Vec::new();
+        };
+        let Some(arb_prop) = geom.property_by_name(".arbGeomParams") else {
+            return Vec::new();
+        };
+        let Some(arb) = arb_prop.as_compound() else {
+            return Vec::new();
+        };
+        arb.property_names()
+    }
+    
+    /// Check if this xform has user properties.
+    pub fn has_user_properties(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".xform") else {
+            return false;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return false;
+        };
+        geom.has_property(".userProperties")
+    }
+    
+    /// Get names of user properties.
+    pub fn user_property_names(&self) -> Vec<String> {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".xform") else {
+            return Vec::new();
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return Vec::new();
+        };
+        let Some(user_prop) = geom.property_by_name(".userProperties") else {
+            return Vec::new();
+        };
+        let Some(user) = user_prop.as_compound() else {
+            return Vec::new();
+        };
+        user.property_names()
+    }
 }
 
 /// Decode xform operation code to type and number of values.
@@ -349,6 +475,25 @@ mod tests {
         let sample = XformSample::identity();
         let m = sample.matrix();
         assert_eq!(m, glam::Mat4::IDENTITY);
+        assert!(sample.ops.is_empty());
+    }
+    
+    #[test]
+    fn test_xform_sample_is_identity() {
+        // Empty ops = identity
+        let identity = XformSample::identity();
+        assert!(identity.ops.is_empty());
+        assert_eq!(identity.matrix(), glam::Mat4::IDENTITY);
+        
+        // Explicit identity scale
+        let mut scale_one = XformSample::default();
+        scale_one.ops.push(XformOp::scale(1.0, 1.0, 1.0));
+        assert_eq!(scale_one.matrix(), glam::Mat4::IDENTITY);
+        
+        // Non-identity
+        let mut translated = XformSample::default();
+        translated.ops.push(XformOp::translate(1.0, 0.0, 0.0));
+        assert_ne!(translated.matrix(), glam::Mat4::IDENTITY);
     }
     
     #[test]

@@ -13,6 +13,8 @@
 //! - [`core`] - Abstract traits and core implementations
 //! - [`abc`] - High-level API (IArchive, OArchive, Objects, Properties)
 //! - [`geom`] - Geometry schemas (PolyMesh, Xform, Curves, etc.)
+//! - [`material`] - Material and shader network support
+//! - [`collection`] - Collection/grouping support
 //!
 //! ## Example
 //!
@@ -32,6 +34,12 @@ pub mod ogawa;
 pub mod core;
 pub mod abc;
 pub mod geom;
+pub mod material;
+pub mod collection;
+
+// Python bindings (optional, enabled with "python" feature)
+#[cfg(feature = "python")]
+pub mod python;
 
 // Re-export commonly used types
 pub use util::{DataType, PlainOldDataType, Error, Result};

@@ -10,8 +10,10 @@ mod pod;
 mod data_type;
 mod error;
 mod math;
+mod dimensions;
 
 pub use pod::*;
 pub use data_type::*;
 pub use error::*;
 pub use math::*;
+pub use dimensions::*;

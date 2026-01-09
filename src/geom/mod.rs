@@ -40,10 +40,16 @@ pub use points::{IPoints, PointsSample, POINTS_SCHEMA};
 pub use subd::{ISubD, SubDSample, SubDScheme, SUBD_SCHEMA};
 
 // Re-export camera types
-pub use camera::{ICamera, CameraSample, CAMERA_SCHEMA};
+pub use camera::{ICamera, CameraSample, CAMERA_SCHEMA, FilmBackXformOp, FilmBackXformOpType};
 
 // Re-export visibility types
-pub use visibility::{ObjectVisibility, VISIBILITY_PROPERTY_NAME, get_visibility, is_visible, get_visibility_property};
+pub use visibility::{
+    ObjectVisibility, VISIBILITY_PROPERTY_NAME, 
+    get_visibility, is_visible, get_visibility_property,
+    is_ancestor_invisible, is_ancestor_invisible_in_archive,
+    // Output support
+    OVisibilityProperty, create_visibility_property, add_visibility_sample,
+};
 
 // Re-export geom_param types
 pub use geom_param::{
@@ -58,7 +64,7 @@ pub use geom_param::{
 pub use faceset::{IFaceSet, FaceSetSample, FaceSetExclusivity, FACESET_SCHEMA};
 
 // Re-export nupatch types
-pub use nupatch::{INuPatch, NuPatchSample, TrimCurveData, NUPATCH_SCHEMA};
+pub use nupatch::{INuPatch, NuPatchSample, TrimCurveData, TrimCurve, NUPATCH_SCHEMA};
 
 // Re-export light types
 pub use light::{ILight, LightSample, LIGHT_SCHEMA};

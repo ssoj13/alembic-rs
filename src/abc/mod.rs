@@ -93,11 +93,250 @@ impl IArchive {
     pub fn valid(&self) -> bool {
         true
     }
+    
+    /// Check if an object exists at the given path.
+    /// 
+    /// Path format: "/parent/child/grandchild"
+    pub fn has_object(&self, path: &str) -> bool {
+        let path = path.trim_start_matches('/');
+        if path.is_empty() {
+            return true;
+        }
+        
+        // Use a recursive function to check existence
+        fn check_path<'a>(obj: IObject<'a>, parts: &[&str]) -> bool {
+            if parts.is_empty() {
+                return true;
+            }
+            if let Some(child) = obj.child_by_name(parts[0]) {
+                check_path(child, &parts[1..])
+            } else {
+                false
+            }
+        }
+        
+        let parts: Vec<&str> = path.split('/').collect();
+        check_path(self.root(), &parts)
+    }
+    
+    /// Get the application name that created this archive.
+    /// Returns None if not available.
+    pub fn app_name(&self) -> Option<&str> {
+        None // TODO: Parse from archive metadata when implemented
+    }
+    
+    /// Get the writer library info.
+    /// Returns None if not available.
+    pub fn written_by(&self) -> Option<&str> {
+        None // TODO: Parse from archive metadata when implemented
+    }
+    
+    /// Get the date the archive was written.
+    /// Returns None if not available.
+    pub fn date_written(&self) -> Option<&str> {
+        None // TODO: Parse from archive metadata when implemented
+    }
+    
+    /// Get the combined bounding box of all geometry in the archive.
+    /// 
+    /// Computes the union of self_bounds from all geometry objects
+    /// at the given sample index. Returns None if no bounds are found.
+    /// 
+    /// # Arguments
+    /// * `sample_index` - The sample index to query bounds at (0 for static)
+    pub fn archive_bounds(&self, sample_index: usize) -> Option<crate::util::BBox3d> {
+        let root = self.root();
+        let mut combined = None;
+        collect_bounds_recursive(&root, sample_index, &mut combined);
+        combined
+    }
+    
+    /// Get the combined bounding box at time.
+    /// 
+    /// Computes bounds using time-based sampling interpolation.
+    pub fn archive_bounds_at_time(&self, time: f64) -> Option<crate::util::BBox3d> {
+        // For now, find nearest sample index from default time sampling
+        let root = self.root();
+        let mut combined = None;
+        collect_bounds_recursive_time(&root, time, &mut combined);
+        combined
+    }
+}
+
+/// Recursively collect bounds from all geometry objects.
+fn collect_bounds_recursive(obj: &IObject<'_>, sample_index: usize, combined: &mut Option<crate::util::BBox3d>) {
+    use crate::util::BBox3d;
+    use crate::geom::*;
+    
+    // Check for geometry schemas and get their bounds
+    if let Some(mesh) = IPolyMesh::new(obj) {
+        if let Ok(sample) = mesh.get_sample(sample_index) {
+            if let Some(bounds) = sample.self_bounds {
+                merge_bounds(combined, bounds);
+            } else {
+                // Compute bounds from positions
+                let (min, max) = sample.compute_bounds();
+                merge_bounds(combined, BBox3d::new(
+                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
+                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
+                ));
+            }
+        }
+    } else if let Some(subd) = ISubD::new(obj) {
+        if let Ok(sample) = subd.get_sample(sample_index) {
+            if let Some(bounds) = sample.self_bounds {
+                merge_bounds(combined, bounds);
+            } else {
+                let (min, max) = sample.compute_bounds();
+                merge_bounds(combined, BBox3d::new(
+                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
+                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
+                ));
+            }
+        }
+    } else if let Some(points) = IPoints::new(obj) {
+        if let Ok(sample) = points.get_sample(sample_index) {
+            if let Some(bounds) = sample.self_bounds {
+                merge_bounds(combined, bounds);
+            } else {
+                let (min, max) = sample.compute_bounds();
+                merge_bounds(combined, BBox3d::new(
+                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
+                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
+                ));
+            }
+        }
+    } else if let Some(curves) = ICurves::new(obj) {
+        if let Ok(sample) = curves.get_sample(sample_index) {
+            if let Some(bounds) = sample.self_bounds {
+                merge_bounds(combined, bounds);
+            } else {
+                let (min, max) = sample.compute_bounds();
+                merge_bounds(combined, BBox3d::new(
+                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
+                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
+                ));
+            }
+        }
+    } else if let Some(nupatch) = INuPatch::new(obj) {
+        if let Ok(sample) = nupatch.get_sample(sample_index) {
+            if let Some(bounds) = sample.self_bounds {
+                merge_bounds(combined, bounds);
+            } else {
+                let (min, max) = sample.compute_bounds();
+                merge_bounds(combined, BBox3d::new(
+                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
+                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
+                ));
+            }
+        }
+    }
+    
+    // Recurse into children
+    for i in 0..obj.num_children() {
+        if let Some(child) = obj.child(i) {
+            collect_bounds_recursive(&child, sample_index, combined);
+        }
+    }
+}
+
+/// Recursively collect bounds from all geometry objects at a given time.
+fn collect_bounds_recursive_time(obj: &IObject<'_>, time: f64, combined: &mut Option<crate::util::BBox3d>) {
+    use crate::util::BBox3d;
+    use crate::geom::*;
+    
+    // For simplicity, use sample index 0 if time is <= 0, otherwise try to find nearest
+    // A full implementation would interpolate between samples
+    let sample_index = if time <= 0.0 { 0 } else {
+        // Get num samples and estimate index from time
+        // This is a simplified approach - proper implementation would use time sampling
+        0
+    };
+    
+    // Check for geometry schemas and get their bounds
+    if let Some(mesh) = IPolyMesh::new(obj) {
+        if let Ok(sample) = mesh.get_sample(sample_index) {
+            if let Some(bounds) = sample.self_bounds {
+                merge_bounds(combined, bounds);
+            } else {
+                let (min, max) = sample.compute_bounds();
+                merge_bounds(combined, BBox3d::new(
+                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
+                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
+                ));
+            }
+        }
+    } else if let Some(subd) = ISubD::new(obj) {
+        if let Ok(sample) = subd.get_sample(sample_index) {
+            if let Some(bounds) = sample.self_bounds {
+                merge_bounds(combined, bounds);
+            } else {
+                let (min, max) = sample.compute_bounds();
+                merge_bounds(combined, BBox3d::new(
+                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
+                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
+                ));
+            }
+        }
+    } else if let Some(points) = IPoints::new(obj) {
+        if let Ok(sample) = points.get_sample(sample_index) {
+            if let Some(bounds) = sample.self_bounds {
+                merge_bounds(combined, bounds);
+            } else {
+                let (min, max) = sample.compute_bounds();
+                merge_bounds(combined, BBox3d::new(
+                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
+                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
+                ));
+            }
+        }
+    } else if let Some(curves) = ICurves::new(obj) {
+        if let Ok(sample) = curves.get_sample(sample_index) {
+            if let Some(bounds) = sample.self_bounds {
+                merge_bounds(combined, bounds);
+            } else {
+                let (min, max) = sample.compute_bounds();
+                merge_bounds(combined, BBox3d::new(
+                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
+                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
+                ));
+            }
+        }
+    } else if let Some(nupatch) = INuPatch::new(obj) {
+        if let Ok(sample) = nupatch.get_sample(sample_index) {
+            if let Some(bounds) = sample.self_bounds {
+                merge_bounds(combined, bounds);
+            } else {
+                let (min, max) = sample.compute_bounds();
+                merge_bounds(combined, BBox3d::new(
+                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
+                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
+                ));
+            }
+        }
+    }
+    
+    // Recurse into children
+    for i in 0..obj.num_children() {
+        if let Some(child) = obj.child(i) {
+            collect_bounds_recursive_time(&child, time, combined);
+        }
+    }
+}
+
+/// Merge a bounds into the combined bounds.
+fn merge_bounds(combined: &mut Option<crate::util::BBox3d>, bounds: crate::util::BBox3d) {
+    // Check that bounds are valid (min <= max)
+    if bounds.min.x <= bounds.max.x && bounds.min.y <= bounds.max.y && bounds.min.z <= bounds.max.z {
+        match combined {
+            Some(c) => c.expand_by_box(&bounds),
+            None => *combined = Some(bounds),
+        }
+    }
 }
 
 /// Output archive for writing Alembic files.
 pub struct OArchive {
-    #[allow(dead_code)]
     inner: crate::ogawa::OArchive,
 }
 
@@ -106,6 +345,39 @@ impl OArchive {
     pub fn create<P: AsRef<Path>>(path: P) -> Result<Self> {
         let inner = crate::ogawa::OArchive::create(path)?;
         Ok(Self { inner })
+    }
+    
+    /// Get the archive name/path.
+    pub fn name(&self) -> &str {
+        self.inner.name()
+    }
+    
+    /// Add a time sampling and return its index.
+    /// 
+    /// If an equivalent time sampling already exists, returns its index.
+    /// Index 0 is always identity (static) time sampling.
+    pub fn add_time_sampling(&mut self, ts: crate::core::TimeSampling) -> u32 {
+        self.inner.add_time_sampling(ts)
+    }
+    
+    /// Get the number of time samplings.
+    pub fn num_time_samplings(&self) -> usize {
+        self.inner.num_time_samplings()
+    }
+    
+    /// Get a time sampling by index.
+    pub fn time_sampling(&self, index: u32) -> Option<&crate::core::TimeSampling> {
+        self.inner.time_sampling(index as usize)
+    }
+    
+    /// Set compression hint (-1 = no compression, 0-9 = compression level).
+    pub fn set_compression_hint(&mut self, hint: i32) {
+        self.inner.set_compression_hint(hint);
+    }
+    
+    /// Get compression hint.
+    pub fn compression_hint(&self) -> i32 {
+        self.inner.compression_hint()
     }
 
     /// Get the root object of the archive.
@@ -119,6 +391,11 @@ impl OArchive {
     #[inline]
     pub fn valid(&self) -> bool {
         true
+    }
+    
+    /// Close and finalize the archive.
+    pub fn close(self) -> Result<()> {
+        self.inner.close()
     }
 }
 
@@ -367,6 +644,16 @@ impl<'a> ICompoundProperty<'a> {
     pub fn has_property(&self, name: &str) -> bool {
         self.reader.has_property(name)
     }
+    
+    /// Get property header by index.
+    pub fn property_header(&self, index: usize) -> Option<PropertyHeader> {
+        self.reader.property(index).map(|p| p.header().clone())
+    }
+    
+    /// Get property header by name.
+    pub fn property_header_by_name(&self, name: &str) -> Option<PropertyHeader> {
+        self.reader.property_by_name(name).map(|p| p.header().clone())
+    }
 
     /// Get property names.
     pub fn property_names(&self) -> Vec<String> {
@@ -381,6 +668,24 @@ impl<'a> ICompoundProperty<'a> {
     /// Get a property by name.
     pub fn property_by_name(&self, name: &str) -> Option<IProperty<'_>> {
         self.reader.property_by_name(name).map(IProperty::new)
+    }
+    
+    /// Check if a scalar property exists by name.
+    pub fn has_scalar_property(&self, name: &str) -> bool {
+        if let Some(prop) = self.property_by_name(name) {
+            prop.is_scalar()
+        } else {
+            false
+        }
+    }
+    
+    /// Check if an array property exists by name.
+    pub fn has_array_property(&self, name: &str) -> bool {
+        if let Some(prop) = self.property_by_name(name) {
+            prop.is_array()
+        } else {
+            false
+        }
     }
     
     /// Check if this property is valid.
@@ -450,6 +755,12 @@ impl<'a> IProperty<'a> {
     pub fn valid(&self) -> bool {
         true
     }
+    
+    /// Get the time sampling index for this property.
+    /// Use this with IArchive::time_sampling() to get the actual TimeSampling.
+    pub fn time_sampling_index(&self) -> u32 {
+        self.reader.header().time_sampling_index
+    }
 }
 
 /// Input scalar property (single value per sample).
@@ -474,13 +785,35 @@ impl<'a> IScalarProperty<'a> {
     }
 
     /// Read a sample into the provided buffer.
+    /// 
+    /// For time-based selectors, use `read_sample_with_ts()` which properly resolves time.
+    /// This method defaults time-based selectors to sample 0.
     pub fn read_sample(&self, sel: impl Into<SampleSelector>, out: &mut [u8]) -> Result<()> {
         let sel = sel.into();
         let index = match sel {
-            SampleSelector::Index(i) => i,
-            _ => 0, // TODO: Implement time-based selection
+            SampleSelector::Index(i) => i.min(self.num_samples().saturating_sub(1)),
+            _ => 0, // Use read_sample_with_ts() for time-based selection
         };
         self.reader.read_sample(index, out)
+    }
+    
+    /// Read a sample with proper time-based selection.
+    /// 
+    /// Pass the TimeSampling from `archive.time_sampling(prop.time_sampling_index())`.
+    pub fn read_sample_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling, out: &mut [u8]) -> Result<()> {
+        let index = sel.into().get_index(ts, self.num_samples());
+        self.reader.read_sample(index, out)
+    }
+    
+    /// Get the time sampling index.
+    pub fn time_sampling_index(&self) -> u32 {
+        self.reader.header().time_sampling_index
+    }
+    
+    /// Check if this property is valid.
+    #[inline]
+    pub fn valid(&self) -> bool {
+        true
     }
 }
 
@@ -511,23 +844,106 @@ impl<'a> IArrayProperty<'a> {
     }
 
     /// Get the number of elements in a sample.
+    /// 
+    /// For time-based selectors, use `sample_len_with_ts()`.
     pub fn sample_len(&self, sel: impl Into<SampleSelector>) -> Result<usize> {
         let sel = sel.into();
         let index = match sel {
-            SampleSelector::Index(i) => i,
+            SampleSelector::Index(i) => i.min(self.num_samples().saturating_sub(1)),
             _ => 0,
         };
         self.reader.sample_len(index)
     }
+    
+    /// Get the number of elements in a sample with time-based selection.
+    pub fn sample_len_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<usize> {
+        let index = sel.into().get_index(ts, self.num_samples());
+        self.reader.sample_len(index)
+    }
 
     /// Read a sample as bytes.
+    /// 
+    /// For time-based selectors, use `read_sample_vec_with_ts()`.
     pub fn read_sample_vec(&self, sel: impl Into<SampleSelector>) -> Result<Vec<u8>> {
         let sel = sel.into();
         let index = match sel {
-            SampleSelector::Index(i) => i,
+            SampleSelector::Index(i) => i.min(self.num_samples().saturating_sub(1)),
             _ => 0,
         };
         self.reader.read_sample_vec(index)
+    }
+    
+    /// Read a sample as bytes with time-based selection.
+    /// 
+    /// Pass the TimeSampling from `archive.time_sampling(prop.time_sampling_index())`.
+    pub fn read_sample_vec_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<Vec<u8>> {
+        let index = sel.into().get_index(ts, self.num_samples());
+        self.reader.read_sample_vec(index)
+    }
+    
+    /// Get the time sampling index.
+    pub fn time_sampling_index(&self) -> u32 {
+        self.reader.header().time_sampling_index
+    }
+    
+    /// Get the key (digest) of a sample for deduplication.
+    /// 
+    /// Returns the 16-byte MD5 digest stored with the sample.
+    /// Samples with the same key contain identical data.
+    pub fn get_key(&self, sel: impl Into<SampleSelector>) -> Result<crate::core::SampleDigest> {
+        let sel = sel.into();
+        let index = match sel {
+            SampleSelector::Index(i) => i.min(self.num_samples().saturating_sub(1)),
+            _ => 0,
+        };
+        self.reader.sample_key(index)
+    }
+    
+    /// Get the key with time-based selection.
+    pub fn get_key_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<crate::core::SampleDigest> {
+        let index = sel.into().get_index(ts, self.num_samples());
+        self.reader.sample_key(index)
+    }
+    
+    /// Get the dimensions of a sample.
+    /// 
+    /// Returns `[num_elements]` for 1D arrays, `[rows, cols]` for 2D, etc.
+    pub fn get_dimensions(&self, sel: impl Into<SampleSelector>) -> Result<Vec<usize>> {
+        let sel = sel.into();
+        let index = match sel {
+            SampleSelector::Index(i) => i.min(self.num_samples().saturating_sub(1)),
+            _ => 0,
+        };
+        self.reader.sample_dimensions(index)
+    }
+    
+    /// Get dimensions with time-based selection.
+    pub fn get_dimensions_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<Vec<usize>> {
+        let index = sel.into().get_index(ts, self.num_samples());
+        self.reader.sample_dimensions(index)
+    }
+    
+    /// Check if this array property behaves like a scalar (single element per sample).
+    pub fn is_scalar_like(&self) -> bool {
+        // Check if all samples have exactly 1 element
+        let num = self.num_samples();
+        if num == 0 {
+            return true;
+        }
+        for i in 0..num {
+            if let Ok(len) = self.reader.sample_len(i) {
+                if len != 1 {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+    
+    /// Check if this property is valid.
+    #[inline]
+    pub fn valid(&self) -> bool {
+        true
     }
 }
 

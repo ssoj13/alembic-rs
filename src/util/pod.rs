@@ -8,7 +8,7 @@ use std::fmt;
 ///
 /// These are the fundamental types that can be stored in Alembic properties.
 /// Each type has a fixed size and well-defined binary representation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum PlainOldDataType {
     /// Boolean (stored as u8: 0 = false, non-zero = true)
@@ -40,6 +40,7 @@ pub enum PlainOldDataType {
     /// Wide string (stored as UTF-8 in Rust)
     Wstring = 13,
     /// Unknown/invalid type
+    #[default]
     Unknown = 127,
 }
 
@@ -189,11 +190,7 @@ impl fmt::Display for PlainOldDataType {
     }
 }
 
-impl Default for PlainOldDataType {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
+
 
 // === POD Trait for type-safe conversions ===
 

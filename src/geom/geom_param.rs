@@ -103,7 +103,7 @@ impl GeomParamSample {
                     result.extend_from_slice(&vals[start..start + components]);
                 } else {
                     // Out of bounds - fill with zeros
-                    result.extend(std::iter::repeat(0.0f32).take(components));
+                    result.extend(std::iter::repeat_n(0.0f32, components));
                 }
             }
             result
@@ -189,7 +189,7 @@ impl<'a> IGeomParam<'a> {
     /// Extract geometry scope from property header metadata.
     fn extract_scope(header: &PropertyHeader) -> GeometryScope {
         if let Some(scope_str) = header.meta_data.get(GEOM_SCOPE_KEY) {
-            GeometryScope::from_str(scope_str)
+            GeometryScope::parse(scope_str)
         } else {
             GeometryScope::Unknown
         }
@@ -241,12 +241,10 @@ impl<'a> IGeomParam<'a> {
             } else {
                 0
             }
+        } else if let Some(array) = prop.as_array() {
+            array.num_samples()
         } else {
-            if let Some(array) = prop.as_array() {
-                array.num_samples()
-            } else {
-                0
-            }
+            0
         }
     }
     
@@ -328,7 +326,7 @@ impl<'a> IGeomParam<'a> {
                         new_values.extend_from_slice(&old_values[start..start + element_size]);
                     } else {
                         // Out of bounds - fill with zeros
-                        new_values.extend(std::iter::repeat(0u8).take(element_size));
+                        new_values.extend(std::iter::repeat_n(0u8, element_size));
                     }
                 }
                 sample.values = new_values;
@@ -337,6 +335,84 @@ impl<'a> IGeomParam<'a> {
         }
         
         Ok(sample)
+    }
+    
+    /// Get array extent from metadata (for multi-component values).
+    pub fn array_extent(&self) -> usize {
+        let Some(prop) = self.parent.property_by_name(&self.name) else {
+            return 1;
+        };
+        
+        if let Some(ext_str) = prop.header().meta_data.get(ARRAY_EXTENT_KEY) {
+            ext_str.parse().unwrap_or(1)
+        } else {
+            1
+        }
+    }
+    
+    /// Get number of unique values in the sample.
+    pub fn num_vals(&self, sel: impl Into<SampleSelector>) -> Result<usize> {
+        let sample = self.get_sample(sel)?;
+        Ok(sample.num_values())
+    }
+    
+    /// Get number of indices (or elements if non-indexed).
+    pub fn num_indices(&self, sel: impl Into<SampleSelector>) -> Result<usize> {
+        let sample = self.get_sample(sel)?;
+        if sample.is_indexed {
+            Ok(sample.num_indices())
+        } else {
+            Ok(sample.num_values())
+        }
+    }
+    
+    /// Check if this param is valid.
+    pub fn valid(&self) -> bool {
+        self.parent.property_by_name(&self.name).is_some()
+    }
+    
+    /// Get time sampling index.
+    pub fn time_sampling_index(&self) -> u32 {
+        let Some(prop) = self.parent.property_by_name(&self.name) else {
+            return 0;
+        };
+        
+        if self.is_indexed {
+            if let Some(compound) = prop.as_compound() {
+                // Get from .vals property
+                if let Some(vals_prop) = compound.property_by_name(VALS_PROPERTY_NAME) {
+                    return vals_prop.header().time_sampling_index;
+                }
+            }
+        }
+        prop.header().time_sampling_index
+    }
+    
+    /// Read UVs directly as Vec2 array (convenience for UV params).
+    pub fn get_uvs(&self, sel: impl Into<SampleSelector>) -> Result<Vec<glam::Vec2>> {
+        let sample = self.get_expanded_sample(sel)?;
+        Ok(sample.expand_vec2())
+    }
+    
+    /// Read normals directly as Vec3 array (convenience for normal params).
+    pub fn get_normals(&self, sel: impl Into<SampleSelector>) -> Result<Vec<glam::Vec3>> {
+        let sample = self.get_expanded_sample(sel)?;
+        Ok(sample.expand_vec3())
+    }
+    
+    /// Read colors directly as Vec3 array (convenience for color3 params).
+    pub fn get_colors3(&self, sel: impl Into<SampleSelector>) -> Result<Vec<glam::Vec3>> {
+        let sample = self.get_expanded_sample(sel)?;
+        Ok(sample.expand_vec3())
+    }
+    
+    /// Read colors directly as Vec4 array (convenience for color4 params).
+    pub fn get_colors4(&self, sel: impl Into<SampleSelector>) -> Result<Vec<glam::Vec4>> {
+        let sample = self.get_expanded_sample(sel)?;
+        let expanded = sample.expand_f32(4);
+        Ok(expanded.chunks_exact(4)
+            .map(|c| glam::vec4(c[0], c[1], c[2], c[3]))
+            .collect())
     }
 }
 

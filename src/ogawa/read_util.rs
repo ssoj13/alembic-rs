@@ -201,9 +201,7 @@ pub fn read_object_headers(
         let metadata_index = buf[pos] as usize;
         pos += 1;
         
-        let full_name = if parent_name.is_empty() {
-            format!("/{}", name)
-        } else if parent_name == "/" {
+        let full_name = if parent_name.is_empty() || parent_name == "/" {
             format!("/{}", name)
         } else {
             format!("{}/{}", parent_name, name)

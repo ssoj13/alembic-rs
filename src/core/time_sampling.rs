@@ -76,6 +76,8 @@ impl TimeSamplingType {
     }
 }
 
+// Cannot use #[derive(Default)] because variants have data
+#[allow(clippy::derivable_impls)]
 impl Default for TimeSamplingType {
     fn default() -> Self {
         Self::Identity
@@ -94,6 +96,12 @@ impl TimeSampling {
     pub const IDENTITY: Self = Self {
         sampling_type: TimeSamplingType::Identity,
     };
+    
+    /// Create identity time sampling (convenience function).
+    #[inline]
+    pub fn identity() -> Self {
+        Self::IDENTITY
+    }
 
     /// Create uniform time sampling.
     pub fn uniform(time_per_cycle: Chrono, start_time: Chrono) -> Self {
@@ -190,6 +198,40 @@ impl TimeSampling {
             TimeSamplingType::Uniform { start_time, .. } => vec![*start_time],
             TimeSamplingType::Cyclic { times, .. } => times.clone(),
             TimeSamplingType::Acyclic { times } => times.clone(),
+        }
+    }
+    
+    /// Check if two time samplings are equivalent.
+    /// 
+    /// Two time samplings are equivalent if they produce the same sample times.
+    pub fn is_equivalent(&self, other: &Self) -> bool {
+        // Quick type check first
+        match (&self.sampling_type, &other.sampling_type) {
+            (TimeSamplingType::Identity, TimeSamplingType::Identity) => true,
+            (TimeSamplingType::Uniform { time_per_cycle: t1, start_time: s1 },
+             TimeSamplingType::Uniform { time_per_cycle: t2, start_time: s2 }) => {
+                (t1 - t2).abs() < 1e-10 && (s1 - s2).abs() < 1e-10
+            }
+            (TimeSamplingType::Cyclic { time_per_cycle: t1, times: times1 },
+             TimeSamplingType::Cyclic { time_per_cycle: t2, times: times2 }) => {
+                if times1.len() != times2.len() {
+                    return false;
+                }
+                if (t1 - t2).abs() >= 1e-10 {
+                    return false;
+                }
+                times1.iter().zip(times2.iter())
+                    .all(|(a, b)| (a - b).abs() < 1e-10)
+            }
+            (TimeSamplingType::Acyclic { times: times1 },
+             TimeSamplingType::Acyclic { times: times2 }) => {
+                if times1.len() != times2.len() {
+                    return false;
+                }
+                times1.iter().zip(times2.iter())
+                    .all(|(a, b)| (a - b).abs() < 1e-10)
+            }
+            _ => false,
         }
     }
 

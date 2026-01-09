@@ -138,20 +138,15 @@ impl PropertyHeader {
 }
 
 /// Type of property.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum PropertyType {
     /// Single value per sample.
+    #[default]
     Scalar,
     /// Array of values per sample.
     Array,
     /// Container for other properties.
     Compound,
-}
-
-impl Default for PropertyType {
-    fn default() -> Self {
-        Self::Scalar
-    }
 }
 
 #[cfg(test)]

@@ -4,7 +4,7 @@
 
 use crate::abc::IObject;
 use crate::core::TopologyVariance;
-use crate::geom::faceset::{IFaceSet, FACESET_SCHEMA};
+use crate::geom::faceset::FACESET_SCHEMA;
 use crate::util::{Result, BBox3d};
 
 /// PolyMesh schema identifier.
@@ -245,21 +245,78 @@ impl<'a> IPolyMesh<'a> {
         }
     }
     
-    /// Get a FaceSet by name.
+    /// Get a FaceSet sample by name.
     /// 
-    /// Returns None if the FaceSet doesn't exist or doesn't have the FaceSet schema.
-    pub fn face_set(&self, name: &str) -> Option<IFaceSet<'_>> {
+    /// This reads the FaceSet data directly without returning an IFaceSet wrapper.
+    /// Use this when you need the face indices for a specific sample.
+    pub fn get_face_set_sample(&self, name: &str, index: usize) -> Option<super::faceset::FaceSetSample> {
         let child = self.object.child_by_name(name)?;
-        // Need to check schema and wrap - but child is owned, so we need a different approach
-        // For now, return None if not matching
-        if child.matches_schema(FACESET_SCHEMA) {
-            // We can't easily return IFaceSet because IFaceSet needs &IObject reference
-            // This would require storing the child somewhere - architectural limitation
-            // Return None for now, user can iterate children manually
-            None
-        } else {
-            None
+        if !child.matches_schema(FACESET_SCHEMA) {
+            return None;
         }
+        
+        let mut sample = super::faceset::FaceSetSample::new();
+        
+        let props = child.properties();
+        let geom_prop = props.property_by_name(".geom")?;
+        let geom = geom_prop.as_compound()?;
+        
+        // Read .faces
+        if let Some(faces_prop) = geom.property_by_name(".faces") {
+            if let Some(array) = faces_prop.as_array() {
+                if let Ok(data) = array.read_sample_vec(index) {
+                    sample.faces = bytemuck::cast_slice(&data).to_vec();
+                }
+            }
+        }
+        
+        // Read .selfBnds if present
+        if let Some(bnds_prop) = geom.property_by_name(".selfBnds") {
+            if let Some(scalar) = bnds_prop.as_scalar() {
+                let mut buf = [0u8; 48];
+                if scalar.read_sample(index, &mut buf).is_ok() {
+                    let values: &[f64] = bytemuck::cast_slice(&buf);
+                    if values.len() >= 6 {
+                        sample.self_bounds = Some(BBox3d::new(
+                            glam::dvec3(values[0], values[1], values[2]),
+                            glam::dvec3(values[3], values[4], values[5]),
+                        ));
+                    }
+                }
+            }
+        }
+        
+        Some(sample)
+    }
+    
+    /// Get the exclusivity setting for a FaceSet.
+    pub fn face_set_exclusivity(&self, name: &str) -> Option<super::faceset::FaceSetExclusivity> {
+        let child = self.object.child_by_name(name)?;
+        if !child.matches_schema(FACESET_SCHEMA) {
+            return None;
+        }
+        
+        let header = child.header();
+        Some(if let Some(excl_str) = header.meta_data.get(super::faceset::FACE_EXCLUSIVITY_KEY) {
+            super::faceset::FaceSetExclusivity::parse(excl_str)
+        } else {
+            super::faceset::FaceSetExclusivity::NonExclusive
+        })
+    }
+    
+    /// Get number of samples in a FaceSet.
+    pub fn face_set_num_samples(&self, name: &str) -> usize {
+        let Some(child) = self.object.child_by_name(name) else { return 0 };
+        if !child.matches_schema(FACESET_SCHEMA) {
+            return 0;
+        }
+        
+        let props = child.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else { return 1 };
+        let Some(geom) = geom_prop.as_compound() else { return 1 };
+        let Some(faces_prop) = geom.property_by_name(".faces") else { return 1 };
+        let Some(array) = faces_prop.as_array() else { return 1 };
+        array.num_samples()
     }
     
     /// Get number of FaceSets on this mesh.
@@ -329,6 +386,62 @@ impl<'a> IPolyMesh<'a> {
             return Vec::new();
         };
         user.property_names()
+    }
+    
+    /// Check if this mesh has child bounds property.
+    /// 
+    /// Child bounds represent the combined bounding box of all child objects.
+    pub fn has_child_bounds(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return false;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return false;
+        };
+        geom.has_property(".childBnds")
+    }
+    
+    /// Get child bounds at the given sample index.
+    /// 
+    /// Returns the combined bounding box of all child objects at this sample.
+    pub fn child_bounds(&self, index: usize) -> Option<BBox3d> {
+        let props = self.object.properties();
+        let geom_prop = props.property_by_name(".geom")?;
+        let geom = geom_prop.as_compound()?;
+        let bnds_prop = geom.property_by_name(".childBnds")?;
+        let scalar = bnds_prop.as_scalar()?;
+        
+        let mut buf = [0u8; 48]; // 6 x f64
+        scalar.read_sample(index, &mut buf).ok()?;
+        let doubles: &[f64] = bytemuck::cast_slice(&buf);
+        if doubles.len() >= 6 {
+            Some(BBox3d::new(
+                glam::dvec3(doubles[0], doubles[1], doubles[2]),
+                glam::dvec3(doubles[3], doubles[4], doubles[5]),
+            ))
+        } else {
+            None
+        }
+    }
+    
+    /// Get the number of child bounds samples.
+    pub fn child_bounds_num_samples(&self) -> usize {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
+        let Some(geom) = geom_prop.as_compound() else { return 0 };
+        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
+        let Some(scalar) = bnds_prop.as_scalar() else { return 0 };
+        scalar.num_samples()
+    }
+    
+    /// Get the time sampling index for child bounds property.
+    pub fn child_bounds_time_sampling_index(&self) -> u32 {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
+        let Some(geom) = geom_prop.as_compound() else { return 0 };
+        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
+        bnds_prop.header().time_sampling_index
     }
     
     /// Read a sample at the given index.
@@ -429,6 +542,168 @@ impl<'a> IPolyMesh<'a> {
         }
         
         Ok(sample)
+    }
+    
+    /// Check if this mesh has UVs.
+    pub fn has_uvs(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else { return false };
+        let Some(geom) = geom_prop.as_compound() else { return false };
+        geom.has_property("uv")
+    }
+    
+    /// Check if this mesh has normals.
+    pub fn has_normals(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else { return false };
+        let Some(geom) = geom_prop.as_compound() else { return false };
+        geom.has_property("N")
+    }
+    
+    /// Get expanded UVs at the given sample index.
+    /// 
+    /// If UVs are indexed, this expands them to per-face-vertex values.
+    pub fn get_uvs(&self, index: usize) -> Option<Vec<glam::Vec2>> {
+        let props = self.object.properties();
+        let geom_prop = props.property_by_name(".geom")?;
+        let geom = geom_prop.as_compound()?;
+        let uv_prop = geom.property_by_name("uv")?;
+        
+        if let Some(compound) = uv_prop.as_compound() {
+            // Indexed UVs - read .vals and .indices
+            let vals_prop = compound.property_by_name(".vals")?;
+            let array = vals_prop.as_array()?;
+            let data = array.read_sample_vec(index).ok()?;
+            let floats: &[f32] = bytemuck::cast_slice(&data);
+            
+            // Check for indices
+            if let Some(idx_prop) = compound.property_by_name(".indices") {
+                if let Some(idx_array) = idx_prop.as_array() {
+                    if let Ok(idx_data) = idx_array.read_sample_vec(index) {
+                        let indices: &[u32] = bytemuck::cast_slice(&idx_data);
+                        return Some(indices.iter()
+                            .map(|&i| {
+                                let base = (i as usize) * 2;
+                                if base + 1 < floats.len() {
+                                    glam::vec2(floats[base], floats[base + 1])
+                                } else {
+                                    glam::Vec2::ZERO
+                                }
+                            })
+                            .collect());
+                    }
+                }
+            }
+            
+            // No indices - direct values
+            Some(floats.chunks_exact(2)
+                .map(|c| glam::vec2(c[0], c[1]))
+                .collect())
+        } else if let Some(array) = uv_prop.as_array() {
+            // Non-indexed UVs
+            let data = array.read_sample_vec(index).ok()?;
+            let floats: &[f32] = bytemuck::cast_slice(&data);
+            Some(floats.chunks_exact(2)
+                .map(|c| glam::vec2(c[0], c[1]))
+                .collect())
+        } else {
+            None
+        }
+    }
+    
+    /// Get expanded normals at the given sample index.
+    /// 
+    /// If normals are indexed, this expands them to per-face-vertex values.
+    pub fn get_normals(&self, index: usize) -> Option<Vec<glam::Vec3>> {
+        let props = self.object.properties();
+        let geom_prop = props.property_by_name(".geom")?;
+        let geom = geom_prop.as_compound()?;
+        let n_prop = geom.property_by_name("N")?;
+        
+        if let Some(compound) = n_prop.as_compound() {
+            // Indexed normals - read .vals and .indices
+            let vals_prop = compound.property_by_name(".vals")?;
+            let array = vals_prop.as_array()?;
+            let data = array.read_sample_vec(index).ok()?;
+            let floats: &[f32] = bytemuck::cast_slice(&data);
+            
+            // Check for indices
+            if let Some(idx_prop) = compound.property_by_name(".indices") {
+                if let Some(idx_array) = idx_prop.as_array() {
+                    if let Ok(idx_data) = idx_array.read_sample_vec(index) {
+                        let indices: &[u32] = bytemuck::cast_slice(&idx_data);
+                        return Some(indices.iter()
+                            .map(|&i| {
+                                let base = (i as usize) * 3;
+                                if base + 2 < floats.len() {
+                                    glam::vec3(floats[base], floats[base + 1], floats[base + 2])
+                                } else {
+                                    glam::Vec3::Y
+                                }
+                            })
+                            .collect());
+                    }
+                }
+            }
+            
+            // No indices - direct values
+            Some(floats.chunks_exact(3)
+                .map(|c| glam::vec3(c[0], c[1], c[2]))
+                .collect())
+        } else if let Some(array) = n_prop.as_array() {
+            // Non-indexed normals
+            let data = array.read_sample_vec(index).ok()?;
+            let floats: &[f32] = bytemuck::cast_slice(&data);
+            Some(floats.chunks_exact(3)
+                .map(|c| glam::vec3(c[0], c[1], c[2]))
+                .collect())
+        } else {
+            None
+        }
+    }
+    
+    /// Get UV scope (how UVs are mapped to geometry).
+    pub fn uvs_scope(&self) -> crate::core::GeometryScope {
+        use crate::core::GeometryScope;
+        
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return GeometryScope::Unknown;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return GeometryScope::Unknown;
+        };
+        let Some(uv_prop) = geom.property_by_name("uv") else {
+            return GeometryScope::Unknown;
+        };
+        
+        if let Some(scope_str) = uv_prop.header().meta_data.get("geoScope") {
+            GeometryScope::parse(scope_str)
+        } else {
+            GeometryScope::FaceVarying // Default for UVs
+        }
+    }
+    
+    /// Get normals scope (how normals are mapped to geometry).
+    pub fn normals_scope(&self) -> crate::core::GeometryScope {
+        use crate::core::GeometryScope;
+        
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return GeometryScope::Unknown;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return GeometryScope::Unknown;
+        };
+        let Some(n_prop) = geom.property_by_name("N") else {
+            return GeometryScope::Unknown;
+        };
+        
+        if let Some(scope_str) = n_prop.header().meta_data.get("geoScope") {
+            GeometryScope::parse(scope_str)
+        } else {
+            GeometryScope::FaceVarying // Default for normals
+        }
     }
 }
 

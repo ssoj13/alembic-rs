@@ -149,11 +149,135 @@ pub fn is_visible(obj: &IObject<'_>, sel: impl Into<SampleSelector>) -> bool {
 /// Check if any ancestor of the object is explicitly invisible.
 ///
 /// Returns true if any ancestor has kVisibilityHidden.
-/// Note: Currently limited since we don't have full parent traversal.
-pub fn is_ancestor_invisible(_obj: &IObject<'_>, _sel: impl Into<SampleSelector>) -> bool {
-    // TODO: Implement when parent access is available
-    // For now, return false (assume no invisible ancestors)
-    false
+/// 
+/// NOTE: This version only checks the immediate object due to Rust ownership.
+/// Use `is_ancestor_invisible_in_archive()` for full hierarchy traversal.
+pub fn is_ancestor_invisible(obj: &IObject<'_>, sel: impl Into<SampleSelector>) -> bool {
+    // Without parent access, we can only check the object itself
+    get_visibility(obj, sel) == ObjectVisibility::Hidden
+}
+
+/// Check if any ancestor in the path is explicitly invisible.
+/// 
+/// Traverses from root to the object, checking visibility at each level.
+/// Returns true if any ancestor (not including the object itself) is hidden.
+/// 
+/// # Arguments
+/// * `archive` - The archive to search in
+/// * `obj_path` - Full path of the object (e.g., "/root/parent/child")
+/// * `sel` - Sample selector for animated visibility
+pub fn is_ancestor_invisible_in_archive(
+    archive: &crate::abc::IArchive,
+    obj_path: &str,
+    sel: impl Into<SampleSelector> + Copy,
+) -> bool {
+    // Parse path into segments
+    let parts: Vec<&str> = obj_path.split('/').filter(|s| !s.is_empty()).collect();
+    if parts.len() <= 1 {
+        return false; // No ancestors (root or single-level)
+    }
+    
+    // Check visibility at each ancestor level
+    check_ancestors_recursive(&archive.root(), &parts[..parts.len()-1], sel)
+}
+
+/// Recursively check ancestors for hidden visibility.
+fn check_ancestors_recursive(
+    current: &IObject<'_>,
+    remaining: &[&str],
+    sel: impl Into<SampleSelector> + Copy,
+) -> bool {
+    if remaining.is_empty() {
+        return false;
+    }
+    
+    // Get first child in path
+    let Some(child) = current.child_by_name(remaining[0]) else {
+        return false; // Path not found
+    };
+    
+    // Check if this ancestor is hidden
+    if get_visibility(&child, sel) == ObjectVisibility::Hidden {
+        return true;
+    }
+    
+    // Check remaining ancestors
+    if remaining.len() > 1 {
+        check_ancestors_recursive(&child, &remaining[1..], sel)
+    } else {
+        false
+    }
+}
+
+// ============================================================================
+// Output (Write) Support
+// ============================================================================
+
+use crate::ogawa::writer::OProperty;
+use crate::util::DataType;
+
+/// Create a visibility property for writing.
+///
+/// Returns an OProperty configured for visibility values.
+pub fn create_visibility_property() -> OProperty {
+    OProperty::scalar(VISIBILITY_PROPERTY_NAME, DataType::INT8)
+}
+
+/// Add visibility sample to a property.
+///
+/// The property should have been created with `create_visibility_property()`.
+pub fn add_visibility_sample(prop: &mut OProperty, vis: ObjectVisibility) {
+    prop.add_scalar_pod(&vis.to_i8());
+}
+
+/// OVisibilityProperty - convenience wrapper for writing visibility.
+pub struct OVisibilityProperty {
+    property: OProperty,
+}
+
+impl OVisibilityProperty {
+    /// Create a new visibility property.
+    pub fn new() -> Self {
+        Self {
+            property: create_visibility_property(),
+        }
+    }
+    
+    /// Add a visibility sample.
+    pub fn set(&mut self, vis: ObjectVisibility) {
+        add_visibility_sample(&mut self.property, vis);
+    }
+    
+    /// Add a "visible" sample.
+    pub fn set_visible(&mut self) {
+        self.set(ObjectVisibility::Visible);
+    }
+    
+    /// Add a "hidden" sample.
+    pub fn set_hidden(&mut self) {
+        self.set(ObjectVisibility::Hidden);
+    }
+    
+    /// Add a "deferred" sample (inherit from parent).
+    pub fn set_deferred(&mut self) {
+        self.set(ObjectVisibility::Deferred);
+    }
+    
+    /// Get the underlying property for adding to an object.
+    pub fn into_property(self) -> OProperty {
+        self.property
+    }
+    
+    /// Get mutable reference to underlying property.
+    pub fn property_mut(&mut self) -> &mut OProperty {
+        &mut self.property
+    }
+}
+
+impl Default for OVisibilityProperty {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -185,5 +309,26 @@ mod tests {
         assert!(!ObjectVisibility::Visible.is_deferred());
         assert!(!ObjectVisibility::Visible.is_hidden());
         assert!(ObjectVisibility::Visible.is_visible());
+    }
+    
+    #[test]
+    fn test_ovisibility_property() {
+        let mut vis = OVisibilityProperty::new();
+        vis.set_visible();
+        
+        let prop = vis.into_property();
+        assert_eq!(prop.name, "visible");
+        assert_eq!(prop.num_samples(), 1);
+    }
+    
+    #[test]
+    fn test_visibility_samples() {
+        let mut vis = OVisibilityProperty::new();
+        vis.set_visible();
+        vis.set_hidden();
+        vis.set_deferred();
+        
+        let prop = vis.into_property();
+        assert_eq!(prop.num_samples(), 3);
     }
 }

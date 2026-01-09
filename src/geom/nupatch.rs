@@ -64,6 +64,149 @@ pub struct TrimCurveData {
     pub w: Vec<f32>,
 }
 
+/// A single trim curve within a trim loop.
+#[derive(Clone, Debug)]
+pub struct TrimCurve {
+    /// Order of this curve.
+    pub order: i32,
+    /// Number of vertices (control points).
+    pub num_vertices: i32,
+    /// Knot vector for this curve.
+    pub knots: Vec<f32>,
+    /// Minimum parameter value.
+    pub min: f32,
+    /// Maximum parameter value.
+    pub max: f32,
+    /// U coordinates of control points.
+    pub u: Vec<f32>,
+    /// V coordinates of control points.
+    pub v: Vec<f32>,
+    /// W (weight) coordinates of control points.
+    pub w: Vec<f32>,
+}
+
+impl TrimCurveData {
+    /// Get the number of trim loops.
+    pub fn num_loops(&self) -> usize {
+        self.num_loops as usize
+    }
+    
+    /// Get number of curves in a specific loop.
+    pub fn num_curves_in_loop(&self, loop_idx: usize) -> usize {
+        self.num_curves.get(loop_idx).copied().unwrap_or(0) as usize
+    }
+    
+    /// Get total number of trim curves across all loops.
+    pub fn total_curves(&self) -> usize {
+        self.num_curves.iter().map(|&n| n as usize).sum()
+    }
+    
+    /// Check if this trim data is valid.
+    pub fn is_valid(&self) -> bool {
+        self.num_loops > 0 && !self.num_curves.is_empty()
+    }
+    
+    /// Get a specific trim curve by global index.
+    /// 
+    /// Returns None if index is out of range.
+    pub fn curve(&self, curve_idx: usize) -> Option<TrimCurve> {
+        let total = self.total_curves();
+        if curve_idx >= total {
+            return None;
+        }
+        
+        // Calculate offsets
+        let order = *self.orders.get(curve_idx)?;
+        let num_verts = *self.num_vertices.get(curve_idx)? as usize;
+        let min = *self.mins.get(curve_idx)?;
+        let max = *self.maxes.get(curve_idx)?;
+        
+        // Calculate knot offset (sum of knots for previous curves)
+        let mut knot_offset = 0usize;
+        for i in 0..curve_idx {
+            let n = self.num_vertices.get(i).copied().unwrap_or(0) as usize;
+            let o = self.orders.get(i).copied().unwrap_or(0) as usize;
+            knot_offset += n + o;
+        }
+        let num_knots = num_verts + order as usize;
+        let knots = self.knots.get(knot_offset..knot_offset + num_knots)?.to_vec();
+        
+        // Calculate vertex offset
+        let mut vert_offset = 0usize;
+        for i in 0..curve_idx {
+            vert_offset += self.num_vertices.get(i).copied().unwrap_or(0) as usize;
+        }
+        
+        let u = self.u.get(vert_offset..vert_offset + num_verts)?.to_vec();
+        let v = self.v.get(vert_offset..vert_offset + num_verts)?.to_vec();
+        let w = self.w.get(vert_offset..vert_offset + num_verts)?.to_vec();
+        
+        Some(TrimCurve {
+            order,
+            num_vertices: num_verts as i32,
+            knots,
+            min,
+            max,
+            u,
+            v,
+            w,
+        })
+    }
+    
+    /// Get curve at (loop_idx, curve_in_loop_idx).
+    pub fn curve_in_loop(&self, loop_idx: usize, curve_in_loop: usize) -> Option<TrimCurve> {
+        if loop_idx >= self.num_loops() {
+            return None;
+        }
+        
+        // Calculate global curve index
+        let mut global_idx = 0usize;
+        for i in 0..loop_idx {
+            global_idx += self.num_curves_in_loop(i);
+        }
+        global_idx += curve_in_loop;
+        
+        self.curve(global_idx)
+    }
+    
+    /// Iterate over all trim curves.
+    pub fn curves(&self) -> impl Iterator<Item = TrimCurve> + '_ {
+        (0..self.total_curves()).filter_map(|i| self.curve(i))
+    }
+    
+    /// Iterate over curves in a specific loop.
+    pub fn curves_in_loop(&self, loop_idx: usize) -> impl Iterator<Item = TrimCurve> + '_ {
+        let num_curves = self.num_curves_in_loop(loop_idx);
+        (0..num_curves).filter_map(move |i| self.curve_in_loop(loop_idx, i))
+    }
+}
+
+impl TrimCurve {
+    /// Get degree of the curve (order - 1).
+    pub fn degree(&self) -> i32 {
+        self.order - 1
+    }
+    
+    /// Get UV control points as Vec2 array.
+    pub fn control_points(&self) -> Vec<glam::Vec2> {
+        self.u.iter().zip(self.v.iter())
+            .map(|(&u, &v)| glam::vec2(u, v))
+            .collect()
+    }
+    
+    /// Get weighted control points as Vec3 (u, v, w) array.
+    pub fn weighted_control_points(&self) -> Vec<glam::Vec3> {
+        self.u.iter().zip(self.v.iter()).zip(self.w.iter())
+            .map(|((&u, &v), &w)| glam::vec3(u, v, w))
+            .collect()
+    }
+    
+    /// Check if this is a rational curve (weights != 1).
+    pub fn is_rational(&self) -> bool {
+        self.w.iter().any(|&w| (w - 1.0).abs() > 1e-6)
+    }
+}
+
 impl NuPatchSample {
     /// Create an empty sample.
     pub fn new() -> Self {

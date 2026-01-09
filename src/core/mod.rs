@@ -12,6 +12,8 @@ mod metadata;
 mod header;
 mod traits;
 mod sample;
+mod cache;
+mod compression;
 
 pub use time_sampling::{TimeSampling, TimeSamplingType};
 pub use metadata::MetaData;
@@ -28,3 +30,8 @@ pub use traits::{
     CompoundPropertyReader, CompoundPropertyWriter,
 };
 pub use sample::{SampleSelector, SampleInterp, GeometryScope, TopologyVariance};
+pub use cache::{
+    ReadArraySampleCache, ArraySampleKey, CachedSample,
+    ArraySampleContentKey, SampleDigest, compute_digest,
+};
+pub use compression::{compress, decompress, is_compressed};

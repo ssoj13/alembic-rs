@@ -77,6 +77,38 @@ impl MetaData {
     pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
         self.entries.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
+    
+    /// Get all entries as a HashMap.
+    pub fn get_all(&self) -> HashMap<String, String> {
+        self.entries.iter().cloned().collect()
+    }
+    
+    /// Append all entries from another MetaData.
+    /// Existing keys will be overwritten.
+    pub fn append(&mut self, other: &MetaData) {
+        for (k, v) in other.iter() {
+            self.set(k, v);
+        }
+    }
+    
+    /// Check if this metadata matches another.
+    /// Returns true if all keys in `other` exist in `self` with same values.
+    pub fn matches(&self, other: &MetaData) -> bool {
+        for (k, v) in other.iter() {
+            if self.get(k) != Some(v) {
+                return false;
+            }
+        }
+        true
+    }
+    
+    /// Check exact equality (all keys and values match both ways).
+    pub fn equals(&self, other: &MetaData) -> bool {
+        if self.len() != other.len() {
+            return false;
+        }
+        self.matches(other)
+    }
 
     /// Serialize to Alembic metadata string format.
     /// Format: "key=value;key2=value2;..."
@@ -326,5 +358,52 @@ mod tests {
         let parsed = MetaData::parse(&s);
 
         assert_eq!(parsed.get("key=with;special"), Some("value=with;special"));
+    }
+    
+    #[test]
+    fn test_metadata_matches() {
+        let mut meta1 = MetaData::new();
+        meta1.set("schema", "PolyMesh");
+        meta1.set("extra", "value");
+        
+        let mut meta2 = MetaData::new();
+        meta2.set("schema", "PolyMesh");
+        
+        // meta1 matches meta2 (has all keys of meta2)
+        assert!(meta1.matches(&meta2));
+        // meta2 doesn't match meta1 (missing "extra")
+        assert!(!meta2.matches(&meta1));
+        // Not equal (different lengths)
+        assert!(!meta1.equals(&meta2));
+        
+        meta2.set("extra", "value");
+        assert!(meta1.equals(&meta2));
+    }
+    
+    #[test]
+    fn test_metadata_append() {
+        let mut meta1 = MetaData::new();
+        meta1.set("key1", "value1");
+        
+        let mut meta2 = MetaData::new();
+        meta2.set("key2", "value2");
+        meta2.set("key1", "overwritten");
+        
+        meta1.append(&meta2);
+        
+        assert_eq!(meta1.get("key1"), Some("overwritten"));
+        assert_eq!(meta1.get("key2"), Some("value2"));
+    }
+    
+    #[test]
+    fn test_metadata_get_all() {
+        let mut meta = MetaData::new();
+        meta.set("a", "1");
+        meta.set("b", "2");
+        
+        let map = meta.get_all();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get("a"), Some(&"1".to_string()));
+        assert_eq!(map.get("b"), Some(&"2".to_string()));
     }
 }

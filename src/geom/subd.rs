@@ -24,7 +24,7 @@ pub enum SubDScheme {
 
 impl SubDScheme {
     /// Parse from string.
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "catmullClark" => SubDScheme::CatmullClark,
             "loop" => SubDScheme::Loop,
@@ -41,6 +41,14 @@ pub struct SubDSample {
     pub positions: Vec<glam::Vec3>,
     /// Vertex velocities (optional, for motion blur).
     pub velocities: Option<Vec<glam::Vec3>>,
+    /// UV coordinates (optional).
+    pub uvs: Option<Vec<glam::Vec2>>,
+    /// UV indices for indexed UVs (optional).
+    pub uv_indices: Option<Vec<i32>>,
+    /// Normals (optional).
+    pub normals: Option<Vec<glam::Vec3>>,
+    /// Normal indices for indexed normals (optional).
+    pub normal_indices: Option<Vec<i32>>,
     /// Face vertex counts.
     pub face_counts: Vec<i32>,
     /// Face vertex indices.
@@ -263,13 +271,12 @@ impl<'a> ISubD<'a> {
     /// 
     /// Returns None if the FaceSet doesn't exist or doesn't have the FaceSet schema.
     /// Note: Due to lifetime constraints, use face_set_names() and iterate children manually.
+    #[allow(clippy::unused_self)]
     pub fn face_set(&self, name: &str) -> Option<IFaceSet<'_>> {
-        let child = self.object.child_by_name(name)?;
-        if child.matches_schema(FACESET_SCHEMA) {
-            None // Architectural limitation - child is owned
-        } else {
-            None
-        }
+        let _child = self.object.child_by_name(name)?;
+        // Due to ownership constraints with trait objects, we cannot return
+        // a wrapped IFaceSet here. Use face_set_names() and iterate children manually.
+        None
     }
     
     /// Get number of FaceSets on this SubD.
@@ -337,6 +344,62 @@ impl<'a> ISubD<'a> {
         user.property_names()
     }
     
+    /// Check if this SubD has child bounds property.
+    /// 
+    /// Child bounds represent the combined bounding box of all child objects.
+    pub fn has_child_bounds(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else {
+            return false;
+        };
+        let Some(geom) = geom_prop.as_compound() else {
+            return false;
+        };
+        geom.has_property(".childBnds")
+    }
+    
+    /// Get child bounds at the given sample index.
+    /// 
+    /// Returns the combined bounding box of all child objects at this sample.
+    pub fn child_bounds(&self, index: usize) -> Option<BBox3d> {
+        let props = self.object.properties();
+        let geom_prop = props.property_by_name(".geom")?;
+        let geom = geom_prop.as_compound()?;
+        let bnds_prop = geom.property_by_name(".childBnds")?;
+        let scalar = bnds_prop.as_scalar()?;
+        
+        let mut buf = [0u8; 48]; // 6 x f64
+        scalar.read_sample(index, &mut buf).ok()?;
+        let doubles: &[f64] = bytemuck::cast_slice(&buf);
+        if doubles.len() >= 6 {
+            Some(BBox3d::new(
+                glam::dvec3(doubles[0], doubles[1], doubles[2]),
+                glam::dvec3(doubles[3], doubles[4], doubles[5]),
+            ))
+        } else {
+            None
+        }
+    }
+    
+    /// Get the number of child bounds samples.
+    pub fn child_bounds_num_samples(&self) -> usize {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
+        let Some(geom) = geom_prop.as_compound() else { return 0 };
+        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
+        let Some(scalar) = bnds_prop.as_scalar() else { return 0 };
+        scalar.num_samples()
+    }
+    
+    /// Get the time sampling index for child bounds property.
+    pub fn child_bounds_time_sampling_index(&self) -> u32 {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
+        let Some(geom) = geom_prop.as_compound() else { return 0 };
+        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
+        bnds_prop.header().time_sampling_index
+    }
+    
     /// Read a sample at the given index.
     pub fn get_sample(&self, index: usize) -> Result<SubDSample> {
         use crate::util::Error;
@@ -371,6 +434,64 @@ impl<'a> ISubD<'a> {
                             .map(|c| glam::vec3(c[0], c[1], c[2]))
                             .collect()
                     );
+                }
+            }
+        }
+        
+        // Read UVs (uv compound property with .vals and optionally .indices)
+        if let Some(uv_prop) = geom.property_by_name("uv") {
+            if let Some(uv_compound) = uv_prop.as_compound() {
+                // Read UV values
+                if let Some(vals_prop) = uv_compound.property_by_name(".vals") {
+                    if let Some(array) = vals_prop.as_array() {
+                        if let Ok(data) = array.read_sample_vec(index) {
+                            let floats: &[f32] = bytemuck::cast_slice(&data);
+                            sample.uvs = Some(
+                                floats.chunks_exact(2)
+                                    .map(|c| glam::vec2(c[0], c[1]))
+                                    .collect()
+                            );
+                        }
+                    }
+                }
+                // Read UV indices if present
+                if let Some(idx_prop) = uv_compound.property_by_name(".indices") {
+                    if let Some(array) = idx_prop.as_array() {
+                        if let Ok(data) = array.read_sample_vec(index) {
+                            sample.uv_indices = Some(
+                                bytemuck::cast_slice::<u8, i32>(&data).to_vec()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Read normals (N compound property)
+        if let Some(n_prop) = geom.property_by_name("N") {
+            if let Some(n_compound) = n_prop.as_compound() {
+                // Read normal values
+                if let Some(vals_prop) = n_compound.property_by_name(".vals") {
+                    if let Some(array) = vals_prop.as_array() {
+                        if let Ok(data) = array.read_sample_vec(index) {
+                            let floats: &[f32] = bytemuck::cast_slice(&data);
+                            sample.normals = Some(
+                                floats.chunks_exact(3)
+                                    .map(|c| glam::vec3(c[0], c[1], c[2]))
+                                    .collect()
+                            );
+                        }
+                    }
+                }
+                // Read normal indices if present
+                if let Some(idx_prop) = n_compound.property_by_name(".indices") {
+                    if let Some(array) = idx_prop.as_array() {
+                        if let Ok(data) = array.read_sample_vec(index) {
+                            sample.normal_indices = Some(
+                                bytemuck::cast_slice::<u8, i32>(&data).to_vec()
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -465,6 +586,115 @@ impl<'a> ISubD<'a> {
         
         Ok(sample)
     }
+    
+    /// Check if this subd has UVs.
+    pub fn has_uvs(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else { return false };
+        let Some(geom) = geom_prop.as_compound() else { return false };
+        geom.has_property("uv")
+    }
+    
+    /// Check if this subd has normals.
+    pub fn has_normals(&self) -> bool {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else { return false };
+        let Some(geom) = geom_prop.as_compound() else { return false };
+        geom.has_property("N")
+    }
+    
+    /// Get expanded UVs at the given sample index.
+    /// 
+    /// If UVs are indexed, this expands them to per-face-vertex values.
+    pub fn get_uvs(&self, index: usize) -> Option<Vec<glam::Vec2>> {
+        let props = self.object.properties();
+        let geom_prop = props.property_by_name(".geom")?;
+        let geom = geom_prop.as_compound()?;
+        let uv_prop = geom.property_by_name("uv")?;
+        
+        if let Some(compound) = uv_prop.as_compound() {
+            // Indexed UVs
+            let vals_prop = compound.property_by_name(".vals")?;
+            let array = vals_prop.as_array()?;
+            let data = array.read_sample_vec(index).ok()?;
+            let floats: &[f32] = bytemuck::cast_slice(&data);
+            
+            if let Some(idx_prop) = compound.property_by_name(".indices") {
+                if let Some(idx_array) = idx_prop.as_array() {
+                    if let Ok(idx_data) = idx_array.read_sample_vec(index) {
+                        let indices: &[u32] = bytemuck::cast_slice(&idx_data);
+                        return Some(indices.iter()
+                            .map(|&i| {
+                                let base = (i as usize) * 2;
+                                if base + 1 < floats.len() {
+                                    glam::vec2(floats[base], floats[base + 1])
+                                } else {
+                                    glam::Vec2::ZERO
+                                }
+                            })
+                            .collect());
+                    }
+                }
+            }
+            
+            Some(floats.chunks_exact(2)
+                .map(|c| glam::vec2(c[0], c[1]))
+                .collect())
+        } else if let Some(array) = uv_prop.as_array() {
+            let data = array.read_sample_vec(index).ok()?;
+            let floats: &[f32] = bytemuck::cast_slice(&data);
+            Some(floats.chunks_exact(2)
+                .map(|c| glam::vec2(c[0], c[1]))
+                .collect())
+        } else {
+            None
+        }
+    }
+    
+    /// Get expanded normals at the given sample index.
+    pub fn get_normals(&self, index: usize) -> Option<Vec<glam::Vec3>> {
+        let props = self.object.properties();
+        let geom_prop = props.property_by_name(".geom")?;
+        let geom = geom_prop.as_compound()?;
+        let n_prop = geom.property_by_name("N")?;
+        
+        if let Some(compound) = n_prop.as_compound() {
+            let vals_prop = compound.property_by_name(".vals")?;
+            let array = vals_prop.as_array()?;
+            let data = array.read_sample_vec(index).ok()?;
+            let floats: &[f32] = bytemuck::cast_slice(&data);
+            
+            if let Some(idx_prop) = compound.property_by_name(".indices") {
+                if let Some(idx_array) = idx_prop.as_array() {
+                    if let Ok(idx_data) = idx_array.read_sample_vec(index) {
+                        let indices: &[u32] = bytemuck::cast_slice(&idx_data);
+                        return Some(indices.iter()
+                            .map(|&i| {
+                                let base = (i as usize) * 3;
+                                if base + 2 < floats.len() {
+                                    glam::vec3(floats[base], floats[base + 1], floats[base + 2])
+                                } else {
+                                    glam::Vec3::Y
+                                }
+                            })
+                            .collect());
+                    }
+                }
+            }
+            
+            Some(floats.chunks_exact(3)
+                .map(|c| glam::vec3(c[0], c[1], c[2]))
+                .collect())
+        } else if let Some(array) = n_prop.as_array() {
+            let data = array.read_sample_vec(index).ok()?;
+            let floats: &[f32] = bytemuck::cast_slice(&data);
+            Some(floats.chunks_exact(3)
+                .map(|c| glam::vec3(c[0], c[1], c[2]))
+                .collect())
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -480,10 +710,10 @@ mod tests {
     
     #[test]
     fn test_subd_scheme() {
-        assert_eq!(SubDScheme::from_str("catmullClark"), SubDScheme::CatmullClark);
-        assert_eq!(SubDScheme::from_str("loop"), SubDScheme::Loop);
-        assert_eq!(SubDScheme::from_str("bilinear"), SubDScheme::Bilinear);
-        assert_eq!(SubDScheme::from_str("unknown"), SubDScheme::CatmullClark);
+        assert_eq!(SubDScheme::parse("catmullClark"), SubDScheme::CatmullClark);
+        assert_eq!(SubDScheme::parse("loop"), SubDScheme::Loop);
+        assert_eq!(SubDScheme::parse("bilinear"), SubDScheme::Bilinear);
+        assert_eq!(SubDScheme::parse("unknown"), SubDScheme::CatmullClark);
     }
     
     #[test]

@@ -1,5 +1,7 @@
 # alembic-rs
 
+> **Disclaimer:** All copyrights for the original Alembic format and library belong to Sony Pictures Imageworks and Industrial Light & Magic. This is merely a humble attempt at porting the functionality to Rust, with no claims of affiliation or official status. Do good and throw it into the water.
+
 Rust implementation of the [Alembic](https://github.com/alembic/alembic) (.abc) 3D interchange format.
 
 ## Overview

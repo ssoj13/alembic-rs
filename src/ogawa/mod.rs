@@ -21,7 +21,7 @@
 
 mod format;
 mod reader;
-mod writer;
+pub mod writer;
 mod abc_impl;
 mod read_util;
 

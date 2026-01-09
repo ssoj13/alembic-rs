@@ -29,7 +29,7 @@ pub enum FaceSetExclusivity {
 
 impl FaceSetExclusivity {
     /// Parse from string (as stored in metadata).
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "1" | "exclusive" => Self::Exclusive,
             _ => Self::NonExclusive,
@@ -99,7 +99,7 @@ impl<'a> IFaceSet<'a> {
     fn read_exclusivity(object: &IObject<'_>) -> FaceSetExclusivity {
         let header = object.header();
         if let Some(excl_str) = header.meta_data.get(FACE_EXCLUSIVITY_KEY) {
-            FaceSetExclusivity::from_str(excl_str)
+            FaceSetExclusivity::parse(excl_str)
         } else {
             FaceSetExclusivity::NonExclusive
         }
@@ -203,9 +203,9 @@ mod tests {
     
     #[test]
     fn test_exclusivity() {
-        assert_eq!(FaceSetExclusivity::from_str("0"), FaceSetExclusivity::NonExclusive);
-        assert_eq!(FaceSetExclusivity::from_str("1"), FaceSetExclusivity::Exclusive);
-        assert_eq!(FaceSetExclusivity::from_str("exclusive"), FaceSetExclusivity::Exclusive);
-        assert_eq!(FaceSetExclusivity::from_str(""), FaceSetExclusivity::NonExclusive);
+        assert_eq!(FaceSetExclusivity::parse("0"), FaceSetExclusivity::NonExclusive);
+        assert_eq!(FaceSetExclusivity::parse("1"), FaceSetExclusivity::Exclusive);
+        assert_eq!(FaceSetExclusivity::parse("exclusive"), FaceSetExclusivity::Exclusive);
+        assert_eq!(FaceSetExclusivity::parse(""), FaceSetExclusivity::NonExclusive);
     }
 }

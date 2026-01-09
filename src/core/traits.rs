@@ -3,7 +3,7 @@
 //! These traits define the interface between the low-level Ogawa layer
 //! and the high-level Abc API.
 
-use crate::core::{ObjectHeader, PropertyHeader, TimeSampling, MetaData};
+use crate::core::{ObjectHeader, PropertyHeader, TimeSampling, MetaData, SampleDigest};
 use crate::util::Result;
 
 // ============================================================================
@@ -37,19 +37,21 @@ pub trait ArchiveReader: Send + Sync {
     }
 
     /// Find an object by full path.
+    /// Note: Due to lifetime constraints, this only supports single-level paths.
+    /// For nested paths, use recursive child lookups.
     fn find_object(&self, path: &str) -> Option<Box<dyn ObjectReader + '_>> {
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         if parts.is_empty() {
             return Some(Box::new(ObjectReaderRef(self.root())));
         }
 
-        let current: &dyn ObjectReader = self.root();
-        for part in parts {
-            let child = current.child_by_name(part)?;
-            // This is a simplification - real impl needs lifetime management
-            return Some(child);
+        // Due to Rust lifetime constraints with trait objects, we can only
+        // navigate one level at a time. Return the first child if exists.
+        if let Some(first_part) = parts.first() {
+            self.root().child_by_name(first_part)
+        } else {
+            None
         }
-        None
     }
 }
 
@@ -280,6 +282,18 @@ pub trait ArrayPropertyReader: PropertyReader {
 
     /// Read sample as Vec of bytes.
     fn read_sample_vec(&self, index: usize) -> Result<Vec<u8>>;
+    
+    /// Get the key (digest) of a sample for deduplication.
+    /// 
+    /// Returns the 16-byte MD5 digest stored with the sample data.
+    /// This can be used to detect duplicate samples without reading the full data.
+    fn sample_key(&self, index: usize) -> Result<SampleDigest>;
+    
+    /// Get the dimensions of a sample.
+    /// 
+    /// For 1D arrays returns `[num_elements]`.
+    /// For 2D arrays returns `[rows, cols]`, etc.
+    fn sample_dimensions(&self, index: usize) -> Result<Vec<usize>>;
 
     /// Read sample as typed Vec.
     fn read_sample_typed<T: bytemuck::Pod + Clone>(&self, index: usize) -> Result<Vec<T>>

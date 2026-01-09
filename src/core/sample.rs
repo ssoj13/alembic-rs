@@ -206,7 +206,7 @@ pub enum GeometryScope {
 
 impl GeometryScope {
     /// Parse from string (as stored in metadata).
-    pub fn from_str(s: &str) -> Self {
+    pub fn parse(s: &str) -> Self {
         match s {
             "con" | "constant" => Self::Constant,
             "uni" | "uniform" => Self::Uniform,
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_geometry_scope() {
-        assert_eq!(GeometryScope::from_str("fvr"), GeometryScope::FaceVarying);
+        assert_eq!(GeometryScope::parse("fvr"), GeometryScope::FaceVarying);
         assert_eq!(GeometryScope::Vertex.as_str(), "vtx");
     }
     

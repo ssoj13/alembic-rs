@@ -78,7 +78,7 @@ impl OgawaArchiveReader {
             version_bytes[0], version_bytes[1], version_bytes[2], version_bytes[3]
         ]);
         
-        if version < 0 || version > ALEMBIC_OGAWA_FILE_VERSION {
+        if !(0..=ALEMBIC_OGAWA_FILE_VERSION).contains(&version) {
             return Err(Error::invalid(format!("Unsupported file version: {}", version)));
         }
         
@@ -460,11 +460,11 @@ impl OgawaPropertyReader {
             PropertyType::Compound => PropertyHeader::compound(&parsed.name),
             PropertyType::Scalar => PropertyHeader::scalar(
                 &parsed.name,
-                parsed.data_type.clone(),
+                parsed.data_type,
             ),
             PropertyType::Array => PropertyHeader::array(
                 &parsed.name,
-                parsed.data_type.clone(),
+                parsed.data_type,
             ),
         };
         
@@ -565,6 +565,46 @@ impl OgawaPropertyReader {
         let data_bytes = data.read_all()?;
         Ok(data_bytes[DATA_KEY_SIZE..].to_vec())
     }
+    
+    /// Read array sample key (digest) without reading full data.
+    fn read_array_sample_key(&self, index: usize) -> Result<[u8; 16]> {
+        let group = self.group.as_ref()
+            .ok_or_else(|| Error::invalid("No property group"))?;
+        
+        let data_index = (index * 2) as u64;
+        
+        if data_index >= group.num_children() {
+            return Err(Error::invalid("Array sample index out of range"));
+        }
+        
+        let data = group.data(data_index)?;
+        
+        if data.size() < DATA_KEY_SIZE as u64 {
+            return Ok([0u8; 16]); // Empty data has zero key
+        }
+        
+        // Read only the first 16 bytes (the key)
+        let all_data = data.read_all()?;
+        let mut key = [0u8; 16];
+        key.copy_from_slice(&all_data[..16]);
+        Ok(key)
+    }
+    
+    /// Read array sample dimensions.
+    fn read_array_sample_dimensions(&self, index: usize) -> Result<Vec<usize>> {
+        let group = self.group.as_ref()
+            .ok_or_else(|| Error::invalid("No property group"))?;
+        
+        // Array properties: index * 2 = data, index * 2 + 1 = dimensions
+        let dims_index = (index * 2 + 1) as u64;
+        
+        if dims_index >= group.num_children() {
+            return Err(Error::invalid("Array sample index out of range"));
+        }
+        
+        let dims_data = group.data(dims_index)?;
+        read_dimensions(&dims_data)
+    }
 }
 
 impl PropertyReader for OgawaPropertyReader {
@@ -654,6 +694,26 @@ impl ArrayPropertyReader for OgawaPropertyReader {
         };
         
         self.read_array_sample(actual_index)
+    }
+    
+    fn sample_key(&self, index: usize) -> Result<[u8; 16]> {
+        let actual_index = if self.is_constant_internal() && index > 0 {
+            0
+        } else {
+            index.min(self.num_samples_internal().saturating_sub(1))
+        };
+        
+        self.read_array_sample_key(actual_index)
+    }
+    
+    fn sample_dimensions(&self, index: usize) -> Result<Vec<usize>> {
+        let actual_index = if self.is_constant_internal() && index > 0 {
+            0
+        } else {
+            index.min(self.num_samples_internal().saturating_sub(1))
+        };
+        
+        self.read_array_sample_dimensions(actual_index)
     }
 }
 

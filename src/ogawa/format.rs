@@ -28,6 +28,7 @@ pub const NOT_FROZEN_FLAG: u8 = 0x00;
 /// In ACTUAL Alembic files (contrary to C++ code comments):
 /// - MSB SET (1) = DATA
 /// - MSB NOT SET (0) = GROUP
+///
 /// This is the opposite of what CprImpl.cpp comments claim!
 pub const TYPE_FLAG_MASK: u64 = 1 << 63;
 
