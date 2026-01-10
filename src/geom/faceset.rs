@@ -185,7 +185,7 @@ impl<'a> IFaceSet<'a> {
         if let Some(faces_prop) = geom.property_by_name(".faces") {
             if let Some(array_reader) = faces_prop.as_array() {
                 let data = array_reader.read_sample_vec(index)?;
-                sample.faces = bytemuck::cast_slice(&data).to_vec();
+                sample.faces = bytemuck::try_cast_slice::<_, i32>(&data).unwrap_or(&[]).to_vec();
             }
         }
         
@@ -195,7 +195,7 @@ impl<'a> IFaceSet<'a> {
                 // BBox3d is 6 f64 values: min_x, min_y, min_z, max_x, max_y, max_z
                 let mut buf = [0u8; 48];
                 if scalar.read_sample(index, &mut buf).is_ok() {
-                    let values: &[f64] = bytemuck::cast_slice(&buf);
+                    let values: &[f64] = bytemuck::try_cast_slice(&buf).unwrap_or(&[]);
                     if values.len() >= 6 {
                         sample.self_bounds = Some(BBox3d::new(
                             glam::dvec3(values[0], values[1], values[2]),

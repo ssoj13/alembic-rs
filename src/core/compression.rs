@@ -51,22 +51,26 @@ pub fn compress(data: &[u8], level: i32) -> Result<Vec<u8>> {
 /// # Arguments
 /// * `data` - Compressed data with 8-byte header containing uncompressed size
 /// 
-/// Returns decompressed data.
+/// Returns decompressed data, or original data if not compressed.
+/// Returns error only if data appears to be compressed but decompression fails.
 pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
-    if data.len() < 8 {
-        // Data too small to be compressed, return as-is
+    // First check if data appears to be compressed using our heuristics
+    if !is_compressed(data) {
+        // Data doesn't look compressed - return as-is (this is normal)
         return Ok(data.to_vec());
     }
     
-    // Read uncompressed size from header
+    // Data looks compressed - parse header and decompress
     let uncompressed_size = u64::from_le_bytes([
         data[0], data[1], data[2], data[3],
         data[4], data[5], data[6], data[7],
     ]) as usize;
     
-    // Sanity check - if "uncompressed size" is unreasonable, data is not compressed
-    if uncompressed_size > 1024 * 1024 * 1024 { // > 1GB
-        return Ok(data.to_vec());
+    // Additional sanity check for unreasonable sizes
+    if uncompressed_size > 1024 * 1024 * 1024 { // > 1GB is suspicious
+        return Err(crate::util::Error::invalid(
+            "Compressed data claims unreasonable uncompressed size"
+        ));
     }
     
     let compressed_data = &data[8..];
@@ -74,21 +78,21 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
     let mut decoder = ZlibDecoder::new(compressed_data);
     let mut decompressed = Vec::with_capacity(uncompressed_size);
     
-    match decoder.read_to_end(&mut decompressed) {
-        Ok(_) => {
-            // Verify decompressed size matches expected
-            if decompressed.len() != uncompressed_size {
-                // Size mismatch - data was likely not compressed, return original
-                return Ok(data.to_vec());
-            }
-            Ok(decompressed)
-        }
-        Err(_) => {
-            // Decompression failed - data was probably not compressed.
-            // This is expected for uncompressed data blocks.
-            Ok(data.to_vec())
-        }
+    decoder.read_to_end(&mut decompressed).map_err(|e| {
+        crate::util::Error::invalid(format!(
+            "Failed to decompress data: {}", e
+        ))
+    })?;
+    
+    // Verify decompressed size matches expected
+    if decompressed.len() != uncompressed_size {
+        return Err(crate::util::Error::invalid(format!(
+            "Decompressed size mismatch: expected {}, got {}",
+            uncompressed_size, decompressed.len()
+        )));
     }
+    
+    Ok(decompressed)
 }
 
 /// Check if data appears to be compressed.
@@ -154,10 +158,23 @@ mod tests {
     fn test_decompress_uncompressed() {
         let original = b"Not compressed data";
         
-        // Should return as-is if not compressed
+        // Should return as-is if not compressed (no zlib header)
         let result = decompress(original).unwrap();
         
         assert_eq!(result, original);
+    }
+    
+    #[test]
+    fn test_decompress_corrupt_fails() {
+        // Create data that looks compressed (has zlib header) but is corrupt
+        let mut corrupt = vec![0u8; 16];
+        corrupt[0..8].copy_from_slice(&100u64.to_le_bytes()); // Claims 100 bytes
+        corrupt[8] = 0x78; // zlib header
+        corrupt[9] = 0x9C; // default compression flag
+        // Rest is garbage - should fail to decompress
+        
+        let result = decompress(&corrupt);
+        assert!(result.is_err(), "Should fail on corrupt compressed data");
     }
     
     #[test]

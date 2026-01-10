@@ -1026,7 +1026,7 @@ impl<'a> IArrayProperty<'a> {
             _ => 0,
         };
         let data = self.reader.read_sample_vec(index)?;
-        let src_slice: &[Src] = bytemuck::cast_slice(&data);
+        let src_slice: &[Src] = bytemuck::try_cast_slice(&data).map_err(|_| crate::util::Error::invalid("cast error"))?;
         Ok(src_slice.iter().map(|&v| Dst::from(v)).collect())
     }
     
@@ -1038,7 +1038,7 @@ impl<'a> IArrayProperty<'a> {
     {
         let index = sel.into().get_index(ts, self.num_samples());
         let data = self.reader.read_sample_vec(index)?;
-        let src_slice: &[Src] = bytemuck::cast_slice(&data);
+        let src_slice: &[Src] = bytemuck::try_cast_slice(&data).map_err(|_| crate::util::Error::invalid("cast error"))?;
         Ok(src_slice.iter().map(|&v| Dst::from(v)).collect())
     }
     

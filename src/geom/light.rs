@@ -117,7 +117,7 @@ impl<'a> ILight<'a> {
                     if let Some(scalar) = bnds_prop.as_scalar() {
                         let mut buf = [0u8; 48];
                         if scalar.read_sample(index, &mut buf).is_ok() {
-                            let values: &[f64] = bytemuck::cast_slice(&buf);
+                            let values: &[f64] = bytemuck::try_cast_slice(&buf).unwrap_or(&[]);
                             if values.len() >= 6 {
                                 sample.child_bounds = Some(BBox3d::new(
                                     glam::dvec3(values[0], values[1], values[2]),

@@ -405,13 +405,13 @@ impl<'a> IPolyMesh<'a> {
             let vals_prop = compound.property_by_name(".vals")?;
             let array = vals_prop.as_array()?;
             let data = array.read_sample_vec(index).ok()?;
-            let floats: &[f32] = bytemuck::cast_slice(&data);
+            let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
             
             // Check for indices
             if let Some(idx_prop) = compound.property_by_name(".indices") {
                 if let Some(idx_array) = idx_prop.as_array() {
                     if let Ok(idx_data) = idx_array.read_sample_vec(index) {
-                        let indices: &[u32] = bytemuck::cast_slice(&idx_data);
+                        let indices: &[u32] = bytemuck::try_cast_slice(&idx_data).ok()?;
                         return Some(indices.iter()
                             .map(|&i| {
                                 let base = (i as usize) * 2;
@@ -433,7 +433,7 @@ impl<'a> IPolyMesh<'a> {
         } else if let Some(array) = uv_prop.as_array() {
             // Non-indexed UVs
             let data = array.read_sample_vec(index).ok()?;
-            let floats: &[f32] = bytemuck::cast_slice(&data);
+            let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
             Some(floats.chunks_exact(2)
                 .map(|c| glam::vec2(c[0], c[1]))
                 .collect())
@@ -456,13 +456,13 @@ impl<'a> IPolyMesh<'a> {
             let vals_prop = compound.property_by_name(".vals")?;
             let array = vals_prop.as_array()?;
             let data = array.read_sample_vec(index).ok()?;
-            let floats: &[f32] = bytemuck::cast_slice(&data);
+            let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
             
             // Check for indices
             if let Some(idx_prop) = compound.property_by_name(".indices") {
                 if let Some(idx_array) = idx_prop.as_array() {
                     if let Ok(idx_data) = idx_array.read_sample_vec(index) {
-                        let indices: &[u32] = bytemuck::cast_slice(&idx_data);
+                        let indices: &[u32] = bytemuck::try_cast_slice(&idx_data).ok()?;
                         return Some(indices.iter()
                             .map(|&i| {
                                 let base = (i as usize) * 3;
@@ -484,7 +484,7 @@ impl<'a> IPolyMesh<'a> {
         } else if let Some(array) = n_prop.as_array() {
             // Non-indexed normals
             let data = array.read_sample_vec(index).ok()?;
-            let floats: &[f32] = bytemuck::cast_slice(&data);
+            let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
             Some(floats.chunks_exact(3)
                 .map(|c| glam::vec3(c[0], c[1], c[2]))
                 .collect())

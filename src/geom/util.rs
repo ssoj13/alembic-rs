@@ -101,7 +101,7 @@ pub fn read_child_bounds(object: &IObject<'_>, index: usize) -> Option<BBox3d> {
     let mut buf = [0u8; 48]; // 6 x f64
     scalar.read_sample(index, &mut buf).ok()?;
     
-    let doubles: &[f64] = bytemuck::cast_slice(&buf);
+    let doubles: &[f64] = bytemuck::try_cast_slice(&buf).ok()?;
     if doubles.len() >= 6 {
         Some(BBox3d::new(
             glam::dvec3(doubles[0], doubles[1], doubles[2]),
@@ -166,7 +166,7 @@ pub fn read_vec3_array(
     let prop = geom.property_by_name(prop_name)?;
     let array = prop.as_array()?;
     let data = array.read_sample_vec(index).ok()?;
-    let floats: &[f32] = bytemuck::cast_slice(&data);
+    let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
     Some(floats.chunks_exact(3)
         .map(|c| glam::vec3(c[0], c[1], c[2]))
         .collect())
@@ -190,7 +190,7 @@ pub fn read_vec2_array(
     let prop = geom.property_by_name(prop_name)?;
     let array = prop.as_array()?;
     let data = array.read_sample_vec(index).ok()?;
-    let floats: &[f32] = bytemuck::cast_slice(&data);
+    let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
     Some(floats.chunks_exact(2)
         .map(|c| glam::vec2(c[0], c[1]))
         .collect())
@@ -205,7 +205,7 @@ pub fn read_i32_array(
     let prop = geom.property_by_name(prop_name)?;
     let array = prop.as_array()?;
     let data = array.read_sample_vec(index).ok()?;
-    Some(bytemuck::cast_slice::<u8, i32>(&data).to_vec())
+    Some(bytemuck::try_cast_slice::<u8, i32>(&data).ok()?.to_vec())
 }
 
 /// Read an f32 array property from a compound.
@@ -217,7 +217,7 @@ pub fn read_f32_array(
     let prop = geom.property_by_name(prop_name)?;
     let array = prop.as_array()?;
     let data = array.read_sample_vec(index).ok()?;
-    Some(bytemuck::cast_slice::<u8, f32>(&data).to_vec())
+    Some(bytemuck::try_cast_slice::<u8, f32>(&data).ok()?.to_vec())
 }
 
 /// Read a u64 array property from a compound.
@@ -229,7 +229,7 @@ pub fn read_u64_array(
     let prop = geom.property_by_name(prop_name)?;
     let array = prop.as_array()?;
     let data = array.read_sample_vec(index).ok()?;
-    Some(bytemuck::cast_slice::<u8, u64>(&data).to_vec())
+    Some(bytemuck::try_cast_slice::<u8, u64>(&data).ok()?.to_vec())
 }
 
 /// Read an i32 scalar property from a compound.
@@ -256,7 +256,7 @@ pub fn read_self_bounds(
     let mut buf = [0u8; 48]; // 6 x f64
     scalar.read_sample(index, &mut buf).ok()?;
     
-    let doubles: &[f64] = bytemuck::cast_slice(&buf);
+    let doubles: &[f64] = bytemuck::try_cast_slice(&buf).ok()?;
     if doubles.len() >= 6 {
         Some(BBox3d::new(
             glam::dvec3(doubles[0], doubles[1], doubles[2]),

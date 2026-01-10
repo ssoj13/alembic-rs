@@ -426,7 +426,7 @@ impl<'a> ICamera<'a> {
             if let Some(scalar) = core_prop.as_scalar() {
                 let mut buf = vec![0u8; 16 * 8]; // 16 doubles
                 if scalar.read_sample(index, &mut buf).is_ok() {
-                    let doubles: &[f64] = bytemuck::cast_slice(&buf);
+                    let doubles: &[f64] = bytemuck::try_cast_slice(&buf).unwrap_or(&[]);
                     if doubles.len() >= 16 {
                         sample.focal_length = doubles[0];
                         sample.horizontal_aperture = doubles[1];
@@ -474,7 +474,7 @@ impl<'a> ICamera<'a> {
         
         let mut buf = [0u8; 48]; // 6 x f64
         if scalar.read_sample(index, &mut buf).is_ok() {
-            let doubles: &[f64] = bytemuck::cast_slice(&buf);
+            let doubles: &[f64] = bytemuck::try_cast_slice(&buf).unwrap_or(&[]);
             if doubles.len() >= 6 {
                 return Some(crate::util::BBox3d::new(
                     glam::dvec3(doubles[0], doubles[1], doubles[2]),

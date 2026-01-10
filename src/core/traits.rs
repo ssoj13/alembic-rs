@@ -321,7 +321,7 @@ pub trait ArrayPropertyReader: PropertyReader {
         Self: Sized,
     {
         let data = self.read_sample_vec(index)?;
-        let slice: &[T] = bytemuck::cast_slice(&data);
+        let slice: &[T] = bytemuck::try_cast_slice(&data).map_err(|_| crate::util::Error::invalid("cast error"))?;
         Ok(slice.to_vec())
     }
 }

@@ -71,22 +71,22 @@ impl GeomParamSample {
     
     /// Get values as f32 slice (for Vec2/Vec3/etc).
     pub fn values_as_f32(&self) -> &[f32] {
-        bytemuck::cast_slice(&self.values)
+        bytemuck::try_cast_slice(&self.values).unwrap_or(&[])
     }
     
     /// Get values as f64 slice.
     pub fn values_as_f64(&self) -> &[f64] {
-        bytemuck::cast_slice(&self.values)
+        bytemuck::try_cast_slice(&self.values).unwrap_or(&[])
     }
     
     /// Get values as i32 slice.
     pub fn values_as_i32(&self) -> &[i32] {
-        bytemuck::cast_slice(&self.values)
+        bytemuck::try_cast_slice(&self.values).unwrap_or(&[])
     }
     
     /// Get values as u32 slice.
     pub fn values_as_u32(&self) -> &[u32] {
-        bytemuck::cast_slice(&self.values)
+        bytemuck::try_cast_slice(&self.values).unwrap_or(&[])
     }
     
     /// Expand indexed values to per-element values.
@@ -296,7 +296,7 @@ impl<'a> IGeomParam<'a> {
                 }
             };
             if let Some(data) = indices_data {
-                sample.indices = Some(bytemuck::cast_slice(&data).to_vec());
+                sample.indices = bytemuck::try_cast_slice::<_, u32>(&data).ok().map(|s| s.to_vec());
             }
         } else {
             // Non-indexed - just read the array
@@ -554,7 +554,7 @@ impl OGeomParam {
     
     /// Add a sample with typed data.
     pub fn add_sample<T: bytemuck::Pod>(&mut self, sample: &OGeomParamSample<T>) {
-        self.values_samples.push(bytemuck::cast_slice(&sample.values).to_vec());
+        self.values_samples.push(bytemuck::try_cast_slice::<_, u8>(&sample.values).unwrap_or(&[]).to_vec());
         if self.is_indexed {
             self.indices_samples.push(sample.indices.clone().unwrap_or_default());
         }
@@ -602,10 +602,10 @@ impl OGeomParam {
         let mut meta = MetaData::new();
         meta.set(GEOM_SCOPE_KEY, self.scope.as_str());
         if self.data_type.extent > 1 {
-            meta.set(ARRAY_EXTENT_KEY, &self.data_type.extent.to_string());
+            meta.set(ARRAY_EXTENT_KEY, self.data_type.extent.to_string());
         }
         meta.set(POD_NAME_KEY, self.data_type.pod.name());
-        meta.set(POD_EXTENT_KEY, &self.data_type.extent.to_string());
+        meta.set(POD_EXTENT_KEY, self.data_type.extent.to_string());
         meta
     }
     
@@ -666,7 +666,7 @@ mod tests {
     #[test]
     fn test_geom_param_sample_expand() {
         let sample = GeomParamSample {
-            values: bytemuck::cast_slice(&[0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0]).to_vec(),
+            values: bytemuck::cast_slice::<_, u8>(&[0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0]).to_vec(),
             indices: Some(vec![1, 0, 1, 0]),
             scope: GeometryScope::FaceVarying,
             is_indexed: true,
@@ -684,7 +684,7 @@ mod tests {
     #[test]
     fn test_geom_param_sample_expand_vec2() {
         let sample = GeomParamSample {
-            values: bytemuck::cast_slice(&[0.0f32, 0.0, 1.0, 1.0, 0.5, 0.5]).to_vec(),
+            values: bytemuck::cast_slice::<_, u8>(&[0.0f32, 0.0, 1.0, 1.0, 0.5, 0.5]).to_vec(),
             indices: Some(vec![2, 0, 1]),
             scope: GeometryScope::FaceVarying,
             is_indexed: true,

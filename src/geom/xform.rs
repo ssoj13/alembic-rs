@@ -313,7 +313,7 @@ impl<'a> IXform<'a> {
         
         // Parse ops and vals
         if let (Some(ops), Some(vals)) = (ops_data, vals_data) {
-            let doubles: &[f64] = bytemuck::cast_slice(&vals);
+            let doubles: &[f64] = bytemuck::try_cast_slice(&vals).unwrap_or(&[]);
             let mut val_idx = 0;
             
             for &op_code in &ops {
@@ -357,7 +357,7 @@ impl<'a> IXform<'a> {
         
         let mut buf = [0u8; 48]; // 6 x f64
         if scalar.read_sample(index, &mut buf).is_ok() {
-            let doubles: &[f64] = bytemuck::cast_slice(&buf);
+            let doubles: &[f64] = bytemuck::try_cast_slice(&buf).ok()?;
             if doubles.len() >= 6 {
                 return Some(crate::util::BBox3d::new(
                     glam::dvec3(doubles[0], doubles[1], doubles[2]),

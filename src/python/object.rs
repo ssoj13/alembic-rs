@@ -451,7 +451,7 @@ impl PyIObject {
             
             let mut buf = [0u8; 48]; // 6 x f64
             scalar.read_sample(index, &mut buf).ok()?;
-            let doubles: &[f64] = bytemuck::cast_slice(&buf);
+            let doubles: &[f64] = bytemuck::try_cast_slice(&buf).ok()?;
             
             if doubles.len() >= 6 {
                 Some((
@@ -477,7 +477,7 @@ impl PyIObject {
             
             let mut buf = [0u8; 48]; // 6 x f64
             scalar.read_sample(index, &mut buf).ok()?;
-            let doubles: &[f64] = bytemuck::cast_slice(&buf);
+            let doubles: &[f64] = bytemuck::try_cast_slice(&buf).ok()?;
             
             if doubles.len() >= 6 {
                 Some((

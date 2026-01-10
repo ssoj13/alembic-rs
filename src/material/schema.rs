@@ -244,7 +244,7 @@ impl ShaderNetwork {
             }
             
             // Follow connections to source nodes
-            for (_, (source_node, _)) in &node.connections {
+            for (source_node, _) in node.connections.values() {
                 self.collect_node_params(source_node, result, visited);
             }
         }

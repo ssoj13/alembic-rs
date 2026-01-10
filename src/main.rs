@@ -143,37 +143,24 @@ fn cmd_info(path: &str) {
     let root = archive.root();
     trace!("Starting object count from root");
     
-    let mut xform_count = 0;
-    let mut mesh_count = 0;
-    let mut subd_count = 0;
-    let mut curve_count = 0;
-    let mut point_count = 0;
-    let mut camera_count = 0;
-    let mut light_count = 0;
-    let mut other_count = 0;
-    let mut total_vertices = 0usize;
-    let mut total_faces = 0usize;
+    let mut counts = ObjectCounts::default();
+    count_objects(&root, &mut counts);
     
-    count_objects(&root, &mut xform_count, &mut mesh_count, &mut subd_count,
-                  &mut curve_count, &mut point_count, &mut camera_count,
-                  &mut light_count, &mut other_count, 
-                  &mut total_vertices, &mut total_faces);
-    
-    debug!("Counted {} total objects", xform_count + mesh_count + subd_count + curve_count + point_count + camera_count + light_count + other_count);
+    debug!("Counted {} total objects", counts.total());
     
     println!("Objects:");
-    println!("  Xforms:  {}", xform_count);
-    println!("  Meshes:  {} ({} vertices, {} faces)", mesh_count, total_vertices, total_faces);
-    println!("  SubDs:   {}", subd_count);
-    println!("  Curves:  {}", curve_count);
-    println!("  Points:  {}", point_count);
-    println!("  Cameras: {}", camera_count);
-    println!("  Lights:  {}", light_count);
-    if other_count > 0 {
-        println!("  Other:   {}", other_count);
+    println!("  Xforms:  {}", counts.xform);
+    println!("  Meshes:  {} ({} vertices, {} faces)", counts.mesh, counts.total_verts, counts.total_faces);
+    println!("  SubDs:   {}", counts.subd);
+    println!("  Curves:  {}", counts.curve);
+    println!("  Points:  {}", counts.point);
+    println!("  Cameras: {}", counts.camera);
+    println!("  Lights:  {}", counts.light);
+    if counts.other > 0 {
+        println!("  Other:   {}", counts.other);
     }
     println!();
-    println!("Total objects: {}", xform_count + mesh_count + subd_count + curve_count + point_count + camera_count + light_count + other_count);
+    println!("Total objects: {}", counts.total());
 }
 
 fn cmd_tree(path: &str) {
@@ -235,56 +222,66 @@ fn cmd_stats(path: &str) {
     print_stats_tree(&root, 0);
 }
 
-fn count_objects(
-    obj: &IObject,
-    xform: &mut usize,
-    mesh: &mut usize,
-    subd: &mut usize,
-    curve: &mut usize,
-    point: &mut usize,
-    camera: &mut usize,
-    light: &mut usize,
-    other: &mut usize,
-    total_verts: &mut usize,
-    total_faces: &mut usize,
-) {
+/// Object counts for statistics
+#[derive(Default)]
+struct ObjectCounts {
+    xform: usize,
+    mesh: usize,
+    subd: usize,
+    curve: usize,
+    point: usize,
+    camera: usize,
+    light: usize,
+    other: usize,
+    total_verts: usize,
+    total_faces: usize,
+}
+
+impl ObjectCounts {
+    fn total(&self) -> usize {
+        self.xform + self.mesh + self.subd + self.curve + 
+        self.point + self.camera + self.light + self.other
+    }
+}
+
+fn count_objects(obj: &IObject, counts: &mut ObjectCounts) {
     let schema = obj.meta_data().get("schema").unwrap_or_default();
-    let schema_str: &str = &schema;
+    let schema_str = schema;
     trace!("Processing object: {} [{}]", obj.name(), schema);
     
     if schema_str.contains("Xform") {
-        *xform += 1;
+        counts.xform += 1;
     } else if schema_str.contains("PolyMesh") {
-        *mesh += 1;
+        counts.mesh += 1;
         if let Some(poly) = IPolyMesh::new(obj) {
             if let Ok(sample) = poly.get_sample(0) {
-                *total_verts += sample.positions.len();
-                *total_faces += sample.face_counts.len();
+                counts.total_verts += sample.positions.len();
+                counts.total_faces += sample.face_counts.len();
             }
         }
     } else if schema_str.contains("SubD") {
-        *subd += 1;
+        counts.subd += 1;
         if let Some(sd) = ISubD::new(obj) {
             if let Ok(sample) = sd.get_sample(0) {
-                *total_verts += sample.positions.len();
-                *total_faces += sample.face_counts.len();
+                counts.total_verts += sample.positions.len();
+                counts.total_faces += sample.face_counts.len();
             }
         }
     } else if schema_str.contains("Curves") {
-        *curve += 1;
+        counts.curve += 1;
     } else if schema_str.contains("Points") {
-        *point += 1;
+        counts.point += 1;
     } else if schema_str.contains("Camera") {
-        *camera += 1;
+        counts.camera += 1;
     } else if schema_str.contains("Light") {
-        *light += 1;
+        counts.light += 1;
     } else if !schema_str.is_empty() {
-        *other += 1;
+        counts.other += 1;
     }
     
     for i in 0..obj.num_children() {
         if let Some(child) = obj.child(i) {
-            count_objects(&child, xform, mesh, subd, curve, point, camera, light, other, total_verts, total_faces);
+            count_objects(&child, counts);
         }
     }
 }
@@ -292,7 +289,7 @@ fn count_objects(
 fn print_tree(obj: &IObject, depth: usize) {
     let indent = "  ".repeat(depth);
     let schema = obj.meta_data().get("schema").unwrap_or_default();
-    let type_str = schema_to_type(&schema);
+    let type_str = schema_to_type(schema);
     
     if depth == 0 {
         println!("{}/", obj.name());
@@ -310,10 +307,10 @@ fn print_tree(obj: &IObject, depth: usize) {
 fn print_stats_tree(obj: &IObject, depth: usize) {
     let indent = "  ".repeat(depth);
     let schema = obj.meta_data().get("schema").unwrap_or_default();
-    let type_str = schema_to_type(&schema);
+    let type_str = schema_to_type(schema);
     
     // Get additional info based on type
-    let extra_info = get_object_info(obj, &schema);
+    let extra_info = get_object_info(obj, schema);
     
     if depth == 0 {
         println!("{}/", obj.name());

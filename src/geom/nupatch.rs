@@ -433,7 +433,7 @@ impl<'a> INuPatch<'a> {
         if let Some(prop) = geom.property_by_name("trim_ncurves") {
             if let Some(array) = prop.as_array() {
                 if let Ok(data) = array.read_sample_vec(index) {
-                    trim.num_curves = bytemuck::cast_slice(&data).to_vec();
+                    trim.num_curves = bytemuck::try_cast_slice::<_, i32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
@@ -442,7 +442,7 @@ impl<'a> INuPatch<'a> {
         if let Some(prop) = geom.property_by_name("trim_n") {
             if let Some(array) = prop.as_array() {
                 if let Ok(data) = array.read_sample_vec(index) {
-                    trim.num_vertices = bytemuck::cast_slice(&data).to_vec();
+                    trim.num_vertices = bytemuck::try_cast_slice::<_, i32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
@@ -451,7 +451,7 @@ impl<'a> INuPatch<'a> {
         if let Some(prop) = geom.property_by_name("trim_order") {
             if let Some(array) = prop.as_array() {
                 if let Ok(data) = array.read_sample_vec(index) {
-                    trim.orders = bytemuck::cast_slice(&data).to_vec();
+                    trim.orders = bytemuck::try_cast_slice::<_, i32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
@@ -460,7 +460,7 @@ impl<'a> INuPatch<'a> {
         if let Some(prop) = geom.property_by_name("trim_knot") {
             if let Some(array) = prop.as_array() {
                 if let Ok(data) = array.read_sample_vec(index) {
-                    trim.knots = bytemuck::cast_slice(&data).to_vec();
+                    trim.knots = bytemuck::try_cast_slice::<_, f32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
@@ -469,7 +469,7 @@ impl<'a> INuPatch<'a> {
         if let Some(prop) = geom.property_by_name("trim_min") {
             if let Some(array) = prop.as_array() {
                 if let Ok(data) = array.read_sample_vec(index) {
-                    trim.mins = bytemuck::cast_slice(&data).to_vec();
+                    trim.mins = bytemuck::try_cast_slice::<_, f32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
@@ -478,7 +478,7 @@ impl<'a> INuPatch<'a> {
         if let Some(prop) = geom.property_by_name("trim_max") {
             if let Some(array) = prop.as_array() {
                 if let Ok(data) = array.read_sample_vec(index) {
-                    trim.maxes = bytemuck::cast_slice(&data).to_vec();
+                    trim.maxes = bytemuck::try_cast_slice::<_, f32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
@@ -487,7 +487,7 @@ impl<'a> INuPatch<'a> {
         if let Some(prop) = geom.property_by_name("trim_u") {
             if let Some(array) = prop.as_array() {
                 if let Ok(data) = array.read_sample_vec(index) {
-                    trim.u = bytemuck::cast_slice(&data).to_vec();
+                    trim.u = bytemuck::try_cast_slice::<_, f32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
@@ -496,7 +496,7 @@ impl<'a> INuPatch<'a> {
         if let Some(prop) = geom.property_by_name("trim_v") {
             if let Some(array) = prop.as_array() {
                 if let Ok(data) = array.read_sample_vec(index) {
-                    trim.v = bytemuck::cast_slice(&data).to_vec();
+                    trim.v = bytemuck::try_cast_slice::<_, f32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
@@ -505,7 +505,7 @@ impl<'a> INuPatch<'a> {
         if let Some(prop) = geom.property_by_name("trim_w") {
             if let Some(array) = prop.as_array() {
                 if let Ok(data) = array.read_sample_vec(index) {
-                    trim.w = bytemuck::cast_slice(&data).to_vec();
+                    trim.w = bytemuck::try_cast_slice::<_, f32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
