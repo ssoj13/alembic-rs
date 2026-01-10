@@ -3,6 +3,7 @@
 //! Provides reading of NURBS surface data from Alembic files.
 
 use crate::abc::IObject;
+use crate::geom::util as geom_util;
 use crate::util::{Result, Error, BBox3d};
 use crate::core::TopologyVariance;
 
@@ -321,12 +322,7 @@ impl<'a> INuPatch<'a> {
     
     /// Get number of samples.
     pub fn num_samples(&self) -> usize {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return 1 };
-        let Some(geom) = geom_prop.as_compound() else { return 1 };
-        let Some(p_prop) = geom.property_by_name("P") else { return 1 };
-        let Some(array_reader) = p_prop.as_array() else { return 1 };
-        array_reader.num_samples()
+        geom_util::num_samples_from_positions(self.object)
     }
     
     /// Check if this patch is constant (single sample).
@@ -336,13 +332,7 @@ impl<'a> INuPatch<'a> {
     
     /// Check if patch has self bounds property.
     pub fn has_self_bounds(&self) -> bool {
-        let props = self.object.properties();
-        if let Some(geom_prop) = props.property_by_name(".geom") {
-            if let Some(geom) = geom_prop.as_compound() {
-                return geom.has_property(".selfBnds");
-            }
-        }
-        false
+        geom_util::has_self_bounds(self.object)
     }
     
     /// Get topology variance.
@@ -359,24 +349,12 @@ impl<'a> INuPatch<'a> {
     
     /// Check if patch has arbitrary geometry parameters.
     pub fn has_arb_geom_params(&self) -> bool {
-        let props = self.object.properties();
-        if let Some(geom_prop) = props.property_by_name(".geom") {
-            if let Some(geom) = geom_prop.as_compound() {
-                return geom.has_property(".arbGeomParams");
-            }
-        }
-        false
+        geom_util::has_arb_geom_params(self.object)
     }
     
     /// Check if patch has user properties.
     pub fn has_user_properties(&self) -> bool {
-        let props = self.object.properties();
-        if let Some(geom_prop) = props.property_by_name(".geom") {
-            if let Some(geom) = geom_prop.as_compound() {
-                return geom.has_property(".userProperties");
-            }
-        }
-        false
+        geom_util::has_user_properties(self.object)
     }
     
     /// Read a sample at the given index.
@@ -388,143 +366,46 @@ impl<'a> INuPatch<'a> {
             .ok_or_else(|| Error::invalid("No .geom property"))?;
         let geom = geom_prop.as_compound()
             .ok_or_else(|| Error::invalid(".geom is not compound"))?;
+        let g = geom.as_reader();
         
-        // Read P (positions)
-        if let Some(p_prop) = geom.property_by_name("P") {
-            if let Some(array_reader) = p_prop.as_array() {
-                let data = array_reader.read_sample_vec(index)?;
-                let floats: &[f32] = bytemuck::cast_slice(&data);
-                sample.positions = floats.chunks_exact(3)
-                    .map(|c| glam::vec3(c[0], c[1], c[2]))
-                    .collect();
-            }
+        // Read core geometry using helpers
+        if let Some(pos) = geom_util::read_vec3_array(g, "P", index) {
+            sample.positions = pos;
         }
         
-        // Read nu (numU)
-        if let Some(nu_prop) = geom.property_by_name("nu") {
-            if let Some(scalar) = nu_prop.as_scalar() {
-                let mut buf = [0u8; 4];
-                if scalar.read_sample(index, &mut buf).is_ok() {
-                    sample.num_u = i32::from_le_bytes(buf);
-                }
-            }
+        // Read NURBS parameters (scalars)
+        if let Some(nu) = geom_util::read_i32_scalar(g, "nu", index) {
+            sample.num_u = nu;
+        }
+        if let Some(nv) = geom_util::read_i32_scalar(g, "nv", index) {
+            sample.num_v = nv;
+        }
+        if let Some(uo) = geom_util::read_i32_scalar(g, "uOrder", index) {
+            sample.u_order = uo;
+        }
+        if let Some(vo) = geom_util::read_i32_scalar(g, "vOrder", index) {
+            sample.v_order = vo;
         }
         
-        // Read nv (numV)
-        if let Some(nv_prop) = geom.property_by_name("nv") {
-            if let Some(scalar) = nv_prop.as_scalar() {
-                let mut buf = [0u8; 4];
-                if scalar.read_sample(index, &mut buf).is_ok() {
-                    sample.num_v = i32::from_le_bytes(buf);
-                }
-            }
+        // Read knots
+        if let Some(uk) = geom_util::read_f32_array(g, "uKnot", index) {
+            sample.u_knots = uk;
+        }
+        if let Some(vk) = geom_util::read_f32_array(g, "vKnot", index) {
+            sample.v_knots = vk;
         }
         
-        // Read uOrder
-        if let Some(order_prop) = geom.property_by_name("uOrder") {
-            if let Some(scalar) = order_prop.as_scalar() {
-                let mut buf = [0u8; 4];
-                if scalar.read_sample(index, &mut buf).is_ok() {
-                    sample.u_order = i32::from_le_bytes(buf);
-                }
-            }
-        }
-        
-        // Read vOrder
-        if let Some(order_prop) = geom.property_by_name("vOrder") {
-            if let Some(scalar) = order_prop.as_scalar() {
-                let mut buf = [0u8; 4];
-                if scalar.read_sample(index, &mut buf).is_ok() {
-                    sample.v_order = i32::from_le_bytes(buf);
-                }
-            }
-        }
-        
-        // Read uKnot
-        if let Some(knot_prop) = geom.property_by_name("uKnot") {
-            if let Some(array_reader) = knot_prop.as_array() {
-                let data = array_reader.read_sample_vec(index)?;
-                sample.u_knots = bytemuck::cast_slice(&data).to_vec();
-            }
-        }
-        
-        // Read vKnot
-        if let Some(knot_prop) = geom.property_by_name("vKnot") {
-            if let Some(array_reader) = knot_prop.as_array() {
-                let data = array_reader.read_sample_vec(index)?;
-                sample.v_knots = bytemuck::cast_slice(&data).to_vec();
-            }
-        }
-        
-        // Read Pw (position weights) if present
-        if let Some(pw_prop) = geom.property_by_name("Pw") {
-            if let Some(array_reader) = pw_prop.as_array() {
-                if let Ok(data) = array_reader.read_sample_vec(index) {
-                    sample.position_weights = Some(bytemuck::cast_slice(&data).to_vec());
-                }
-            }
-        }
-        
-        // Read velocities if present
-        if let Some(v_prop) = geom.property_by_name(".velocities") {
-            if let Some(array_reader) = v_prop.as_array() {
-                if let Ok(data) = array_reader.read_sample_vec(index) {
-                    let floats: &[f32] = bytemuck::cast_slice(&data);
-                    sample.velocities = Some(
-                        floats.chunks_exact(3)
-                            .map(|c| glam::vec3(c[0], c[1], c[2]))
-                            .collect()
-                    );
-                }
-            }
-        }
-        
-        // Read N (normals) if present
-        if let Some(n_prop) = geom.property_by_name("N") {
-            if let Some(array_reader) = n_prop.as_array() {
-                if let Ok(data) = array_reader.read_sample_vec(index) {
-                    let floats: &[f32] = bytemuck::cast_slice(&data);
-                    sample.normals = Some(
-                        floats.chunks_exact(3)
-                            .map(|c| glam::vec3(c[0], c[1], c[2]))
-                            .collect()
-                    );
-                }
-            }
-        }
-        
-        // Read uv if present
-        if let Some(uv_prop) = geom.property_by_name("uv") {
-            if let Some(array_reader) = uv_prop.as_array() {
-                if let Ok(data) = array_reader.read_sample_vec(index) {
-                    let floats: &[f32] = bytemuck::cast_slice(&data);
-                    sample.uvs = Some(
-                        floats.chunks_exact(2)
-                            .map(|c| glam::vec2(c[0], c[1]))
-                            .collect()
-                    );
-                }
-            }
-        }
+        // Read optional attributes
+        sample.position_weights = geom_util::read_f32_array(g, "Pw", index);
+        sample.velocities = geom_util::read_vec3_array(g, ".velocities", index);
+        sample.normals = geom_util::read_vec3_array(g, "N", index);
+        sample.uvs = geom_util::read_vec2_array(g, "uv", index);
         
         // Read trim curve data if present
         sample.trim_curve = self.read_trim_curve(&geom, index)?;
         
-        // Read .selfBnds if present
-        if let Some(bnds_prop) = geom.property_by_name(".selfBnds") {
-            if let Some(scalar) = bnds_prop.as_scalar() {
-                let mut buf = [0u8; 48];
-                if scalar.read_sample(index, &mut buf).is_ok() {
-                    let values: &[f64] = bytemuck::cast_slice(&buf);
-                    if values.len() >= 6 {
-                        sample.self_bounds = Some(BBox3d::new(
-                            glam::dvec3(values[0], values[1], values[2]),
-                            glam::dvec3(values[3], values[4], values[5]),
-                        ));
-                    }
-                }
-            }
-        }
+        // Read bounds
+        sample.self_bounds = geom_util::read_self_bounds(g, index);
         
         Ok(sample)
     }

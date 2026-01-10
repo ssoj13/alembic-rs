@@ -169,7 +169,7 @@ impl IArchive {
     pub fn archive_bounds(&self, sample_index: usize) -> Option<crate::util::BBox3d> {
         let root = self.root();
         let mut combined = None;
-        collect_bounds_recursive(&root, sample_index, &mut combined);
+        collect_bounds_recursive(&root, BoundsSelector::Index(sample_index), &mut combined);
         combined
     }
     
@@ -180,84 +180,24 @@ impl IArchive {
         // For now, find nearest sample index from default time sampling
         let root = self.root();
         let mut combined = None;
-        collect_bounds_recursive_time(&root, time, &mut combined);
+        collect_bounds_recursive(&root, BoundsSelector::Time(time), &mut combined);
         combined
     }
 }
 
-/// Recursively collect bounds from all geometry objects.
-fn collect_bounds_recursive(obj: &IObject<'_>, sample_index: usize, combined: &mut Option<crate::util::BBox3d>) {
-    use crate::util::BBox3d;
-    use crate::geom::*;
-    
-    // Check for geometry schemas and get their bounds
-    if let Some(mesh) = IPolyMesh::new(obj) {
-        if let Ok(sample) = mesh.get_sample(sample_index) {
-            if let Some(bounds) = sample.self_bounds {
-                merge_bounds(combined, bounds);
-            } else {
-                // Compute bounds from positions
-                let (min, max) = sample.compute_bounds();
-                merge_bounds(combined, BBox3d::new(
-                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
-                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
-                ));
-            }
-        }
-    } else if let Some(subd) = ISubD::new(obj) {
-        if let Ok(sample) = subd.get_sample(sample_index) {
-            if let Some(bounds) = sample.self_bounds {
-                merge_bounds(combined, bounds);
-            } else {
-                let (min, max) = sample.compute_bounds();
-                merge_bounds(combined, BBox3d::new(
-                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
-                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
-                ));
-            }
-        }
-    } else if let Some(points) = IPoints::new(obj) {
-        if let Ok(sample) = points.get_sample(sample_index) {
-            if let Some(bounds) = sample.self_bounds {
-                merge_bounds(combined, bounds);
-            } else {
-                let (min, max) = sample.compute_bounds();
-                merge_bounds(combined, BBox3d::new(
-                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
-                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
-                ));
-            }
-        }
-    } else if let Some(curves) = ICurves::new(obj) {
-        if let Ok(sample) = curves.get_sample(sample_index) {
-            if let Some(bounds) = sample.self_bounds {
-                merge_bounds(combined, bounds);
-            } else {
-                let (min, max) = sample.compute_bounds();
-                merge_bounds(combined, BBox3d::new(
-                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
-                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
-                ));
-            }
-        }
-    } else if let Some(nupatch) = INuPatch::new(obj) {
-        if let Ok(sample) = nupatch.get_sample(sample_index) {
-            if let Some(bounds) = sample.self_bounds {
-                merge_bounds(combined, bounds);
-            } else {
-                let (min, max) = sample.compute_bounds();
-                merge_bounds(combined, BBox3d::new(
-                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
-                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
-                ));
-            }
-        }
-    }
-    
-    // Recurse into children
-    for i in 0..obj.num_children() {
-        if let Some(child) = obj.child(i) {
-            collect_bounds_recursive(&child, sample_index, combined);
+/// Selector for bounds collection - either direct index or time-based.
+#[derive(Clone, Copy)]
+enum BoundsSelector {
+    Index(usize),
+    Time(f64),
+}
+
+impl BoundsSelector {
+    /// Resolve to sample index given the number of samples.
+    fn resolve(&self, num_samples: usize) -> usize {
+        match self {
+            Self::Index(i) => *i,
+            Self::Time(t) => estimate_sample_index_at_time(*t, num_samples),
         }
     }
 }
@@ -274,83 +214,56 @@ fn estimate_sample_index_at_time(time: f64, num_samples: usize) -> usize {
     frame.min(num_samples - 1)
 }
 
-/// Recursively collect bounds from all geometry objects at a given time.
-fn collect_bounds_recursive_time(obj: &IObject<'_>, time: f64, combined: &mut Option<crate::util::BBox3d>) {
+/// Recursively collect bounds from all geometry objects.
+fn collect_bounds_recursive(obj: &IObject<'_>, sel: BoundsSelector, combined: &mut Option<crate::util::BBox3d>) {
     use crate::util::BBox3d;
     use crate::geom::*;
     
+    // Helper to merge computed bounds
+    fn merge_sample_bounds(sample_bounds: Option<BBox3d>, positions_bounds: (glam::Vec3, glam::Vec3), combined: &mut Option<BBox3d>) {
+        if let Some(bounds) = sample_bounds {
+            merge_bounds(combined, bounds);
+        } else {
+            let (min, max) = positions_bounds;
+            merge_bounds(combined, BBox3d::new(
+                glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
+                glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
+            ));
+        }
+    }
+    
     // Check for geometry schemas and get their bounds
     if let Some(mesh) = IPolyMesh::new(obj) {
-        let sample_index = estimate_sample_index_at_time(time, mesh.num_samples());
-        if let Ok(sample) = mesh.get_sample(sample_index) {
-            if let Some(bounds) = sample.self_bounds {
-                merge_bounds(combined, bounds);
-            } else {
-                let (min, max) = sample.compute_bounds();
-                merge_bounds(combined, BBox3d::new(
-                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
-                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
-                ));
-            }
+        let idx = sel.resolve(mesh.num_samples());
+        if let Ok(sample) = mesh.get_sample(idx) {
+            merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     } else if let Some(subd) = ISubD::new(obj) {
-        let sample_index = estimate_sample_index_at_time(time, subd.num_samples());
-        if let Ok(sample) = subd.get_sample(sample_index) {
-            if let Some(bounds) = sample.self_bounds {
-                merge_bounds(combined, bounds);
-            } else {
-                let (min, max) = sample.compute_bounds();
-                merge_bounds(combined, BBox3d::new(
-                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
-                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
-                ));
-            }
+        let idx = sel.resolve(subd.num_samples());
+        if let Ok(sample) = subd.get_sample(idx) {
+            merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     } else if let Some(points) = IPoints::new(obj) {
-        let sample_index = estimate_sample_index_at_time(time, points.num_samples());
-        if let Ok(sample) = points.get_sample(sample_index) {
-            if let Some(bounds) = sample.self_bounds {
-                merge_bounds(combined, bounds);
-            } else {
-                let (min, max) = sample.compute_bounds();
-                merge_bounds(combined, BBox3d::new(
-                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
-                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
-                ));
-            }
+        let idx = sel.resolve(points.num_samples());
+        if let Ok(sample) = points.get_sample(idx) {
+            merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     } else if let Some(curves) = ICurves::new(obj) {
-        let sample_index = estimate_sample_index_at_time(time, curves.num_samples());
-        if let Ok(sample) = curves.get_sample(sample_index) {
-            if let Some(bounds) = sample.self_bounds {
-                merge_bounds(combined, bounds);
-            } else {
-                let (min, max) = sample.compute_bounds();
-                merge_bounds(combined, BBox3d::new(
-                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
-                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
-                ));
-            }
+        let idx = sel.resolve(curves.num_samples());
+        if let Ok(sample) = curves.get_sample(idx) {
+            merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     } else if let Some(nupatch) = INuPatch::new(obj) {
-        let sample_index = estimate_sample_index_at_time(time, nupatch.num_samples());
-        if let Ok(sample) = nupatch.get_sample(sample_index) {
-            if let Some(bounds) = sample.self_bounds {
-                merge_bounds(combined, bounds);
-            } else {
-                let (min, max) = sample.compute_bounds();
-                merge_bounds(combined, BBox3d::new(
-                    glam::dvec3(min.x as f64, min.y as f64, min.z as f64),
-                    glam::dvec3(max.x as f64, max.y as f64, max.z as f64),
-                ));
-            }
+        let idx = sel.resolve(nupatch.num_samples());
+        if let Ok(sample) = nupatch.get_sample(idx) {
+            merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     }
     
     // Recurse into children
     for i in 0..obj.num_children() {
         if let Some(child) = obj.child(i) {
-            collect_bounds_recursive_time(&child, time, combined);
+            collect_bounds_recursive(&child, sel, combined);
         }
     }
 }
@@ -659,6 +572,12 @@ pub struct ICompoundProperty<'a> {
 impl<'a> ICompoundProperty<'a> {
     fn new(reader: &'a dyn CompoundPropertyReader) -> Self {
         Self { reader }
+    }
+    
+    /// Get the underlying trait object reader.
+    /// Useful for passing to utility functions.
+    pub fn as_reader(&self) -> &dyn CompoundPropertyReader {
+        self.reader
     }
 
     /// Get the property header.

@@ -5,6 +5,7 @@
 use crate::abc::IObject;
 use crate::core::TopologyVariance;
 use crate::geom::faceset::FACESET_SCHEMA;
+use crate::geom::util as geom_util;
 use crate::util::{Result, BBox3d};
 
 /// PolyMesh schema identifier.
@@ -111,19 +112,7 @@ impl PolyMeshSample {
     
     /// Calculate bounding box.
     pub fn compute_bounds(&self) -> (glam::Vec3, glam::Vec3) {
-        if self.positions.is_empty() {
-            return (glam::Vec3::ZERO, glam::Vec3::ZERO);
-        }
-        
-        let mut min = self.positions[0];
-        let mut max = self.positions[0];
-        
-        for &p in &self.positions[1..] {
-            min = min.min(p);
-            max = max.max(p);
-        }
-        
-        (min, max)
+        geom_util::compute_bounds_vec3(&self.positions)
     }
 }
 
@@ -160,13 +149,7 @@ impl<'a> IPolyMesh<'a> {
     
     /// Get number of samples.
     pub fn num_samples(&self) -> usize {
-        // Read from P property through the chain
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return 1 };
-        let Some(geom) = geom_prop.as_compound() else { return 1 };
-        let Some(p_prop) = geom.property_by_name("P") else { return 1 };
-        let Some(array_reader) = p_prop.as_array() else { return 1 };
-        array_reader.num_samples()
+        geom_util::num_samples_from_positions(self.object)
     }
     
     /// Check if this mesh is constant (single sample).
@@ -327,122 +310,42 @@ impl<'a> IPolyMesh<'a> {
     
     /// Check if this mesh has arbitrary geometry parameters.
     pub fn has_arb_geom_params(&self) -> bool {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
-            return false;
-        };
-        let Some(geom) = geom_prop.as_compound() else {
-            return false;
-        };
-        geom.has_property(".arbGeomParams")
+        geom_util::has_arb_geom_params(self.object)
     }
     
     /// Get names of arbitrary geometry parameters.
-    /// 
-    /// Returns property names within the .arbGeomParams compound.
     pub fn arb_geom_param_names(&self) -> Vec<String> {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
-            return Vec::new();
-        };
-        let Some(geom) = geom_prop.as_compound() else {
-            return Vec::new();
-        };
-        let Some(arb_prop) = geom.property_by_name(".arbGeomParams") else {
-            return Vec::new();
-        };
-        let Some(arb) = arb_prop.as_compound() else {
-            return Vec::new();
-        };
-        arb.property_names()
+        geom_util::arb_geom_param_names(self.object)
     }
     
     /// Check if this mesh has user properties.
     pub fn has_user_properties(&self) -> bool {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
-            return false;
-        };
-        let Some(geom) = geom_prop.as_compound() else {
-            return false;
-        };
-        geom.has_property(".userProperties")
+        geom_util::has_user_properties(self.object)
     }
     
     /// Get names of user properties.
-    /// 
-    /// Returns property names within the .userProperties compound.
     pub fn user_property_names(&self) -> Vec<String> {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
-            return Vec::new();
-        };
-        let Some(geom) = geom_prop.as_compound() else {
-            return Vec::new();
-        };
-        let Some(user_prop) = geom.property_by_name(".userProperties") else {
-            return Vec::new();
-        };
-        let Some(user) = user_prop.as_compound() else {
-            return Vec::new();
-        };
-        user.property_names()
+        geom_util::user_property_names(self.object)
     }
     
     /// Check if this mesh has child bounds property.
-    /// 
-    /// Child bounds represent the combined bounding box of all child objects.
     pub fn has_child_bounds(&self) -> bool {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
-            return false;
-        };
-        let Some(geom) = geom_prop.as_compound() else {
-            return false;
-        };
-        geom.has_property(".childBnds")
+        geom_util::has_child_bounds(self.object)
     }
     
     /// Get child bounds at the given sample index.
-    /// 
-    /// Returns the combined bounding box of all child objects at this sample.
     pub fn child_bounds(&self, index: usize) -> Option<BBox3d> {
-        let props = self.object.properties();
-        let geom_prop = props.property_by_name(".geom")?;
-        let geom = geom_prop.as_compound()?;
-        let bnds_prop = geom.property_by_name(".childBnds")?;
-        let scalar = bnds_prop.as_scalar()?;
-        
-        let mut buf = [0u8; 48]; // 6 x f64
-        scalar.read_sample(index, &mut buf).ok()?;
-        let doubles: &[f64] = bytemuck::cast_slice(&buf);
-        if doubles.len() >= 6 {
-            Some(BBox3d::new(
-                glam::dvec3(doubles[0], doubles[1], doubles[2]),
-                glam::dvec3(doubles[3], doubles[4], doubles[5]),
-            ))
-        } else {
-            None
-        }
+        geom_util::read_child_bounds(self.object, index)
     }
     
     /// Get the number of child bounds samples.
     pub fn child_bounds_num_samples(&self) -> usize {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
-        let Some(geom) = geom_prop.as_compound() else { return 0 };
-        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
-        let Some(scalar) = bnds_prop.as_scalar() else { return 0 };
-        scalar.num_samples()
+        geom_util::child_bounds_num_samples(self.object)
     }
     
     /// Get the time sampling index for child bounds property.
     pub fn child_bounds_time_sampling_index(&self) -> u32 {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
-        let Some(geom) = geom_prop.as_compound() else { return 0 };
-        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
-        bnds_prop.header().time_sampling_index
+        geom_util::child_bounds_time_sampling_index(self.object)
     }
     
     /// Read a sample at the given index.
@@ -456,109 +359,36 @@ impl<'a> IPolyMesh<'a> {
             .ok_or_else(|| Error::invalid("No .geom property"))?;
         let geom = geom_prop.as_compound()
             .ok_or_else(|| Error::invalid(".geom is not compound"))?;
+        let g = geom.as_reader();
         
-        // Read P (positions)
-        if let Some(p_prop) = geom.property_by_name("P") {
-            if let Some(array_reader) = p_prop.as_array() {
-                let data = array_reader.read_sample_vec(index)?;
-                let floats: &[f32] = bytemuck::cast_slice(&data);
-                sample.positions = floats.chunks_exact(3)
-                    .map(|c| glam::vec3(c[0], c[1], c[2]))
-                    .collect();
-            }
+        // Read core geometry data using helpers
+        if let Some(pos) = geom_util::read_vec3_array(g, "P", index) {
+            sample.positions = pos;
+        }
+        sample.velocities = geom_util::read_vec3_array(g, ".velocities", index);
+        if let Some(fc) = geom_util::read_i32_array(g, ".faceCounts", index) {
+            sample.face_counts = fc;
+        }
+        if let Some(fi) = geom_util::read_i32_array(g, ".faceIndices", index) {
+            sample.face_indices = fi;
         }
         
-        // Read .velocities (for motion blur)
-        if let Some(v_prop) = geom.property_by_name(".velocities") {
-            if let Some(array_reader) = v_prop.as_array() {
-                if let Ok(data) = array_reader.read_sample_vec(index) {
-                    let floats: &[f32] = bytemuck::cast_slice(&data);
-                    sample.velocities = Some(
-                        floats.chunks_exact(3)
-                            .map(|c| glam::vec3(c[0], c[1], c[2]))
-                            .collect()
-                    );
-                }
-            }
-        }
-        
-        // Read .faceCounts
-        if let Some(fc_prop) = geom.property_by_name(".faceCounts") {
-            if let Some(array_reader) = fc_prop.as_array() {
-                let data = array_reader.read_sample_vec(index)?;
-                sample.face_counts = bytemuck::cast_slice(&data).to_vec();
-            }
-        }
-        
-        // Read .faceIndices
-        if let Some(fi_prop) = geom.property_by_name(".faceIndices") {
-            if let Some(array_reader) = fi_prop.as_array() {
-                let data = array_reader.read_sample_vec(index)?;
-                sample.face_indices = bytemuck::cast_slice(&data).to_vec();
-            }
-        }
-        
-        // Read N (normals) if present
-        if let Some(n_prop) = geom.property_by_name("N") {
-            if let Some(array_reader) = n_prop.as_array() {
-                if let Ok(data) = array_reader.read_sample_vec(index) {
-                    let floats: &[f32] = bytemuck::cast_slice(&data);
-                    sample.normals = Some(
-                        floats.chunks_exact(3)
-                            .map(|c| glam::vec3(c[0], c[1], c[2]))
-                            .collect()
-                    );
-                }
-            }
-        }
-        
-        // Read uv if present
-        if let Some(uv_prop) = geom.property_by_name("uv") {
-            if let Some(array_reader) = uv_prop.as_array() {
-                if let Ok(data) = array_reader.read_sample_vec(index) {
-                    let floats: &[f32] = bytemuck::cast_slice(&data);
-                    sample.uvs = Some(
-                        floats.chunks_exact(2)
-                            .map(|c| glam::vec2(c[0], c[1]))
-                            .collect()
-                    );
-                }
-            }
-        }
-        
-        // Read .selfBnds if present
-        if let Some(bnds_prop) = geom.property_by_name(".selfBnds") {
-            if let Some(scalar) = bnds_prop.as_scalar() {
-                let mut buf = [0u8; 48]; // 6 x f64
-                if scalar.read_sample(index, &mut buf).is_ok() {
-                    let doubles: &[f64] = bytemuck::cast_slice(&buf);
-                    if doubles.len() >= 6 {
-                        sample.self_bounds = Some(BBox3d::new(
-                            glam::dvec3(doubles[0], doubles[1], doubles[2]),
-                            glam::dvec3(doubles[3], doubles[4], doubles[5]),
-                        ));
-                    }
-                }
-            }
-        }
+        // Read optional attributes
+        sample.normals = geom_util::read_vec3_array(g, "N", index);
+        sample.uvs = geom_util::read_vec2_array(g, "uv", index);
+        sample.self_bounds = geom_util::read_self_bounds(g, index);
         
         Ok(sample)
     }
     
     /// Check if this mesh has UVs.
     pub fn has_uvs(&self) -> bool {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return false };
-        let Some(geom) = geom_prop.as_compound() else { return false };
-        geom.has_property("uv")
+        geom_util::has_geom_property(self.object, "uv")
     }
     
     /// Check if this mesh has normals.
     pub fn has_normals(&self) -> bool {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return false };
-        let Some(geom) = geom_prop.as_compound() else { return false };
-        geom.has_property("N")
+        geom_util::has_geom_property(self.object, "N")
     }
     
     /// Get expanded UVs at the given sample index.

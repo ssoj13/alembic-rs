@@ -32,6 +32,7 @@ pub fn safe_cast_vec<T: bytemuck::Pod + Clone>(data: &[u8]) -> Vec<T> {
         .unwrap_or_default()
 }
 
+pub mod util;
 pub mod xform;
 pub mod polymesh;
 pub mod curves;

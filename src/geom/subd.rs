@@ -5,6 +5,7 @@
 use crate::abc::IObject;
 use crate::core::TopologyVariance;
 use crate::geom::faceset::{IFaceSet, FACESET_SCHEMA};
+use crate::geom::util as geom_util;
 use crate::util::{Result, BBox3d};
 
 /// SubD schema identifier.
@@ -130,19 +131,7 @@ impl SubDSample {
     
     /// Compute bounding box.
     pub fn compute_bounds(&self) -> (glam::Vec3, glam::Vec3) {
-        if self.positions.is_empty() {
-            return (glam::Vec3::ZERO, glam::Vec3::ZERO);
-        }
-        
-        let mut min = glam::Vec3::splat(f32::MAX);
-        let mut max = glam::Vec3::splat(f32::MIN);
-        
-        for p in &self.positions {
-            min = min.min(*p);
-            max = max.max(*p);
-        }
-        
-        (min, max)
+        geom_util::compute_bounds_vec3(&self.positions)
     }
 }
 
@@ -179,23 +168,12 @@ impl<'a> ISubD<'a> {
     
     /// Get property names.
     pub fn property_names(&self) -> Vec<String> {
-        let props = self.object.properties();
-        if let Some(geom_prop) = props.property_by_name(".geom") {
-            if let Some(geom) = geom_prop.as_compound() {
-                return geom.property_names();
-            }
-        }
-        Vec::new()
+        geom_util::geom_property_names(self.object)
     }
     
     /// Get number of samples.
     pub fn num_samples(&self) -> usize {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return 1 };
-        let Some(geom) = geom_prop.as_compound() else { return 1 };
-        let Some(p_prop) = geom.property_by_name("P") else { return 1 };
-        let Some(array) = p_prop.as_array() else { return 1 };
-        array.num_samples()
+        geom_util::num_samples_from_positions(self.object)
     }
     
     /// Check if SubD is constant.
@@ -282,118 +260,42 @@ impl<'a> ISubD<'a> {
     
     /// Check if this SubD has arbitrary geometry parameters.
     pub fn has_arb_geom_params(&self) -> bool {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
-            return false;
-        };
-        let Some(geom) = geom_prop.as_compound() else {
-            return false;
-        };
-        geom.has_property(".arbGeomParams")
+        geom_util::has_arb_geom_params(self.object)
     }
     
     /// Get names of arbitrary geometry parameters.
     pub fn arb_geom_param_names(&self) -> Vec<String> {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
-            return Vec::new();
-        };
-        let Some(geom) = geom_prop.as_compound() else {
-            return Vec::new();
-        };
-        let Some(arb_prop) = geom.property_by_name(".arbGeomParams") else {
-            return Vec::new();
-        };
-        let Some(arb) = arb_prop.as_compound() else {
-            return Vec::new();
-        };
-        arb.property_names()
+        geom_util::arb_geom_param_names(self.object)
     }
     
     /// Check if this SubD has user properties.
     pub fn has_user_properties(&self) -> bool {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
-            return false;
-        };
-        let Some(geom) = geom_prop.as_compound() else {
-            return false;
-        };
-        geom.has_property(".userProperties")
+        geom_util::has_user_properties(self.object)
     }
     
     /// Get names of user properties.
     pub fn user_property_names(&self) -> Vec<String> {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
-            return Vec::new();
-        };
-        let Some(geom) = geom_prop.as_compound() else {
-            return Vec::new();
-        };
-        let Some(user_prop) = geom.property_by_name(".userProperties") else {
-            return Vec::new();
-        };
-        let Some(user) = user_prop.as_compound() else {
-            return Vec::new();
-        };
-        user.property_names()
+        geom_util::user_property_names(self.object)
     }
     
     /// Check if this SubD has child bounds property.
-    /// 
-    /// Child bounds represent the combined bounding box of all child objects.
     pub fn has_child_bounds(&self) -> bool {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
-            return false;
-        };
-        let Some(geom) = geom_prop.as_compound() else {
-            return false;
-        };
-        geom.has_property(".childBnds")
+        geom_util::has_child_bounds(self.object)
     }
     
     /// Get child bounds at the given sample index.
-    /// 
-    /// Returns the combined bounding box of all child objects at this sample.
     pub fn child_bounds(&self, index: usize) -> Option<BBox3d> {
-        let props = self.object.properties();
-        let geom_prop = props.property_by_name(".geom")?;
-        let geom = geom_prop.as_compound()?;
-        let bnds_prop = geom.property_by_name(".childBnds")?;
-        let scalar = bnds_prop.as_scalar()?;
-        
-        let mut buf = [0u8; 48]; // 6 x f64
-        scalar.read_sample(index, &mut buf).ok()?;
-        let doubles: &[f64] = bytemuck::cast_slice(&buf);
-        if doubles.len() >= 6 {
-            Some(BBox3d::new(
-                glam::dvec3(doubles[0], doubles[1], doubles[2]),
-                glam::dvec3(doubles[3], doubles[4], doubles[5]),
-            ))
-        } else {
-            None
-        }
+        geom_util::read_child_bounds(self.object, index)
     }
     
     /// Get the number of child bounds samples.
     pub fn child_bounds_num_samples(&self) -> usize {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
-        let Some(geom) = geom_prop.as_compound() else { return 0 };
-        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
-        let Some(scalar) = bnds_prop.as_scalar() else { return 0 };
-        scalar.num_samples()
+        geom_util::child_bounds_num_samples(self.object)
     }
     
     /// Get the time sampling index for child bounds property.
     pub fn child_bounds_time_sampling_index(&self) -> u32 {
-        let props = self.object.properties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
-        let Some(geom) = geom_prop.as_compound() else { return 0 };
-        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
-        bnds_prop.header().time_sampling_index
+        geom_util::child_bounds_time_sampling_index(self.object)
     }
     
     /// Read a sample at the given index.
@@ -405,180 +307,60 @@ impl<'a> ISubD<'a> {
             .ok_or_else(|| Error::invalid("No .geom property"))?;
         let geom = geom_prop.as_compound()
             .ok_or_else(|| Error::invalid(".geom is not compound"))?;
+        let g = geom.as_reader();
         
         let mut sample = SubDSample::new();
         
-        // Read P (positions)
-        if let Some(p_prop) = geom.property_by_name("P") {
-            if let Some(array) = p_prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
-                    let floats: &[f32] = bytemuck::cast_slice(&data);
-                    sample.positions = floats.chunks_exact(3)
-                        .map(|c| glam::vec3(c[0], c[1], c[2]))
-                        .collect();
-                }
-            }
+        // Read core geometry using helpers
+        if let Some(pos) = geom_util::read_vec3_array(g, "P", index) {
+            sample.positions = pos;
+        }
+        sample.velocities = geom_util::read_vec3_array(g, ".velocities", index);
+        
+        // Read indexed UVs
+        if let Some((uvs, uv_idx)) = geom_util::read_indexed_vec2(g, "uv", index) {
+            sample.uvs = Some(uvs);
+            sample.uv_indices = uv_idx;
         }
         
-        // Read .velocities (for motion blur)
-        if let Some(v_prop) = geom.property_by_name(".velocities") {
-            if let Some(array) = v_prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
-                    let floats: &[f32] = bytemuck::cast_slice(&data);
-                    sample.velocities = Some(
-                        floats.chunks_exact(3)
-                            .map(|c| glam::vec3(c[0], c[1], c[2]))
-                            .collect()
-                    );
-                }
-            }
+        // Read indexed normals
+        if let Some((normals, normal_idx)) = geom_util::read_indexed_vec3(g, "N", index) {
+            sample.normals = Some(normals);
+            sample.normal_indices = normal_idx;
         }
         
-        // Read UVs (uv compound property with .vals and optionally .indices)
-        if let Some(uv_prop) = geom.property_by_name("uv") {
-            if let Some(uv_compound) = uv_prop.as_compound() {
-                // Read UV values
-                if let Some(vals_prop) = uv_compound.property_by_name(".vals") {
-                    if let Some(array) = vals_prop.as_array() {
-                        if let Ok(data) = array.read_sample_vec(index) {
-                            let floats: &[f32] = bytemuck::cast_slice(&data);
-                            sample.uvs = Some(
-                                floats.chunks_exact(2)
-                                    .map(|c| glam::vec2(c[0], c[1]))
-                                    .collect()
-                            );
-                        }
-                    }
-                }
-                // Read UV indices if present
-                if let Some(idx_prop) = uv_compound.property_by_name(".indices") {
-                    if let Some(array) = idx_prop.as_array() {
-                        if let Ok(data) = array.read_sample_vec(index) {
-                            sample.uv_indices = Some(
-                                bytemuck::cast_slice::<u8, i32>(&data).to_vec()
-                            );
-                        }
-                    }
-                }
-            }
+        // Read face data
+        if let Some(fc) = geom_util::read_i32_array(g, ".faceCounts", index) {
+            sample.face_counts = fc;
+        }
+        if let Some(fi) = geom_util::read_i32_array(g, ".faceIndices", index) {
+            sample.face_indices = fi;
         }
         
-        // Read normals (N compound property)
-        if let Some(n_prop) = geom.property_by_name("N") {
-            if let Some(n_compound) = n_prop.as_compound() {
-                // Read normal values
-                if let Some(vals_prop) = n_compound.property_by_name(".vals") {
-                    if let Some(array) = vals_prop.as_array() {
-                        if let Ok(data) = array.read_sample_vec(index) {
-                            let floats: &[f32] = bytemuck::cast_slice(&data);
-                            sample.normals = Some(
-                                floats.chunks_exact(3)
-                                    .map(|c| glam::vec3(c[0], c[1], c[2]))
-                                    .collect()
-                            );
-                        }
-                    }
-                }
-                // Read normal indices if present
-                if let Some(idx_prop) = n_compound.property_by_name(".indices") {
-                    if let Some(array) = idx_prop.as_array() {
-                        if let Ok(data) = array.read_sample_vec(index) {
-                            sample.normal_indices = Some(
-                                bytemuck::cast_slice::<u8, i32>(&data).to_vec()
-                            );
-                        }
-                    }
-                }
-            }
+        // Read crease data
+        if let Some(ci) = geom_util::read_i32_array(g, ".creaseIndices", index) {
+            sample.crease_indices = ci;
+        }
+        if let Some(cl) = geom_util::read_i32_array(g, ".creaseLengths", index) {
+            sample.crease_lengths = cl;
+        }
+        if let Some(cs) = geom_util::read_f32_array(g, ".creaseSharpnesses", index) {
+            sample.crease_sharpnesses = cs;
         }
         
-        // Read .faceCounts
-        if let Some(fc_prop) = geom.property_by_name(".faceCounts") {
-            if let Some(array) = fc_prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
-                    sample.face_counts = bytemuck::cast_slice::<u8, i32>(&data).to_vec();
-                }
-            }
+        // Read corner data
+        if let Some(cri) = geom_util::read_i32_array(g, ".cornerIndices", index) {
+            sample.corner_indices = cri;
+        }
+        if let Some(crs) = geom_util::read_f32_array(g, ".cornerSharpnesses", index) {
+            sample.corner_sharpnesses = crs;
         }
         
-        // Read .faceIndices
-        if let Some(fi_prop) = geom.property_by_name(".faceIndices") {
-            if let Some(array) = fi_prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
-                    sample.face_indices = bytemuck::cast_slice::<u8, i32>(&data).to_vec();
-                }
-            }
+        // Read holes and bounds
+        if let Some(h) = geom_util::read_i32_array(g, ".holes", index) {
+            sample.holes = h;
         }
-        
-        // Read .creaseIndices
-        if let Some(ci_prop) = geom.property_by_name(".creaseIndices") {
-            if let Some(array) = ci_prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
-                    sample.crease_indices = bytemuck::cast_slice::<u8, i32>(&data).to_vec();
-                }
-            }
-        }
-        
-        // Read .creaseLengths
-        if let Some(cl_prop) = geom.property_by_name(".creaseLengths") {
-            if let Some(array) = cl_prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
-                    sample.crease_lengths = bytemuck::cast_slice::<u8, i32>(&data).to_vec();
-                }
-            }
-        }
-        
-        // Read .creaseSharpnesses
-        if let Some(cs_prop) = geom.property_by_name(".creaseSharpnesses") {
-            if let Some(array) = cs_prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
-                    sample.crease_sharpnesses = bytemuck::cast_slice::<u8, f32>(&data).to_vec();
-                }
-            }
-        }
-        
-        // Read .cornerIndices
-        if let Some(cri_prop) = geom.property_by_name(".cornerIndices") {
-            if let Some(array) = cri_prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
-                    sample.corner_indices = bytemuck::cast_slice::<u8, i32>(&data).to_vec();
-                }
-            }
-        }
-        
-        // Read .cornerSharpnesses
-        if let Some(crs_prop) = geom.property_by_name(".cornerSharpnesses") {
-            if let Some(array) = crs_prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
-                    sample.corner_sharpnesses = bytemuck::cast_slice::<u8, f32>(&data).to_vec();
-                }
-            }
-        }
-        
-        // Read .holes
-        if let Some(h_prop) = geom.property_by_name(".holes") {
-            if let Some(array) = h_prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
-                    sample.holes = bytemuck::cast_slice::<u8, i32>(&data).to_vec();
-                }
-            }
-        }
-        
-        // Read .selfBnds if present
-        if let Some(bnds_prop) = geom.property_by_name(".selfBnds") {
-            if let Some(scalar) = bnds_prop.as_scalar() {
-                let mut buf = [0u8; 48]; // 6 x f64
-                if scalar.read_sample(index, &mut buf).is_ok() {
-                    let doubles: &[f64] = bytemuck::cast_slice(&buf);
-                    if doubles.len() >= 6 {
-                        sample.self_bounds = Some(BBox3d::new(
-                            glam::dvec3(doubles[0], doubles[1], doubles[2]),
-                            glam::dvec3(doubles[3], doubles[4], doubles[5]),
-                        ));
-                    }
-                }
-            }
-        }
+        sample.self_bounds = geom_util::read_self_bounds(g, index);
         
         Ok(sample)
     }
