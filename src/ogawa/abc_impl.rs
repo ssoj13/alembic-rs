@@ -183,6 +183,59 @@ impl ArchiveReader for OgawaArchiveReader {
     fn archive_metadata(&self) -> &MetaData {
         &self.root_header.meta_data
     }
+    
+    fn find_object(&self, path: &str) -> Option<Box<dyn ObjectReader + '_>> {
+        let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        if parts.is_empty() {
+            // Empty path - return root (self implements ObjectReader)
+            // We can't return self directly due to lifetime, so navigate to return the children iter
+            return None; // Root object is accessed via archive.root() directly
+        }
+        
+        // Start from root_data and traverse the path using concrete types
+        let mut current_data = self.root_data.clone();
+        let mut current_header: Option<ObjectHeader>;
+        
+        for (i, part) in parts.iter().enumerate() {
+            // Find child by name in current data
+            let child_idx = current_data.children.iter().position(|h| h.name == *part)?;
+            let parsed_header = &current_data.children[child_idx];
+            
+            // Build object header
+            current_header = Some(ObjectHeader {
+                name: parsed_header.name.clone(),
+                full_name: parsed_header.full_name.clone(),
+                meta_data: parsed_header.metadata.clone(),
+            });
+            
+            // If not last part, need to descend into child
+            if i < parts.len() - 1 {
+                let group_index = (child_idx + 1) as u64;
+                let child_group = current_data.group.group(group_index).ok()?;
+                current_data = Arc::new(ObjectData::new(
+                    child_group,
+                    &parsed_header.full_name,
+                    current_data.indexed_metadata.clone(),
+                ).ok()?);
+            } else {
+                // Last part - create the reader
+                let group_index = (child_idx + 1) as u64;
+                let child_group = current_data.group.group(group_index).ok()?;
+                let child_data = Arc::new(ObjectData::new(
+                    child_group,
+                    &parsed_header.full_name,
+                    current_data.indexed_metadata.clone(),
+                ).ok()?);
+                
+                return Some(Box::new(OgawaObjectReader {
+                    header: current_header.unwrap(),
+                    data: child_data,
+                }));
+            }
+        }
+        
+        None
+    }
 }
 
 // Implement ObjectReader for OgawaArchiveReader (as the root object)
@@ -202,14 +255,22 @@ impl ObjectReader for OgawaArchiveReader {
     fn child(&self, index: usize) -> Option<Box<dyn ObjectReader + '_>> {
         match self.root_data.child(index)? {
             Ok(reader) => Some(Box::new(reader)),
-            Err(_) => None,
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                eprintln!("[alembic] Warning: failed to read child at index {}: {}", index, e);
+                None
+            }
         }
     }
     
     fn child_by_name(&self, name: &str) -> Option<Box<dyn ObjectReader + '_>> {
         match self.root_data.child_by_name(name)? {
             Ok(reader) => Some(Box::new(reader)),
-            Err(_) => None,
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                eprintln!("[alembic] Warning: failed to read child '{}': {}", name, e);
+                None
+            }
         }
     }
     
@@ -234,7 +295,13 @@ impl ObjectReader for OgawaObjectReader {
     }
     
     fn parent(&self) -> Option<&dyn ObjectReader> {
-        None  // TODO: implement parent tracking
+        // Parent tracking is not implemented due to Rust ownership constraints.
+        // In a tree structure, returning &dyn ObjectReader to parent would require
+        // either unsafe self-referential structs or Arc<Mutex> overhead.
+        // 
+        // Workaround: Use object paths (full_name()) to navigate the hierarchy,
+        // or maintain your own parent references when traversing.
+        None
     }
     
     fn num_children(&self) -> usize {
@@ -244,14 +311,22 @@ impl ObjectReader for OgawaObjectReader {
     fn child(&self, index: usize) -> Option<Box<dyn ObjectReader + '_>> {
         match self.data.child(index)? {
             Ok(reader) => Some(Box::new(reader)),
-            Err(_) => None,
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                eprintln!("[alembic] Warning: failed to read child at index {}: {}", index, e);
+                None
+            }
         }
     }
     
     fn child_by_name(&self, name: &str) -> Option<Box<dyn ObjectReader + '_>> {
         match self.data.child_by_name(name)? {
             Ok(reader) => Some(Box::new(reader)),
-            Err(_) => None,
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                eprintln!("[alembic] Warning: failed to read child '{}': {}", name, e);
+                None
+            }
         }
     }
     

@@ -32,7 +32,9 @@ fn pod_from_u8(value: u8) -> Option<PlainOldDataType> {
 pub const ALEMBIC_OGAWA_FILE_VERSION: i32 = 1;
 
 /// Minimum supported Alembic version.
-pub const MIN_ALEMBIC_VERSION: i32 = 9999;
+/// Alembic versions are encoded as AABBCC where AA=major, BB=minor, CC=patch.
+/// We support versions from 1.0.0 (10000) onwards for broad compatibility.
+pub const MIN_ALEMBIC_VERSION: i32 = 10000;
 
 // ============================================================================
 // Time Sampling Parsing
@@ -81,10 +83,9 @@ pub fn read_time_samplings_and_max(
         }
         
         // Determine sampling type
-        // Acyclic time per cycle is a special value (very large negative)
-        const ACYCLIC_TIME_PER_CYCLE: f64 = -f64::MAX;
-        
-        let ts = if (tpc - ACYCLIC_TIME_PER_CYCLE).abs() < f64::EPSILON {
+        // Acyclic detection: tpc is set to -f64::MAX to indicate acyclic sampling.
+        // We check for very large negative values rather than exact comparison.
+        let ts = if tpc < -1e307 {
             // Acyclic: explicit times for each sample
             TimeSampling::acyclic(sample_times)
         } else if num_samples == 1 {
@@ -275,6 +276,7 @@ pub struct ParsedPropertyHeader {
 }
 
 /// Get uint32 with variable size hint.
+/// Size hints: 0=u8, 1=u16, 2=u32, 3=u64 (truncated to u32 with overflow check)
 fn get_u32_with_hint(buf: &[u8], buf_size: usize, size_hint: u32, pos: &mut usize) -> Result<u32> {
     let result = match size_hint {
         0 => {
@@ -300,6 +302,18 @@ fn get_u32_with_hint(buf: &[u8], buf_size: usize, size_hint: u32, pos: &mut usiz
             let val = read_u32_le(&buf[*pos..]);
             *pos += 4;
             val
+        }
+        3 => {
+            // Size hint 3 = u64, but we return u32 so check for overflow
+            if *pos + 8 > buf_size {
+                return Err(Error::invalid("Truncated u64 in property header"));
+            }
+            let val = read_u64_le(&buf[*pos..]);
+            *pos += 8;
+            if val > u32::MAX as u64 {
+                return Err(Error::invalid("Value too large for u32 (size hint 3)"));
+            }
+            val as u32
         }
         _ => return Err(Error::invalid("Invalid size hint")),
     };
@@ -453,6 +467,15 @@ fn read_u16_le(bytes: &[u8]) -> u16 {
 #[inline]
 fn read_u32_le(bytes: &[u8]) -> u32 {
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+/// Read little-endian u64 from bytes.
+#[inline]
+fn read_u64_le(bytes: &[u8]) -> u64 {
+    u64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5], bytes[6], bytes[7],
+    ])
 }
 
 /// Read little-endian f64 from bytes.

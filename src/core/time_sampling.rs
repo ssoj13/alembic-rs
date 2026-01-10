@@ -130,8 +130,11 @@ impl TimeSampling {
         }
     }
     
-    /// Create from type and times (general constructor).
-    pub fn from_type_and_times(tst: TimeSamplingType, _times: Vec<Chrono>) -> Self {
+    /// Create from a TimeSamplingType.
+    /// 
+    /// Note: The times are already contained within the TimeSamplingType for
+    /// Cyclic and Acyclic variants, so no separate times parameter is needed.
+    pub fn from_type(tst: TimeSamplingType) -> Self {
         Self {
             sampling_type: tst,
         }
@@ -236,7 +239,17 @@ impl TimeSampling {
     }
 
     /// Get the time for a specific sample index.
-    pub fn sample_time(&self, index: usize, _num_samples: usize) -> Chrono {
+    /// 
+    /// The `num_samples` parameter is used for bounds validation - if index >= num_samples,
+    /// returns the time of the last valid sample (or 0.0 if no samples).
+    pub fn sample_time(&self, index: usize, num_samples: usize) -> Chrono {
+        // Clamp index to valid range
+        let index = if num_samples > 0 && index >= num_samples {
+            num_samples - 1
+        } else {
+            index
+        };
+        
         match &self.sampling_type {
             TimeSamplingType::Identity => 0.0,
             TimeSamplingType::Uniform { time_per_cycle, start_time } => {

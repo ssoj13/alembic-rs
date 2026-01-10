@@ -10,7 +10,7 @@ use std::path::Path;
 use byteorder::{LittleEndian, WriteBytesExt};
 
 use super::format::*;
-use crate::core::{MetaData, TimeSampling, TimeSamplingType, ArraySampleContentKey};
+use crate::core::{MetaData, TimeSampling, TimeSamplingType, ArraySampleContentKey, compute_digest};
 use crate::util::{DataType, PlainOldDataType, Error, Result};
 
 /// Output stream for writing Ogawa data.
@@ -644,8 +644,11 @@ impl OArchive {
             }
         }
         
-        // Add 32 bytes of hash (zeros for simplicity)
-        buf.extend_from_slice(&[0u8; 32]);
+        // Compute hash of the header data (children names + metadata)
+        // 32 bytes total: 16 bytes children hash + 16 bytes reserved
+        let children_hash = compute_digest(&buf);
+        buf.extend_from_slice(&children_hash);
+        buf.extend_from_slice(&[0u8; 16]); // Reserved/properties hash placeholder
         
         buf
     }

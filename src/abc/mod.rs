@@ -69,6 +69,16 @@ impl IArchive {
         IObject::new(self.reader.root())
     }
     
+    /// Find an object by its full path.
+    /// 
+    /// # Arguments
+    /// * `path` - Full path like "/parent/child" or "parent/child"
+    /// 
+    /// Returns None if the object is not found.
+    pub fn find_object(&self, path: &str) -> Option<IObject<'_>> {
+        self.reader.find_object(path).map(IObject::from_owned)
+    }
+    
     /// Get the archive version.
     /// 
     /// Returns the Alembic library version this archive was written with.
@@ -252,21 +262,26 @@ fn collect_bounds_recursive(obj: &IObject<'_>, sample_index: usize, combined: &m
     }
 }
 
+/// Estimate sample index from time.
+/// Uses simple linear interpolation assuming 24fps if multiple samples exist.
+/// For accurate results, use schema-specific time sampling queries.
+fn estimate_sample_index_at_time(time: f64, num_samples: usize) -> usize {
+    if time <= 0.0 || num_samples <= 1 {
+        return 0;
+    }
+    // Assume 24fps as common animation rate
+    let frame = (time * 24.0).floor() as usize;
+    frame.min(num_samples - 1)
+}
+
 /// Recursively collect bounds from all geometry objects at a given time.
 fn collect_bounds_recursive_time(obj: &IObject<'_>, time: f64, combined: &mut Option<crate::util::BBox3d>) {
     use crate::util::BBox3d;
     use crate::geom::*;
     
-    // For simplicity, use sample index 0 if time is <= 0, otherwise try to find nearest
-    // A full implementation would interpolate between samples
-    let sample_index = if time <= 0.0 { 0 } else {
-        // Get num samples and estimate index from time
-        // This is a simplified approach - proper implementation would use time sampling
-        0
-    };
-    
     // Check for geometry schemas and get their bounds
     if let Some(mesh) = IPolyMesh::new(obj) {
+        let sample_index = estimate_sample_index_at_time(time, mesh.num_samples());
         if let Ok(sample) = mesh.get_sample(sample_index) {
             if let Some(bounds) = sample.self_bounds {
                 merge_bounds(combined, bounds);
@@ -279,6 +294,7 @@ fn collect_bounds_recursive_time(obj: &IObject<'_>, time: f64, combined: &mut Op
             }
         }
     } else if let Some(subd) = ISubD::new(obj) {
+        let sample_index = estimate_sample_index_at_time(time, subd.num_samples());
         if let Ok(sample) = subd.get_sample(sample_index) {
             if let Some(bounds) = sample.self_bounds {
                 merge_bounds(combined, bounds);
@@ -291,6 +307,7 @@ fn collect_bounds_recursive_time(obj: &IObject<'_>, time: f64, combined: &mut Op
             }
         }
     } else if let Some(points) = IPoints::new(obj) {
+        let sample_index = estimate_sample_index_at_time(time, points.num_samples());
         if let Ok(sample) = points.get_sample(sample_index) {
             if let Some(bounds) = sample.self_bounds {
                 merge_bounds(combined, bounds);
@@ -303,6 +320,7 @@ fn collect_bounds_recursive_time(obj: &IObject<'_>, time: f64, combined: &mut Op
             }
         }
     } else if let Some(curves) = ICurves::new(obj) {
+        let sample_index = estimate_sample_index_at_time(time, curves.num_samples());
         if let Ok(sample) = curves.get_sample(sample_index) {
             if let Some(bounds) = sample.self_bounds {
                 merge_bounds(combined, bounds);
@@ -315,6 +333,7 @@ fn collect_bounds_recursive_time(obj: &IObject<'_>, time: f64, combined: &mut Op
             }
         }
     } else if let Some(nupatch) = INuPatch::new(obj) {
+        let sample_index = estimate_sample_index_at_time(time, nupatch.num_samples());
         if let Ok(sample) = nupatch.get_sample(sample_index) {
             if let Some(bounds) = sample.self_bounds {
                 merge_bounds(combined, bounds);

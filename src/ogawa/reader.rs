@@ -1,4 +1,15 @@
 //! Ogawa format reader implementation.
+//!
+//! # Memory Mapping Safety
+//!
+//! By default, files are memory-mapped for better performance with large archives.
+//! This has the following implications:
+//!
+//! - **Thread-safe reads**: Multiple threads can read concurrently without issues.
+//! - **External modification risk**: If another process modifies or truncates the file
+//!   while it's mapped, behavior is undefined (may cause SIGBUS or corrupt reads).
+//! - **Mitigation**: Use `IStreams::open_opts(path, false)` to disable mmap and use
+//!   buffered I/O instead when working with files that may be modified externally.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -53,7 +64,17 @@ impl IStreams {
         }
 
         let inner = if use_mmap && size > 0 {
-            // Safety: File is opened read-only and we handle potential issues
+            // SAFETY:
+            // - File is opened read-only, preventing write-through modifications
+            // - memmap2's Mmap is safe for concurrent reads
+            // 
+            // KNOWN LIMITATIONS:
+            // - If another process modifies/truncates the file while mapped,
+            //   reads may return unexpected data or cause SIGBUS on some platforms.
+            // - For production use with untrusted file sources, consider using
+            //   `open_opts(path, false)` to disable mmap and use buffered I/O.
+            // - File locking is NOT implemented; callers should ensure exclusive
+            //   access if file modification during read is a concern.
             let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
                 Error::MmapFailed(e.to_string())
             })?;

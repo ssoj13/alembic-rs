@@ -10,6 +10,17 @@ use std::fmt;
 /// Metadata storage - key-value pairs of strings.
 ///
 /// Uses SmallVec optimization for common case of few entries.
+/// 
+/// # Complexity
+/// 
+/// Operations use linear search O(n) where n is the number of entries.
+/// This is acceptable because:
+/// - Metadata typically has 2-6 entries (schema, interpretation, etc.)
+/// - SmallVec avoids heap allocation for ≤4 entries
+/// - HashMap overhead would dominate for such small n
+/// 
+/// If you need frequent lookups on metadata with many entries,
+/// use `get_all()` to convert to a HashMap.
 #[derive(Clone, Default)]
 pub struct MetaData {
     entries: SmallVec<[(String, String); 4]>,

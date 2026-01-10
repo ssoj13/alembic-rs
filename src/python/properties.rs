@@ -391,11 +391,9 @@ fn read_scalar_as_python(
             }
         }
         String | Wstring => {
-            // Strings are variable length
-            let mut buf = vec![0u8; 256];
-            if scalar.read_sample(idx, &mut buf).is_ok() {
+            // Use read_sample_vec for variable-length string data
+            if let Ok(buf) = scalar.read_sample_vec(idx) {
                 let s = std::string::String::from_utf8_lossy(&buf);
-                let s = s.trim_end_matches('\0');
                 Some(s.into_pyobject(py).ok()?.unbind().into_any())
             } else {
                 Some("".into_pyobject(py).ok()?.unbind().into_any())
@@ -427,15 +425,15 @@ fn read_array_as_python(
             Some(data.to_vec().into_pyobject(py).ok()?.unbind().into_any())
         }
         Int16 => {
-            let values: Vec<i16> = bytemuck::cast_slice(data).to_vec();
+            let values: Vec<i16> = bytemuck::try_cast_slice(data).ok()?.to_vec();
             Some(values.into_pyobject(py).ok()?.unbind().into_any())
         }
         Uint16 => {
-            let values: Vec<u16> = bytemuck::cast_slice(data).to_vec();
+            let values: Vec<u16> = bytemuck::try_cast_slice(data).ok()?.to_vec();
             Some(values.into_pyobject(py).ok()?.unbind().into_any())
         }
         Int32 => {
-            let values: Vec<i32> = bytemuck::cast_slice(data).to_vec();
+            let values: Vec<i32> = bytemuck::try_cast_slice(data).ok()?.to_vec();
             if extent > 1 {
                 let grouped: Vec<Vec<i32>> = values.chunks(extent as usize)
                     .map(|c| c.to_vec())
@@ -446,7 +444,7 @@ fn read_array_as_python(
             }
         }
         Uint32 => {
-            let values: Vec<u32> = bytemuck::cast_slice(data).to_vec();
+            let values: Vec<u32> = bytemuck::try_cast_slice(data).ok()?.to_vec();
             if extent > 1 {
                 let grouped: Vec<Vec<u32>> = values.chunks(extent as usize)
                     .map(|c| c.to_vec())
@@ -457,7 +455,7 @@ fn read_array_as_python(
             }
         }
         Int64 => {
-            let values: Vec<i64> = bytemuck::cast_slice(data).to_vec();
+            let values: Vec<i64> = bytemuck::try_cast_slice(data).ok()?.to_vec();
             if extent > 1 {
                 let grouped: Vec<Vec<i64>> = values.chunks(extent as usize)
                     .map(|c| c.to_vec())
@@ -468,7 +466,7 @@ fn read_array_as_python(
             }
         }
         Uint64 => {
-            let values: Vec<u64> = bytemuck::cast_slice(data).to_vec();
+            let values: Vec<u64> = bytemuck::try_cast_slice(data).ok()?.to_vec();
             if extent > 1 {
                 let grouped: Vec<Vec<u64>> = values.chunks(extent as usize)
                     .map(|c| c.to_vec())
@@ -479,7 +477,7 @@ fn read_array_as_python(
             }
         }
         Float32 => {
-            let values: Vec<f32> = bytemuck::cast_slice(data).to_vec();
+            let values: Vec<f32> = bytemuck::try_cast_slice(data).ok()?.to_vec();
             if extent > 1 {
                 let grouped: Vec<Vec<f32>> = values.chunks(extent as usize)
                     .map(|c| c.to_vec())
@@ -490,7 +488,7 @@ fn read_array_as_python(
             }
         }
         Float64 => {
-            let values: Vec<f64> = bytemuck::cast_slice(data).to_vec();
+            let values: Vec<f64> = bytemuck::try_cast_slice(data).ok()?.to_vec();
             if extent > 1 {
                 let grouped: Vec<Vec<f64>> = values.chunks(extent as usize)
                     .map(|c| c.to_vec())
@@ -502,7 +500,7 @@ fn read_array_as_python(
         }
         Float16 => {
             // Read as raw u16 and convert to f32
-            let raw: Vec<u16> = bytemuck::cast_slice(data).to_vec();
+            let raw: Vec<u16> = bytemuck::try_cast_slice(data).ok()?.to_vec();
             let values: Vec<f32> = raw.iter()
                 .map(|&v| half::f16::from_bits(v).to_f32())
                 .collect();

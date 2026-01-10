@@ -137,55 +137,40 @@ impl<'a> ILight<'a> {
     fn read_camera_params(geom: &crate::abc::ICompoundProperty<'_>, index: usize) -> CameraSample {
         let mut cam = CameraSample::default();
         
-        // Read focal length
-        if let Some(prop) = geom.property_by_name("focalLength") {
-            if let Some(scalar) = prop.as_scalar() {
-                let mut buf = [0u8; 8];
-                if scalar.read_sample(index, &mut buf).is_ok() {
-                    cam.focal_length = f64::from_le_bytes(buf);
-                }
-            }
-        }
+        // Helper to read f64 property
+        let read_f64 = |name: &str| -> Option<f64> {
+            let prop = geom.property_by_name(name)?;
+            let scalar = prop.as_scalar()?;
+            let mut buf = [0u8; 8];
+            scalar.read_sample(index, &mut buf).ok()?;
+            Some(f64::from_le_bytes(buf))
+        };
         
-        // Read horizontal aperture
-        if let Some(prop) = geom.property_by_name("horizontalAperture") {
-            if let Some(scalar) = prop.as_scalar() {
-                let mut buf = [0u8; 8];
-                if scalar.read_sample(index, &mut buf).is_ok() {
-                    cam.horizontal_aperture = f64::from_le_bytes(buf);
-                }
-            }
-        }
+        // Core lens parameters
+        if let Some(v) = read_f64("focalLength") { cam.focal_length = v; }
+        if let Some(v) = read_f64("horizontalAperture") { cam.horizontal_aperture = v; }
+        if let Some(v) = read_f64("verticalAperture") { cam.vertical_aperture = v; }
+        if let Some(v) = read_f64("horizontalFilmOffset") { cam.horizontal_film_offset = v; }
+        if let Some(v) = read_f64("verticalFilmOffset") { cam.vertical_film_offset = v; }
+        if let Some(v) = read_f64("lensSqueezeRatio") { cam.lens_squeeze_ratio = v; }
         
-        // Read vertical aperture
-        if let Some(prop) = geom.property_by_name("verticalAperture") {
-            if let Some(scalar) = prop.as_scalar() {
-                let mut buf = [0u8; 8];
-                if scalar.read_sample(index, &mut buf).is_ok() {
-                    cam.vertical_aperture = f64::from_le_bytes(buf);
-                }
-            }
-        }
+        // Overscan parameters
+        if let Some(v) = read_f64("overscanLeft") { cam.overscan_left = v; }
+        if let Some(v) = read_f64("overscanRight") { cam.overscan_right = v; }
+        if let Some(v) = read_f64("overscanTop") { cam.overscan_top = v; }
+        if let Some(v) = read_f64("overscanBottom") { cam.overscan_bottom = v; }
         
-        // Read near clipping plane
-        if let Some(prop) = geom.property_by_name("nearClippingPlane") {
-            if let Some(scalar) = prop.as_scalar() {
-                let mut buf = [0u8; 8];
-                if scalar.read_sample(index, &mut buf).is_ok() {
-                    cam.near_clipping_plane = f64::from_le_bytes(buf);
-                }
-            }
-        }
+        // Focus/DOF parameters
+        if let Some(v) = read_f64("fStop") { cam.f_stop = v; }
+        if let Some(v) = read_f64("focusDistance") { cam.focus_distance = v; }
         
-        // Read far clipping plane
-        if let Some(prop) = geom.property_by_name("farClippingPlane") {
-            if let Some(scalar) = prop.as_scalar() {
-                let mut buf = [0u8; 8];
-                if scalar.read_sample(index, &mut buf).is_ok() {
-                    cam.far_clipping_plane = f64::from_le_bytes(buf);
-                }
-            }
-        }
+        // Shutter parameters
+        if let Some(v) = read_f64("shutterOpen") { cam.shutter_open = v; }
+        if let Some(v) = read_f64("shutterClose") { cam.shutter_close = v; }
+        
+        // Clipping planes
+        if let Some(v) = read_f64("nearClippingPlane") { cam.near_clipping_plane = v; }
+        if let Some(v) = read_f64("farClippingPlane") { cam.far_clipping_plane = v; }
         
         cam
     }

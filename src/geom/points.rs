@@ -4,6 +4,7 @@
 
 use crate::abc::IObject;
 use crate::util::{Result, BBox3d};
+use crate::core::TopologyVariance;
 
 /// Points schema identifier.
 pub const POINTS_SCHEMA: &str = "AbcGeom_Points_v1";
@@ -192,6 +193,29 @@ impl<'a> IPoints<'a> {
             return Vec::new();
         };
         user.property_names()
+    }
+    
+    /// Check if points have self bounds property.
+    pub fn has_self_bounds(&self) -> bool {
+        let props = self.object.properties();
+        if let Some(geom_prop) = props.property_by_name(".geom") {
+            if let Some(geom) = geom_prop.as_compound() {
+                return geom.has_property(".selfBnds");
+            }
+        }
+        false
+    }
+    
+    /// Get topology variance.
+    /// 
+    /// Points are typically heterogeneous since particle count can change.
+    pub fn topology_variance(&self) -> TopologyVariance {
+        if self.num_samples() <= 1 {
+            TopologyVariance::Static
+        } else {
+            // Points typically have changing topology (particle birth/death)
+            TopologyVariance::Heterogeneous
+        }
     }
     
     /// Read a sample at the given index.

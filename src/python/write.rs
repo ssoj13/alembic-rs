@@ -43,63 +43,63 @@ impl PyOArchive {
     
     /// Get archive name/path.
     fn getName(&self) -> PyResult<String> {
-        let guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
-        let archive = guard.as_ref().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        let guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in getName(): {}", e)))?;
+        let archive = guard.as_ref().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
         Ok(archive.name().to_string())
     }
     
     /// Set application writer string.
     fn setApplicationWriter(&self, writer: &str) -> PyResult<()> {
-        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
-        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in setApplicationWriter(): {}", e)))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
         archive.set_application_writer(writer);
         Ok(())
     }
     
     /// Set compression hint (-1 = no compression, 0-9 = compression level).
     fn setCompressionHint(&self, hint: i32) -> PyResult<()> {
-        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
-        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in setCompressionHint(): {}", e)))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
         archive.set_compression_hint(hint);
         Ok(())
     }
     
     /// Enable/disable deduplication.
     fn setDedupEnabled(&self, enabled: bool) -> PyResult<()> {
-        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
-        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in setDedupEnabled(): {}", e)))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
         archive.set_dedup_enabled(enabled);
         Ok(())
     }
     
     /// Set the application name (stored as _ai_Application in metadata).
     fn setAppName(&self, name: &str) -> PyResult<()> {
-        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
-        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in setAppName(): {}", e)))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
         archive.set_app_name(name);
         Ok(())
     }
     
     /// Set the date written (stored as _ai_DateWritten in metadata).
     fn setDateWritten(&self, date: &str) -> PyResult<()> {
-        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
-        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in setDateWritten(): {}", e)))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
         archive.set_date_written(date);
         Ok(())
     }
     
     /// Set the user description (stored as _ai_Description in metadata).
     fn setDescription(&self, desc: &str) -> PyResult<()> {
-        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
-        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in setDescription(): {}", e)))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
         archive.set_description(desc);
         Ok(())
     }
     
     /// Set the DCC FPS (stored as _ai_DCC_FPS in metadata).
     fn setDccFps(&self, fps: f64) -> PyResult<()> {
-        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
-        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in setDccFps(): {}", e)))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
         archive.set_dcc_fps(fps);
         Ok(())
     }
@@ -110,8 +110,8 @@ impl PyOArchive {
         let time_per_cycle = 1.0 / fps;
         let ts = TimeSampling::uniform(time_per_cycle, start_time);
         
-        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
-        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in addUniformTimeSampling(): {}", e)))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
         Ok(archive.add_time_sampling(ts))
     }
     
@@ -119,8 +119,8 @@ impl PyOArchive {
     fn addAcyclicTimeSampling(&self, times: Vec<f64>) -> PyResult<u32> {
         let ts = TimeSampling::acyclic(times);
         
-        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
-        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in addAcyclicTimeSampling(): {}", e)))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
         Ok(archive.add_time_sampling(ts))
     }
     
@@ -128,15 +128,15 @@ impl PyOArchive {
     fn addCyclicTimeSampling(&self, time_per_cycle: f64, times: Vec<f64>) -> PyResult<u32> {
         let ts = TimeSampling::cyclic(time_per_cycle, times);
         
-        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
-        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in addCyclicTimeSampling(): {}", e)))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
         Ok(archive.add_time_sampling(ts))
     }
     
     /// Write the root object hierarchy and finalize.
     fn writeArchive(&self, root: &PyOObject) -> PyResult<()> {
-        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
-        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in writeArchive(): {}", e)))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
         
         archive.write_archive(&root.inner)
             .map_err(|e| PyIOError::new_err(format!("Failed to write archive: {}", e)))?;
@@ -146,10 +146,10 @@ impl PyOArchive {
     
     /// Write PolyMesh hierarchy and finalize.
     fn writePolyMesh(&self, mesh: &mut PyOPolyMesh) -> PyResult<()> {
-        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
-        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in writePolyMesh(): {}", e)))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
         
-        let obj = std::mem::replace(&mut mesh.inner, OPolyMesh::new("_empty")).build();
+        let obj = mesh.take()?.build();
         archive.write_archive(&obj)
             .map_err(|e| PyIOError::new_err(format!("Failed to write archive: {}", e)))?;
         
@@ -158,10 +158,10 @@ impl PyOArchive {
     
     /// Write Xform hierarchy and finalize.
     fn writeXform(&self, xform: &mut PyOXform) -> PyResult<()> {
-        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
-        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive closed"))?;
+        let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in writeXform(): {}", e)))?;
+        let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
         
-        let obj = std::mem::replace(&mut xform.inner, OXform::new("_empty")).build();
+        let obj = xform.take()?.build();
         archive.write_archive(&obj)
             .map_err(|e| PyIOError::new_err(format!("Failed to write archive: {}", e)))?;
         
@@ -170,7 +170,7 @@ impl PyOArchive {
     
     /// Close the archive.
     fn close(&self) -> PyResult<()> {
-        let mut guard = self.archive.lock().map_err(|_| PyValueError::new_err("Lock poisoned"))?;
+        let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in close(): {}", e)))?;
         if let Some(archive) = guard.take() {
             archive.close()
                 .map_err(|e| PyIOError::new_err(format!("Failed to close archive: {}", e)))?;
@@ -234,70 +234,81 @@ impl PyOObject {
         self.inner.add_child(child.inner.clone());
     }
     
-    /// Add a PolyMesh as child.
-    fn addPolyMesh(&mut self, mesh: &mut PyOPolyMesh) {
-        let obj = std::mem::replace(&mut mesh.inner, OPolyMesh::new("_empty")).build();
+    /// Add a PolyMesh as child. Consumes the mesh.
+    fn addPolyMesh(&mut self, mesh: &mut PyOPolyMesh) -> PyResult<()> {
+        let obj = mesh.take()?.build();
         self.inner.add_child(obj);
+        Ok(())
     }
     
-    /// Add an Xform as child.
-    fn addXform(&mut self, xform: &mut PyOXform) {
-        let obj = std::mem::replace(&mut xform.inner, OXform::new("_empty")).build();
+    /// Add an Xform as child. Consumes the xform.
+    fn addXform(&mut self, xform: &mut PyOXform) -> PyResult<()> {
+        let obj = xform.take()?.build();
         self.inner.add_child(obj);
+        Ok(())
     }
     
-    /// Add Curves as child.
-    fn addCurves(&mut self, curves: &mut PyOCurves) {
-        let obj = std::mem::replace(&mut curves.inner, OCurves::new("_empty")).build();
+    /// Add Curves as child. Consumes the curves.
+    fn addCurves(&mut self, curves: &mut PyOCurves) -> PyResult<()> {
+        let obj = curves.take()?.build();
         self.inner.add_child(obj);
+        Ok(())
     }
     
-    /// Add Points as child.
-    fn addPoints(&mut self, points: &mut PyOPoints) {
-        let obj = std::mem::replace(&mut points.inner, OPoints::new("_empty")).build();
+    /// Add Points as child. Consumes the points.
+    fn addPoints(&mut self, points: &mut PyOPoints) -> PyResult<()> {
+        let obj = points.take()?.build();
         self.inner.add_child(obj);
+        Ok(())
     }
     
-    /// Add SubD as child.
-    fn addSubD(&mut self, subd: &mut PyOSubD) {
-        let obj = std::mem::replace(&mut subd.inner, OSubD::new("_empty")).build();
+    /// Add SubD as child. Consumes the subd.
+    fn addSubD(&mut self, subd: &mut PyOSubD) -> PyResult<()> {
+        let obj = subd.take()?.build();
         self.inner.add_child(obj);
+        Ok(())
     }
     
-    /// Add Camera as child.
-    fn addCamera(&mut self, camera: &mut PyOCamera) {
-        let obj = std::mem::replace(&mut camera.inner, OCamera::new("_empty")).build();
+    /// Add Camera as child. Consumes the camera.
+    fn addCamera(&mut self, camera: &mut PyOCamera) -> PyResult<()> {
+        let obj = camera.take()?.build();
         self.inner.add_child(obj);
+        Ok(())
     }
     
-    /// Add NuPatch as child.
-    fn addNuPatch(&mut self, nupatch: &mut PyONuPatch) {
-        let obj = std::mem::replace(&mut nupatch.inner, ONuPatch::new("_empty")).build();
+    /// Add NuPatch as child. Consumes the nupatch.
+    fn addNuPatch(&mut self, nupatch: &mut PyONuPatch) -> PyResult<()> {
+        let obj = nupatch.take()?.build();
         self.inner.add_child(obj);
+        Ok(())
     }
     
-    /// Add Light as child.
-    fn addLight(&mut self, light: &mut PyOLight) {
-        let obj = std::mem::replace(&mut light.inner, OLight::new("_empty")).build();
+    /// Add Light as child. Consumes the light.
+    fn addLight(&mut self, light: &mut PyOLight) -> PyResult<()> {
+        let obj = light.take()?.build();
         self.inner.add_child(obj);
+        Ok(())
     }
     
-    /// Add FaceSet as child.
-    fn addFaceSet(&mut self, faceset: &mut PyOFaceSet) {
-        let obj = std::mem::replace(&mut faceset.inner, OFaceSet::new("_empty")).build();
+    /// Add FaceSet as child. Consumes the faceset.
+    fn addFaceSet(&mut self, faceset: &mut PyOFaceSet) -> PyResult<()> {
+        let obj = faceset.take()?.build();
         self.inner.add_child(obj);
+        Ok(())
     }
     
-    /// Add Material as child.
-    fn addMaterial(&mut self, material: &mut PyOMaterial) {
-        let obj = std::mem::replace(&mut material.inner, OMaterial::new("_empty")).build();
+    /// Add Material as child. Consumes the material.
+    fn addMaterial(&mut self, material: &mut PyOMaterial) -> PyResult<()> {
+        let obj = material.take()?.build();
         self.inner.add_child(obj);
+        Ok(())
     }
     
-    /// Add Collections as child.
-    fn addCollections(&mut self, collections: &mut PyOCollections) {
-        let obj = std::mem::replace(&mut collections.inner, OCollections::new("_empty")).build();
+    /// Add Collections as child. Consumes the collections.
+    fn addCollections(&mut self, collections: &mut PyOCollections) -> PyResult<()> {
+        let obj = collections.take()?.build();
         self.inner.add_child(obj);
+        Ok(())
     }
     
     /// Add a scalar property to this object.
@@ -315,10 +326,18 @@ impl PyOObject {
         self.inner.add_property(prop.inner.clone());
     }
     
-    /// Add a visibility property to this object.
+    /// Create and add a visibility property to this object.
     /// Returns the visibility property for writing visibility samples.
+    /// Note: Call finalizeVisibility() after setting visibility samples to commit.
     fn addVisibilityProperty(&mut self) -> super::geom::PyOVisibilityProperty {
         super::geom::PyOVisibilityProperty::create()
+    }
+    
+    /// Apply configured visibility property to this object.
+    /// Must be called after configuring the visibility property returned by addVisibilityProperty().
+    fn applyVisibilityProperty(&mut self, vis: &mut super::geom::PyOVisibilityProperty) {
+        let prop = std::mem::replace(vis, super::geom::PyOVisibilityProperty::create()).into_property();
+        self.inner.add_property(prop);
     }
     
     fn __repr__(&self) -> String {
@@ -333,8 +352,22 @@ impl PyOObject {
 /// Python wrapper for output PolyMesh.
 #[pyclass(name = "OPolyMesh")]
 pub struct PyOPolyMesh {
-    pub(crate) inner: OPolyMesh,
+    pub(crate) inner: Option<OPolyMesh>,
     name: String,
+}
+
+impl PyOPolyMesh {
+    /// Take inner OPolyMesh, consuming it. Returns error if already consumed.
+    pub(crate) fn take(&mut self) -> PyResult<OPolyMesh> {
+        self.inner.take().ok_or_else(|| 
+            PyValueError::new_err(format!("PolyMesh '{}' already consumed (added to parent)", self.name)))
+    }
+    
+    /// Get mutable reference to inner, returns error if consumed.
+    fn inner_mut(&mut self) -> PyResult<&mut OPolyMesh> {
+        self.inner.as_mut().ok_or_else(|| 
+            PyValueError::new_err(format!("PolyMesh '{}' already consumed (added to parent)", self.name)))
+    }
 }
 
 #[pymethods]
@@ -343,7 +376,7 @@ impl PyOPolyMesh {
     #[new]
     fn new(name: &str) -> Self {
         Self {
-            inner: OPolyMesh::new(name),
+            inner: Some(OPolyMesh::new(name)),
             name: name.to_string(),
         }
     }
@@ -351,6 +384,11 @@ impl PyOPolyMesh {
     /// Get object name.
     fn getName(&self) -> &str {
         &self.name
+    }
+    
+    /// Check if this object has been consumed (added to a parent).
+    fn isConsumed(&self) -> bool {
+        self.inner.is_none()
     }
     
     /// Add a sample with positions, face counts, and face indices.
@@ -363,6 +401,8 @@ impl PyOPolyMesh {
         normals: Option<Vec<[f32; 3]>>,
         uvs: Option<Vec<[f32; 2]>>,
     ) -> PyResult<()> {
+        let inner = self.inner_mut()?;
+        
         let pos: Vec<glam::Vec3> = positions.iter()
             .map(|p| glam::Vec3::new(p[0], p[1], p[2]))
             .collect();
@@ -381,12 +421,13 @@ impl PyOPolyMesh {
                 .collect());
         }
         
-        self.inner.add_sample(&sample);
+        inner.add_sample(&sample);
         Ok(())
     }
     
     fn __repr__(&self) -> String {
-        format!("<OPolyMesh '{}'>", self.name)
+        let status = if self.inner.is_none() { " (consumed)" } else { "" };
+        format!("<OPolyMesh '{}'{}>", self.name, status)
     }
 }
 
@@ -397,8 +438,22 @@ impl PyOPolyMesh {
 /// Python wrapper for output Xform (transform).
 #[pyclass(name = "OXform")]
 pub struct PyOXform {
-    pub(crate) inner: OXform,
+    pub(crate) inner: Option<OXform>,
     name: String,
+}
+
+impl PyOXform {
+    /// Take inner OXform, consuming it. Returns error if already consumed.
+    pub(crate) fn take(&mut self) -> PyResult<OXform> {
+        self.inner.take().ok_or_else(|| 
+            PyValueError::new_err(format!("Xform '{}' already consumed (added to parent)", self.name)))
+    }
+    
+    /// Get mutable reference to inner, returns error if consumed.
+    fn inner_mut(&mut self) -> PyResult<&mut OXform> {
+        self.inner.as_mut().ok_or_else(|| 
+            PyValueError::new_err(format!("Xform '{}' already consumed (added to parent)", self.name)))
+    }
 }
 
 #[pymethods]
@@ -407,7 +462,7 @@ impl PyOXform {
     #[new]
     fn new(name: &str) -> Self {
         Self {
-            inner: OXform::new(name),
+            inner: Some(OXform::new(name)),
             name: name.to_string(),
         }
     }
@@ -417,85 +472,104 @@ impl PyOXform {
         &self.name
     }
     
+    /// Check if this object has been consumed (added to a parent).
+    fn isConsumed(&self) -> bool {
+        self.inner.is_none()
+    }
+    
     /// Add identity sample.
-    fn addIdentitySample(&mut self) {
-        self.inner.add_sample(OXformSample::identity());
+    fn addIdentitySample(&mut self) -> PyResult<()> {
+        self.inner_mut()?.add_sample(OXformSample::identity());
+        Ok(())
     }
     
     /// Add sample from 4x4 matrix (row-major, f32).
     #[pyo3(signature = (matrix, inherits=true))]
-    fn addMatrixSample(&mut self, matrix: [[f32; 4]; 4], inherits: bool) {
+    fn addMatrixSample(&mut self, matrix: [[f32; 4]; 4], inherits: bool) -> PyResult<()> {
         let m = glam::Mat4::from_cols_array_2d(&matrix);
-        self.inner.add_sample(OXformSample::from_matrix(m, inherits));
+        self.inner_mut()?.add_sample(OXformSample::from_matrix(m, inherits));
+        Ok(())
     }
     
     /// Add sample from translation.
-    fn addTranslationSample(&mut self, x: f32, y: f32, z: f32) {
+    fn addTranslationSample(&mut self, x: f32, y: f32, z: f32) -> PyResult<()> {
         let m = glam::Mat4::from_translation(glam::Vec3::new(x, y, z));
-        self.inner.add_sample(OXformSample::from_matrix(m, true));
+        self.inner_mut()?.add_sample(OXformSample::from_matrix(m, true));
+        Ok(())
     }
     
     /// Add sample from scale.
-    fn addScaleSample(&mut self, x: f32, y: f32, z: f32) {
+    fn addScaleSample(&mut self, x: f32, y: f32, z: f32) -> PyResult<()> {
         let m = glam::Mat4::from_scale(glam::Vec3::new(x, y, z));
-        self.inner.add_sample(OXformSample::from_matrix(m, true));
+        self.inner_mut()?.add_sample(OXformSample::from_matrix(m, true));
+        Ok(())
     }
     
     /// Add a child object.
-    fn addChild(&mut self, child: &PyOObject) {
-        self.inner.add_child(child.inner.clone());
+    fn addChild(&mut self, child: &PyOObject) -> PyResult<()> {
+        self.inner_mut()?.add_child(child.inner.clone());
+        Ok(())
     }
     
-    /// Add a PolyMesh as child.
-    fn addPolyMesh(&mut self, mesh: &mut PyOPolyMesh) {
-        let obj = std::mem::replace(&mut mesh.inner, OPolyMesh::new("_empty")).build();
-        self.inner.add_child(obj);
+    /// Add a PolyMesh as child. Consumes the mesh.
+    fn addPolyMesh(&mut self, mesh: &mut PyOPolyMesh) -> PyResult<()> {
+        let obj = mesh.take()?.build();
+        self.inner_mut()?.add_child(obj);
+        Ok(())
     }
     
-    /// Add another Xform as child.
-    fn addXformChild(&mut self, xform: &mut PyOXform) {
-        let obj = std::mem::replace(&mut xform.inner, OXform::new("_empty")).build();
-        self.inner.add_child(obj);
+    /// Add another Xform as child. Consumes the xform.
+    fn addXformChild(&mut self, xform: &mut PyOXform) -> PyResult<()> {
+        let obj = xform.take()?.build();
+        self.inner_mut()?.add_child(obj);
+        Ok(())
     }
     
-    /// Add Curves as child.
-    fn addCurves(&mut self, curves: &mut PyOCurves) {
-        let obj = std::mem::replace(&mut curves.inner, OCurves::new("_empty")).build();
-        self.inner.add_child(obj);
+    /// Add Curves as child. Consumes the curves.
+    fn addCurves(&mut self, curves: &mut PyOCurves) -> PyResult<()> {
+        let obj = curves.take()?.build();
+        self.inner_mut()?.add_child(obj);
+        Ok(())
     }
     
-    /// Add Points as child.
-    fn addPoints(&mut self, points: &mut PyOPoints) {
-        let obj = std::mem::replace(&mut points.inner, OPoints::new("_empty")).build();
-        self.inner.add_child(obj);
+    /// Add Points as child. Consumes the points.
+    fn addPoints(&mut self, points: &mut PyOPoints) -> PyResult<()> {
+        let obj = points.take()?.build();
+        self.inner_mut()?.add_child(obj);
+        Ok(())
     }
     
-    /// Add SubD as child.
-    fn addSubD(&mut self, subd: &mut PyOSubD) {
-        let obj = std::mem::replace(&mut subd.inner, OSubD::new("_empty")).build();
-        self.inner.add_child(obj);
+    /// Add SubD as child. Consumes the subd.
+    fn addSubD(&mut self, subd: &mut PyOSubD) -> PyResult<()> {
+        let obj = subd.take()?.build();
+        self.inner_mut()?.add_child(obj);
+        Ok(())
     }
     
-    /// Add Camera as child.
-    fn addCamera(&mut self, camera: &mut PyOCamera) {
-        let obj = std::mem::replace(&mut camera.inner, OCamera::new("_empty")).build();
-        self.inner.add_child(obj);
+    /// Add Camera as child. Consumes the camera.
+    fn addCamera(&mut self, camera: &mut PyOCamera) -> PyResult<()> {
+        let obj = camera.take()?.build();
+        self.inner_mut()?.add_child(obj);
+        Ok(())
     }
     
-    /// Add NuPatch as child.
-    fn addNuPatch(&mut self, nupatch: &mut PyONuPatch) {
-        let obj = std::mem::replace(&mut nupatch.inner, ONuPatch::new("_empty")).build();
-        self.inner.add_child(obj);
+    /// Add NuPatch as child. Consumes the nupatch.
+    fn addNuPatch(&mut self, nupatch: &mut PyONuPatch) -> PyResult<()> {
+        let obj = nupatch.take()?.build();
+        self.inner_mut()?.add_child(obj);
+        Ok(())
     }
     
-    /// Add Light as child.
-    fn addLight(&mut self, light: &mut PyOLight) {
-        let obj = std::mem::replace(&mut light.inner, OLight::new("_empty")).build();
-        self.inner.add_child(obj);
+    /// Add Light as child. Consumes the light.
+    fn addLight(&mut self, light: &mut PyOLight) -> PyResult<()> {
+        let obj = light.take()?.build();
+        self.inner_mut()?.add_child(obj);
+        Ok(())
     }
     
     fn __repr__(&self) -> String {
-        format!("<OXform '{}'>", self.name)
+        let status = if self.inner.is_none() { " (consumed)" } else { "" };
+        format!("<OXform '{}'{}>", self.name, status)
     }
 }
 
@@ -506,8 +580,21 @@ impl PyOXform {
 /// Python wrapper for output Curves.
 #[pyclass(name = "OCurves")]
 pub struct PyOCurves {
-    pub(crate) inner: OCurves,
+    pub(crate) inner: Option<OCurves>,
     name: String,
+}
+
+impl PyOCurves {
+    /// Take inner OCurves, consuming it. Returns error if already consumed.
+    pub(crate) fn take(&mut self) -> PyResult<OCurves> {
+        self.inner.take().ok_or_else(|| 
+            PyValueError::new_err(format!("Curves '{}' already consumed", self.name)))
+    }
+    
+    fn inner_mut(&mut self) -> PyResult<&mut OCurves> {
+        self.inner.as_mut().ok_or_else(|| 
+            PyValueError::new_err(format!("Curves '{}' already consumed", self.name)))
+    }
 }
 
 #[pymethods]
@@ -516,7 +603,7 @@ impl PyOCurves {
     #[new]
     fn new(name: &str) -> Self {
         Self {
-            inner: OCurves::new(name),
+            inner: Some(OCurves::new(name)),
             name: name.to_string(),
         }
     }
@@ -604,12 +691,13 @@ impl PyOCurves {
         sample.knots = knots;
         sample.orders = orders;
         
-        self.inner.add_sample(&sample);
+        self.inner_mut()?.add_sample(&sample);
         Ok(())
     }
     
     fn __repr__(&self) -> String {
-        format!("<OCurves '{}'>", self.name)
+        let status = if self.inner.is_none() { " (consumed)" } else { "" };
+        format!("<OCurves '{}'{}>", self.name, status)
     }
 }
 
@@ -620,8 +708,21 @@ impl PyOCurves {
 /// Python wrapper for output Points.
 #[pyclass(name = "OPoints")]
 pub struct PyOPoints {
-    pub(crate) inner: OPoints,
+    pub(crate) inner: Option<OPoints>,
     name: String,
+}
+
+impl PyOPoints {
+    /// Take inner OPoints, consuming it. Returns error if already consumed.
+    pub(crate) fn take(&mut self) -> PyResult<OPoints> {
+        self.inner.take().ok_or_else(|| 
+            PyValueError::new_err(format!("Points '{}' already consumed", self.name)))
+    }
+    
+    fn inner_mut(&mut self) -> PyResult<&mut OPoints> {
+        self.inner.as_mut().ok_or_else(|| 
+            PyValueError::new_err(format!("Points '{}' already consumed", self.name)))
+    }
 }
 
 #[pymethods]
@@ -630,7 +731,7 @@ impl PyOPoints {
     #[new]
     fn new(name: &str) -> Self {
         Self {
-            inner: OPoints::new(name),
+            inner: Some(OPoints::new(name)),
             name: name.to_string(),
         }
     }
@@ -663,12 +764,13 @@ impl PyOPoints {
         
         sample.widths = widths;
         
-        self.inner.add_sample(&sample);
+        self.inner_mut()?.add_sample(&sample);
         Ok(())
     }
     
     fn __repr__(&self) -> String {
-        format!("<OPoints '{}'>", self.name)
+        let status = if self.inner.is_none() { " (consumed)" } else { "" };
+        format!("<OPoints '{}'{}>", self.name, status)
     }
 }
 
@@ -679,8 +781,21 @@ impl PyOPoints {
 /// Python wrapper for output SubD (subdivision surface).
 #[pyclass(name = "OSubD")]
 pub struct PyOSubD {
-    pub(crate) inner: OSubD,
+    pub(crate) inner: Option<OSubD>,
     name: String,
+}
+
+impl PyOSubD {
+    /// Take inner OSubD, consuming it. Returns error if already consumed.
+    pub(crate) fn take(&mut self) -> PyResult<OSubD> {
+        self.inner.take().ok_or_else(|| 
+            PyValueError::new_err(format!("SubD '{}' already consumed", self.name)))
+    }
+    
+    fn inner_mut(&mut self) -> PyResult<&mut OSubD> {
+        self.inner.as_mut().ok_or_else(|| 
+            PyValueError::new_err(format!("SubD '{}' already consumed", self.name)))
+    }
 }
 
 #[pymethods]
@@ -689,7 +804,7 @@ impl PyOSubD {
     #[new]
     fn new(name: &str) -> Self {
         Self {
-            inner: OSubD::new(name),
+            inner: Some(OSubD::new(name)),
             name: name.to_string(),
         }
     }
@@ -750,12 +865,13 @@ impl PyOSubD {
         
         sample.uv_indices = uv_indices;
         
-        self.inner.add_sample(&sample);
+        self.inner_mut()?.add_sample(&sample);
         Ok(())
     }
     
     fn __repr__(&self) -> String {
-        format!("<OSubD '{}'>", self.name)
+        let status = if self.inner.is_none() { " (consumed)" } else { "" };
+        format!("<OSubD '{}'{}>", self.name, status)
     }
 }
 
@@ -766,8 +882,20 @@ impl PyOSubD {
 /// Python wrapper for output Camera.
 #[pyclass(name = "OCamera")]
 pub struct PyOCamera {
-    pub(crate) inner: OCamera,
+    pub(crate) inner: Option<OCamera>,
     name: String,
+}
+
+impl PyOCamera {
+    pub(crate) fn take(&mut self) -> PyResult<OCamera> {
+        self.inner.take().ok_or_else(|| 
+            PyValueError::new_err(format!("Camera '{}' already consumed", self.name)))
+    }
+    
+    fn inner_mut(&mut self) -> PyResult<&mut OCamera> {
+        self.inner.as_mut().ok_or_else(|| 
+            PyValueError::new_err(format!("Camera '{}' already consumed", self.name)))
+    }
 }
 
 #[pymethods]
@@ -776,7 +904,7 @@ impl PyOCamera {
     #[new]
     fn new(name: &str) -> Self {
         Self {
-            inner: OCamera::new(name),
+            inner: Some(OCamera::new(name)),
             name: name.to_string(),
         }
     }
@@ -832,11 +960,13 @@ impl PyOCamera {
             far_clipping_plane,
             ..Default::default()
         };
-        self.inner.add_sample(sample);
+        self.inner_mut()?.add_sample(sample);
+        Ok(())
     }
     
     fn __repr__(&self) -> String {
-        format!("<OCamera '{}'>", self.name)
+        let status = if self.inner.is_none() { " (consumed)" } else { "" };
+        format!("<OCamera '{}'{}>", self.name, status)
     }
 }
 
@@ -847,8 +977,20 @@ impl PyOCamera {
 /// Python wrapper for output NuPatch (NURBS patch).
 #[pyclass(name = "ONuPatch")]
 pub struct PyONuPatch {
-    pub(crate) inner: ONuPatch,
+    pub(crate) inner: Option<ONuPatch>,
     name: String,
+}
+
+impl PyONuPatch {
+    pub(crate) fn take(&mut self) -> PyResult<ONuPatch> {
+        self.inner.take().ok_or_else(|| 
+            PyValueError::new_err(format!("NuPatch '{}' already consumed", self.name)))
+    }
+    
+    fn inner_mut(&mut self) -> PyResult<&mut ONuPatch> {
+        self.inner.as_mut().ok_or_else(|| 
+            PyValueError::new_err(format!("NuPatch '{}' already consumed", self.name)))
+    }
 }
 
 #[pymethods]
@@ -857,7 +999,7 @@ impl PyONuPatch {
     #[new]
     fn new(name: &str) -> Self {
         Self {
-            inner: ONuPatch::new(name),
+            inner: Some(ONuPatch::new(name)),
             name: name.to_string(),
         }
     }
@@ -912,12 +1054,13 @@ impl PyONuPatch {
                 .collect());
         }
         
-        self.inner.add_sample(&sample);
+        self.inner_mut()?.add_sample(&sample);
         Ok(())
     }
     
     fn __repr__(&self) -> String {
-        format!("<ONuPatch '{}'>", self.name)
+        let status = if self.inner.is_none() { " (consumed)" } else { "" };
+        format!("<ONuPatch '{}'{}>", self.name, status)
     }
 }
 
@@ -928,8 +1071,20 @@ impl PyONuPatch {
 /// Python wrapper for output Light.
 #[pyclass(name = "OLight")]
 pub struct PyOLight {
-    pub(crate) inner: OLight,
+    pub(crate) inner: Option<OLight>,
     name: String,
+}
+
+impl PyOLight {
+    pub(crate) fn take(&mut self) -> PyResult<OLight> {
+        self.inner.take().ok_or_else(|| 
+            PyValueError::new_err(format!("Light '{}' already consumed", self.name)))
+    }
+    
+    fn inner_mut(&mut self) -> PyResult<&mut OLight> {
+        self.inner.as_mut().ok_or_else(|| 
+            PyValueError::new_err(format!("Light '{}' already consumed", self.name)))
+    }
 }
 
 #[pymethods]
@@ -938,7 +1093,7 @@ impl PyOLight {
     #[new]
     fn new(name: &str) -> Self {
         Self {
-            inner: OLight::new(name),
+            inner: Some(OLight::new(name)),
             name: name.to_string(),
         }
     }
@@ -994,11 +1149,13 @@ impl PyOLight {
             far_clipping_plane,
             ..Default::default()
         };
-        self.inner.add_camera_sample(sample);
+        self.inner_mut()?.add_camera_sample(sample);
+        Ok(())
     }
     
     fn __repr__(&self) -> String {
-        format!("<OLight '{}'>", self.name)
+        let status = if self.inner.is_none() { " (consumed)" } else { "" };
+        format!("<OLight '{}'{}>", self.name, status)
     }
 }
 
@@ -1009,8 +1166,20 @@ impl PyOLight {
 /// Python wrapper for output FaceSet.
 #[pyclass(name = "OFaceSet")]
 pub struct PyOFaceSet {
-    pub(crate) inner: OFaceSet,
+    pub(crate) inner: Option<OFaceSet>,
     name: String,
+}
+
+impl PyOFaceSet {
+    pub(crate) fn take(&mut self) -> PyResult<OFaceSet> {
+        self.inner.take().ok_or_else(|| 
+            PyValueError::new_err(format!("FaceSet '{}' already consumed", self.name)))
+    }
+    
+    fn inner_mut(&mut self) -> PyResult<&mut OFaceSet> {
+        self.inner.as_mut().ok_or_else(|| 
+            PyValueError::new_err(format!("FaceSet '{}' already consumed", self.name)))
+    }
 }
 
 #[pymethods]
@@ -1019,7 +1188,7 @@ impl PyOFaceSet {
     #[new]
     fn new(name: &str) -> Self {
         Self {
-            inner: OFaceSet::new(name),
+            inner: Some(OFaceSet::new(name)),
             name: name.to_string(),
         }
     }
@@ -1030,13 +1199,15 @@ impl PyOFaceSet {
     }
     
     /// Add a sample with face indices.
-    fn addSample(&mut self, faces: Vec<i32>) {
+    fn addSample(&mut self, faces: Vec<i32>) -> PyResult<()> {
         let sample = OFaceSetSample::new(faces);
-        self.inner.add_sample(&sample);
+        self.inner_mut()?.add_sample(&sample);
+        Ok(())
     }
     
     fn __repr__(&self) -> String {
-        format!("<OFaceSet '{}'>", self.name)
+        let status = if self.inner.is_none() { " (consumed)" } else { "" };
+        format!("<OFaceSet '{}'{}>", self.name, status)
     }
 }
 
@@ -1047,9 +1218,21 @@ impl PyOFaceSet {
 /// Python wrapper for output Material.
 #[pyclass(name = "OMaterial")]
 pub struct PyOMaterial {
-    pub(crate) inner: OMaterial,
+    pub(crate) inner: Option<OMaterial>,
     name: String,
     sample: OMaterialSample,
+}
+
+impl PyOMaterial {
+    pub(crate) fn take(&mut self) -> PyResult<OMaterial> {
+        self.inner.take().ok_or_else(|| 
+            PyValueError::new_err(format!("Material '{}' already consumed", self.name)))
+    }
+    
+    fn inner_mut(&mut self) -> PyResult<&mut OMaterial> {
+        self.inner.as_mut().ok_or_else(|| 
+            PyValueError::new_err(format!("Material '{}' already consumed", self.name)))
+    }
 }
 
 #[pymethods]
@@ -1058,7 +1241,7 @@ impl PyOMaterial {
     #[new]
     fn new(name: &str) -> Self {
         Self {
-            inner: OMaterial::new(name),
+            inner: Some(OMaterial::new(name)),
             name: name.to_string(),
             sample: OMaterialSample::new(),
         }
@@ -1107,13 +1290,15 @@ impl PyOMaterial {
     }
     
     /// Finalize and set sample on the material before building.
-    fn finalize(&mut self) {
+    fn finalize(&mut self) -> PyResult<()> {
         let sample = std::mem::replace(&mut self.sample, OMaterialSample::new());
-        self.inner.set_sample(sample);
+        self.inner_mut()?.set_sample(sample);
+        Ok(())
     }
     
     fn __repr__(&self) -> String {
-        format!("<OMaterial '{}'>", self.name)
+        let status = if self.inner.is_none() { " (consumed)" } else { "" };
+        format!("<OMaterial '{}'{}>", self.name, status)
     }
 }
 
@@ -1124,8 +1309,20 @@ impl PyOMaterial {
 /// Python wrapper for output Collections.
 #[pyclass(name = "OCollections")]
 pub struct PyOCollections {
-    pub(crate) inner: OCollections,
+    pub(crate) inner: Option<OCollections>,
     name: String,
+}
+
+impl PyOCollections {
+    pub(crate) fn take(&mut self) -> PyResult<OCollections> {
+        self.inner.take().ok_or_else(|| 
+            PyValueError::new_err(format!("Collections '{}' already consumed", self.name)))
+    }
+    
+    fn inner_mut(&mut self) -> PyResult<&mut OCollections> {
+        self.inner.as_mut().ok_or_else(|| 
+            PyValueError::new_err(format!("Collections '{}' already consumed", self.name)))
+    }
 }
 
 #[pymethods]
@@ -1134,7 +1331,7 @@ impl PyOCollections {
     #[new]
     fn new(name: &str) -> Self {
         Self {
-            inner: OCollections::new(name),
+            inner: Some(OCollections::new(name)),
             name: name.to_string(),
         }
     }
@@ -1145,12 +1342,14 @@ impl PyOCollections {
     }
     
     /// Add a collection with name and list of object paths.
-    fn addCollection(&mut self, name: &str, paths: Vec<String>) {
-        self.inner.add_collection(name, paths);
+    fn addCollection(&mut self, name: &str, paths: Vec<String>) -> PyResult<()> {
+        self.inner_mut()?.add_collection(name, paths);
+        Ok(())
     }
     
     fn __repr__(&self) -> String {
-        format!("<OCollections '{}'>", self.name)
+        let status = if self.inner.is_none() { " (consumed)" } else { "" };
+        format!("<OCollections '{}'{}>", self.name, status)
     }
 }
 

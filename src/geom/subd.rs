@@ -270,13 +270,9 @@ impl<'a> ISubD<'a> {
     /// Get a FaceSet by name.
     /// 
     /// Returns None if the FaceSet doesn't exist or doesn't have the FaceSet schema.
-    /// Note: Due to lifetime constraints, use face_set_names() and iterate children manually.
-    #[allow(clippy::unused_self)]
     pub fn face_set(&self, name: &str) -> Option<IFaceSet<'_>> {
-        let _child = self.object.child_by_name(name)?;
-        // Due to ownership constraints with trait objects, we cannot return
-        // a wrapped IFaceSet here. Use face_set_names() and iterate children manually.
-        None
+        let child = self.object.child_by_name(name)?;
+        IFaceSet::from_owned(child)
     }
     
     /// Get number of FaceSets on this SubD.

@@ -173,8 +173,9 @@ impl SampleInterp {
     }
 
     /// Check if this is an exact sample (no interpolation).
+    /// Uses tolerance for float comparison to avoid precision issues.
     pub fn is_exact(&self) -> bool {
-        self.floor_index == self.ceil_index || self.alpha == 0.0
+        self.floor_index == self.ceil_index || self.alpha.abs() < 1e-9
     }
 }
 

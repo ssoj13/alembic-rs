@@ -265,7 +265,7 @@ impl<'a> IPolyMesh<'a> {
         if let Some(faces_prop) = geom.property_by_name(".faces") {
             if let Some(array) = faces_prop.as_array() {
                 if let Ok(data) = array.read_sample_vec(index) {
-                    sample.faces = bytemuck::cast_slice(&data).to_vec();
+                    sample.faces = super::safe_cast_vec(&data);
                 }
             }
         }
@@ -275,12 +275,13 @@ impl<'a> IPolyMesh<'a> {
             if let Some(scalar) = bnds_prop.as_scalar() {
                 let mut buf = [0u8; 48];
                 if scalar.read_sample(index, &mut buf).is_ok() {
-                    let values: &[f64] = bytemuck::cast_slice(&buf);
-                    if values.len() >= 6 {
-                        sample.self_bounds = Some(BBox3d::new(
-                            glam::dvec3(values[0], values[1], values[2]),
-                            glam::dvec3(values[3], values[4], values[5]),
-                        ));
+                    if let Some(values) = super::safe_cast_slice::<f64>(&buf) {
+                        if values.len() >= 6 {
+                            sample.self_bounds = Some(BBox3d::new(
+                                glam::dvec3(values[0], values[1], values[2]),
+                                glam::dvec3(values[3], values[4], values[5]),
+                            ));
+                        }
                     }
                 }
             }

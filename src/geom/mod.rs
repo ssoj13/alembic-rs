@@ -12,6 +12,26 @@
 
 use std::marker::PhantomData;
 
+// ============================================================================
+// Safe casting helpers
+// ============================================================================
+
+/// Safely cast a byte slice to a slice of type T.
+/// Returns None if the data is misaligned or has wrong size.
+#[inline]
+pub fn safe_cast_slice<T: bytemuck::Pod>(data: &[u8]) -> Option<&[T]> {
+    bytemuck::try_cast_slice(data).ok()
+}
+
+/// Safely cast a byte slice to a Vec of type T.
+/// Returns empty Vec if cast fails.
+#[inline]
+pub fn safe_cast_vec<T: bytemuck::Pod + Clone>(data: &[u8]) -> Vec<T> {
+    bytemuck::try_cast_slice(data)
+        .map(|s: &[T]| s.to_vec())
+        .unwrap_or_default()
+}
+
 pub mod xform;
 pub mod polymesh;
 pub mod curves;

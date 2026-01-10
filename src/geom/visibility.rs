@@ -125,23 +125,50 @@ pub fn get_visibility(obj: &IObject<'_>, sel: impl Into<SampleSelector>) -> Obje
     ObjectVisibility::Deferred
 }
 
-/// Check if an object or any of its ancestors is hidden.
+/// Check if an object is visible based on its own visibility property.
 ///
-/// Walks up the hierarchy looking for explicit visibility.
 /// Returns true if the object should be visible, false if hidden.
-///
-/// Note: This function requires traversing the hierarchy which may be expensive.
-/// For now, it only checks the immediate object since we don't have parent access.
+/// For Deferred visibility, returns true (assumes visible).
+/// 
+/// Note: This does NOT check parent hierarchy. For proper Deferred handling,
+/// use `is_visible_in_archive()` which traverses the full hierarchy.
 pub fn is_visible(obj: &IObject<'_>, sel: impl Into<SampleSelector>) -> bool {
     let vis = get_visibility(obj, sel);
     
     match vis {
         ObjectVisibility::Visible => true,
         ObjectVisibility::Hidden => false,
+        ObjectVisibility::Deferred => true, // Default to visible; use is_visible_in_archive for hierarchy check
+    }
+}
+
+/// Check if an object is visible considering its full hierarchy.
+///
+/// Properly handles Deferred visibility by walking up the hierarchy
+/// until an explicit Visible or Hidden is found.
+/// Returns true if the object should be visible, false if hidden.
+///
+/// # Arguments
+/// * `archive` - The archive containing the object
+/// * `obj_path` - Full path of the object (e.g., "/root/parent/child")
+/// * `sel` - Sample selector for animated visibility
+pub fn is_visible_in_archive(
+    archive: &crate::abc::IArchive,
+    obj_path: &str,
+    sel: impl Into<SampleSelector> + Copy,
+) -> bool {
+    // Find the object
+    let Some(obj) = archive.find_object(obj_path) else {
+        return true; // Object not found, default visible
+    };
+    
+    let vis = get_visibility(&obj, sel);
+    match vis {
+        ObjectVisibility::Visible => true,
+        ObjectVisibility::Hidden => false,
         ObjectVisibility::Deferred => {
-            // Would need to walk up hierarchy, but we don't have parent access yet
-            // Default to visible when deferred
-            true
+            // Check ancestors for explicit visibility
+            !is_ancestor_invisible_in_archive(archive, obj_path, sel)
         }
     }
 }

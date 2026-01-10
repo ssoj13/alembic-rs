@@ -5,20 +5,29 @@ use alembic::abc::IArchive as AbcIArchive;
 use std::env;
 use std::path::Path;
 
-/// Verbosity level
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum LogLevel {
-    Quiet = 0,
-    Info = 1,
-    Debug = 2,
-    Trace = 3,
+use std::sync::atomic::{AtomicU8, Ordering};
+
+/// Verbosity level (thread-safe)
+const LOG_QUIET: u8 = 0;
+const LOG_INFO: u8 = 1;
+const LOG_DEBUG: u8 = 2;
+const LOG_TRACE: u8 = 3;
+
+static LOG_LEVEL: AtomicU8 = AtomicU8::new(LOG_INFO);
+
+#[inline]
+fn log_level() -> u8 {
+    LOG_LEVEL.load(Ordering::Relaxed)
 }
 
-static mut LOG_LEVEL: LogLevel = LogLevel::Info;
+#[inline]
+fn set_log_level(level: u8) {
+    LOG_LEVEL.store(level, Ordering::Relaxed);
+}
 
 macro_rules! info {
     ($($arg:tt)*) => {
-        if unsafe { LOG_LEVEL } >= LogLevel::Info {
+        if log_level() >= LOG_INFO {
             println!("[INFO] {}", format!($($arg)*));
         }
     };
@@ -26,7 +35,7 @@ macro_rules! info {
 
 macro_rules! debug {
     ($($arg:tt)*) => {
-        if unsafe { LOG_LEVEL } >= LogLevel::Debug {
+        if log_level() >= LOG_DEBUG {
             println!("[DEBUG] {}", format!($($arg)*));
         }
     };
@@ -34,7 +43,7 @@ macro_rules! debug {
 
 macro_rules! trace {
     ($($arg:tt)*) => {
-        if unsafe { LOG_LEVEL } >= LogLevel::Trace {
+        if log_level() >= LOG_TRACE {
             println!("[TRACE] {}", format!($($arg)*));
         }
     };
@@ -47,9 +56,9 @@ fn main() {
     let mut filtered_args: Vec<&str> = Vec::new();
     for arg in &args[1..] {
         match arg.as_str() {
-            "-v" | "--verbose" => unsafe { LOG_LEVEL = LogLevel::Debug },
-            "-vv" | "--trace" => unsafe { LOG_LEVEL = LogLevel::Trace },
-            "-q" | "--quiet" => unsafe { LOG_LEVEL = LogLevel::Quiet },
+            "-v" | "--verbose" => set_log_level(LOG_DEBUG),
+            "-vv" | "--trace" => set_log_level(LOG_TRACE),
+            "-q" | "--quiet" => set_log_level(LOG_QUIET),
             _ => filtered_args.push(arg),
         }
     }

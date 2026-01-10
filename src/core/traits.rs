@@ -90,6 +90,10 @@ pub trait ObjectReader: Send + Sync {
     fn header(&self) -> &ObjectHeader;
 
     /// Get the parent object (None for root).
+    /// 
+    /// **Note:** Current implementations return None due to Rust ownership
+    /// constraints. Use `full_name()` to get the object path and navigate
+    /// via the archive if parent access is needed.
     fn parent(&self) -> Option<&dyn ObjectReader>;
 
     /// Get the number of child objects.
@@ -265,6 +269,18 @@ pub trait ScalarPropertyReader: PropertyReader {
         let bytes = bytemuck::bytes_of_mut(&mut value);
         self.read_sample(index, bytes)?;
         Ok(value)
+    }
+    
+    /// Read sample into a Vec (for variable-length data like strings).
+    /// Default implementation uses fixed 4KB buffer; override for larger data.
+    fn read_sample_vec(&self, index: usize) -> Result<Vec<u8>> {
+        let mut buf = vec![0u8; 4096];
+        self.read_sample(index, &mut buf)?;
+        // Trim trailing zeros for string data
+        if let Some(end) = buf.iter().position(|&b| b == 0) {
+            buf.truncate(end);
+        }
+        Ok(buf)
     }
 }
 

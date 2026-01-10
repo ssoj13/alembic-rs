@@ -80,12 +80,17 @@ pub struct CachedSample {
     pub data: Arc<Vec<u8>>,
     /// Approximate size in bytes (for cache eviction).
     pub size: usize,
+    /// Last access timestamp for LRU eviction (monotonic counter).
+    pub last_access: u64,
 }
 
 /// Thread-safe cache for array samples.
 /// 
 /// Uses `parking_lot::RwLock` for faster, non-poisoning locks
 /// and `AtomicUsize` for lock-free size tracking.
+/// 
+/// Implements approximate LRU eviction - entries with older access
+/// timestamps are evicted first when the cache is full.
 pub struct ReadArraySampleCache {
     /// Cache storage.
     cache: RwLock<HashMap<ArraySampleKey, CachedSample>>,
@@ -93,6 +98,8 @@ pub struct ReadArraySampleCache {
     max_size: usize,
     /// Current cache size in bytes (atomic for lock-free reads).
     current_size: AtomicUsize,
+    /// Monotonic counter for LRU timestamps.
+    access_counter: AtomicUsize,
 }
 
 impl ReadArraySampleCache {
@@ -102,6 +109,7 @@ impl ReadArraySampleCache {
             cache: RwLock::new(HashMap::new()),
             max_size,
             current_size: AtomicUsize::new(0),
+            access_counter: AtomicUsize::new(0),
         }
     }
     
@@ -111,13 +119,35 @@ impl ReadArraySampleCache {
     }
     
     /// Get a cached sample if it exists.
+    /// Updates access timestamp for LRU tracking.
     #[inline]
     pub fn get(&self, key: &ArraySampleKey) -> Option<Arc<Vec<u8>>> {
-        let cache = self.cache.read();
-        cache.get(key).map(|s| Arc::clone(&s.data))
+        // Try read-only first for common case
+        {
+            let cache = self.cache.read();
+            if let Some(sample) = cache.get(key) {
+                // Found - need to update timestamp, but return data first
+                let data = Arc::clone(&sample.data);
+                drop(cache);
+                // Update timestamp (best effort, ok if we lose the race)
+                if let Some(entry) = self.cache.write().get_mut(key) {
+                    entry.last_access = self.access_counter.fetch_add(1, Ordering::Relaxed) as u64;
+                }
+                return Some(data);
+            }
+        }
+        None
     }
     
     /// Insert a sample into the cache.
+    /// 
+    /// # Concurrency Note
+    /// 
+    /// This method uses relaxed atomic ordering for size checks, which means
+    /// the cache may briefly exceed `max_size` under heavy concurrent writes.
+    /// This is intentional - the alternative (locking for size check) would
+    /// significantly impact read performance. The eviction strategy ensures
+    /// the cache converges back to target size quickly.
     pub fn insert(&self, key: ArraySampleKey, data: Vec<u8>) {
         let size = data.len();
         
@@ -126,7 +156,7 @@ impl ReadArraySampleCache {
             return;
         }
         
-        // Check if we need to evict (relaxed ordering is fine for heuristic)
+        // Check if we need to evict (relaxed ordering - may briefly exceed max)
         let current = self.current_size.load(Ordering::Relaxed);
         if current + size > self.max_size {
             self.evict_some();
@@ -135,6 +165,7 @@ impl ReadArraySampleCache {
         let sample = CachedSample {
             data: Arc::new(data),
             size,
+            last_access: self.access_counter.fetch_add(1, Ordering::Relaxed) as u64,
         };
         
         let mut cache = self.cache.write();
@@ -147,20 +178,35 @@ impl ReadArraySampleCache {
         self.current_size.fetch_add(size, Ordering::Relaxed);
     }
     
-    /// Evict approximately half of the cache.
+    /// Evict entries using LRU strategy until we're below 75% capacity.
+    /// Evicts oldest entries (by last_access timestamp) first.
     fn evict_some(&self) {
         let mut cache = self.cache.write();
-        let keys: Vec<_> = cache.keys().cloned().collect();
-        let evict_count = keys.len() / 2;
         
+        // Collect entries with their access timestamps
+        let mut entries: Vec<_> = cache.iter()
+            .map(|(k, v)| (*k, v.last_access, v.size))
+            .collect();
+        
+        // Sort by access time (oldest first)
+        entries.sort_by_key(|(_, access, _)| *access);
+        
+        // Target: evict until we're at 75% capacity
+        let target_size = self.max_size * 3 / 4;
+        let mut current = self.current_size.load(Ordering::Relaxed);
         let mut evicted_size = 0;
-        for key in keys.into_iter().take(evict_count) {
-            if let Some(sample) = cache.remove(&key) {
-                evicted_size += sample.size;
+        
+        for (key, _, size) in entries {
+            if current <= target_size {
+                break;
+            }
+            if cache.remove(&key).is_some() {
+                evicted_size += size;
+                current = current.saturating_sub(size);
             }
         }
         
-        // Use fetch_sub with saturating semantics
+        // Update size counter
         let _ = self.current_size.fetch_update(
             Ordering::Relaxed,
             Ordering::Relaxed,

@@ -75,9 +75,17 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
     let mut decompressed = Vec::with_capacity(uncompressed_size);
     
     match decoder.read_to_end(&mut decompressed) {
-        Ok(_) => Ok(decompressed),
+        Ok(_) => {
+            // Verify decompressed size matches expected
+            if decompressed.len() != uncompressed_size {
+                // Size mismatch - data was likely not compressed, return original
+                return Ok(data.to_vec());
+            }
+            Ok(decompressed)
+        }
         Err(_) => {
-            // Decompression failed - data was probably not compressed
+            // Decompression failed - data was probably not compressed.
+            // This is expected for uncompressed data blocks.
             Ok(data.to_vec())
         }
     }
@@ -96,7 +104,12 @@ pub fn is_compressed(data: &[u8]) -> bool {
     let zlib_header = data[8];
     let zlib_flags = data[9];
     
-    zlib_header == 0x78 && matches!(zlib_flags, 0x01 | 0x5E | 0x9C | 0xDA)
+    // Valid zlib compression levels:
+    // 0x01 - no compression
+    // 0x9C - default compression  
+    // 0xDA - best compression
+    // Note: 0x5E was previously listed but is not a standard zlib level
+    zlib_header == 0x78 && matches!(zlib_flags, 0x01 | 0x9C | 0xDA)
 }
 
 #[cfg(test)]

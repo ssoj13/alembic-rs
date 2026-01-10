@@ -76,27 +76,58 @@ impl FaceSetSample {
     }
 }
 
+/// Internal storage for IFaceSet - can be borrowed or owned.
+enum FaceSetObject<'a> {
+    Borrowed(&'a IObject<'a>),
+    Owned(IObject<'a>),
+}
+
+impl<'a> FaceSetObject<'a> {
+    fn as_ref(&self) -> &IObject<'_> {
+        match self {
+            Self::Borrowed(r) => r,
+            Self::Owned(o) => o,
+        }
+    }
+}
+
 /// Input FaceSet schema reader.
 pub struct IFaceSet<'a> {
-    object: &'a IObject<'a>,
+    object: FaceSetObject<'a>,
     exclusivity: FaceSetExclusivity,
 }
 
 impl<'a> IFaceSet<'a> {
-    /// Wrap an IObject as an IFaceSet.
+    /// Wrap an IObject reference as an IFaceSet.
     /// Returns None if the object doesn't have the FaceSet schema.
     pub fn new(object: &'a IObject<'a>) -> Option<Self> {
         if object.matches_schema(FACESET_SCHEMA) {
-            // Read exclusivity from metadata
-            let exclusivity = Self::read_exclusivity(object);
-            Some(Self { object, exclusivity })
+            let exclusivity = Self::read_exclusivity_from(object);
+            Some(Self { 
+                object: FaceSetObject::Borrowed(object), 
+                exclusivity 
+            })
+        } else {
+            None
+        }
+    }
+    
+    /// Create an IFaceSet from an owned IObject.
+    /// Returns None if the object doesn't have the FaceSet schema.
+    pub fn from_owned(object: IObject<'a>) -> Option<Self> {
+        if object.matches_schema(FACESET_SCHEMA) {
+            let exclusivity = Self::read_exclusivity_from(&object);
+            Some(Self { 
+                object: FaceSetObject::Owned(object), 
+                exclusivity 
+            })
         } else {
             None
         }
     }
     
     /// Read exclusivity from object metadata.
-    fn read_exclusivity(object: &IObject<'_>) -> FaceSetExclusivity {
+    fn read_exclusivity_from(object: &IObject<'_>) -> FaceSetExclusivity {
         let header = object.header();
         if let Some(excl_str) = header.meta_data.get(FACE_EXCLUSIVITY_KEY) {
             FaceSetExclusivity::parse(excl_str)
@@ -106,18 +137,18 @@ impl<'a> IFaceSet<'a> {
     }
     
     /// Get the underlying object.
-    pub fn object(&self) -> &IObject<'a> {
-        self.object
+    pub fn object(&self) -> &IObject<'_> {
+        self.object.as_ref()
     }
     
     /// Get the object name.
     pub fn name(&self) -> &str {
-        self.object.name()
+        self.object.as_ref().name()
     }
     
     /// Get the full path.
     pub fn full_name(&self) -> &str {
-        self.object.full_name()
+        self.object.as_ref().full_name()
     }
     
     /// Get the face exclusivity setting.
@@ -127,7 +158,7 @@ impl<'a> IFaceSet<'a> {
     
     /// Get number of samples.
     pub fn num_samples(&self) -> usize {
-        let props = self.object.properties();
+        let props = self.object.as_ref().properties();
         let Some(geom_prop) = props.property_by_name(".geom") else { return 1 };
         let Some(geom) = geom_prop.as_compound() else { return 1 };
         let Some(faces_prop) = geom.property_by_name(".faces") else { return 1 };
@@ -144,7 +175,7 @@ impl<'a> IFaceSet<'a> {
     pub fn get_sample(&self, index: usize) -> Result<FaceSetSample> {
         let mut sample = FaceSetSample::new();
         
-        let props = self.object.properties();
+        let props = self.object.as_ref().properties();
         let geom_prop = props.property_by_name(".geom")
             .ok_or_else(|| Error::invalid("No .geom property"))?;
         let geom = geom_prop.as_compound()

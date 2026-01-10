@@ -4,6 +4,7 @@
 
 use crate::abc::IObject;
 use crate::util::{Result, Error, BBox3d};
+use crate::core::TopologyVariance;
 
 /// NuPatch schema identifier.
 pub const NUPATCH_SCHEMA: &str = "AbcGeom_NuPatch_v2";
@@ -331,6 +332,51 @@ impl<'a> INuPatch<'a> {
     /// Check if this patch is constant (single sample).
     pub fn is_constant(&self) -> bool {
         self.num_samples() <= 1
+    }
+    
+    /// Check if patch has self bounds property.
+    pub fn has_self_bounds(&self) -> bool {
+        let props = self.object.properties();
+        if let Some(geom_prop) = props.property_by_name(".geom") {
+            if let Some(geom) = geom_prop.as_compound() {
+                return geom.has_property(".selfBnds");
+            }
+        }
+        false
+    }
+    
+    /// Get topology variance.
+    /// 
+    /// NuPatch is typically homogeneous (CVs move but topology is fixed).
+    pub fn topology_variance(&self) -> TopologyVariance {
+        if self.num_samples() <= 1 {
+            TopologyVariance::Static
+        } else {
+            // NURBS patches typically have fixed topology
+            TopologyVariance::Homogeneous
+        }
+    }
+    
+    /// Check if patch has arbitrary geometry parameters.
+    pub fn has_arb_geom_params(&self) -> bool {
+        let props = self.object.properties();
+        if let Some(geom_prop) = props.property_by_name(".geom") {
+            if let Some(geom) = geom_prop.as_compound() {
+                return geom.has_property(".arbGeomParams");
+            }
+        }
+        false
+    }
+    
+    /// Check if patch has user properties.
+    pub fn has_user_properties(&self) -> bool {
+        let props = self.object.properties();
+        if let Some(geom_prop) = props.property_by_name(".geom") {
+            if let Some(geom) = geom_prop.as_compound() {
+                return geom.has_property(".userProperties");
+            }
+        }
+        false
     }
     
     /// Read a sample at the given index.
