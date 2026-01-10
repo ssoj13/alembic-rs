@@ -255,9 +255,9 @@ impl ObjectReader for OgawaArchiveReader {
     fn child(&self, index: usize) -> Option<Box<dyn ObjectReader + '_>> {
         match self.root_data.child(index)? {
             Ok(reader) => Some(Box::new(reader)),
-            Err(e) => {
+            Err(_e) => {
                 #[cfg(debug_assertions)]
-                eprintln!("[alembic] Warning: failed to read child at index {}: {}", index, e);
+                eprintln!("[alembic] Warning: failed to read child at index {}: {}", index, _e);
                 None
             }
         }
@@ -266,9 +266,9 @@ impl ObjectReader for OgawaArchiveReader {
     fn child_by_name(&self, name: &str) -> Option<Box<dyn ObjectReader + '_>> {
         match self.root_data.child_by_name(name)? {
             Ok(reader) => Some(Box::new(reader)),
-            Err(e) => {
+            Err(_e) => {
                 #[cfg(debug_assertions)]
-                eprintln!("[alembic] Warning: failed to read child '{}': {}", name, e);
+                eprintln!("[alembic] Warning: failed to read child '{}': {}", name, _e);
                 None
             }
         }
@@ -311,9 +311,9 @@ impl ObjectReader for OgawaObjectReader {
     fn child(&self, index: usize) -> Option<Box<dyn ObjectReader + '_>> {
         match self.data.child(index)? {
             Ok(reader) => Some(Box::new(reader)),
-            Err(e) => {
+            Err(_e) => {
                 #[cfg(debug_assertions)]
-                eprintln!("[alembic] Warning: failed to read child at index {}: {}", index, e);
+                eprintln!("[alembic] Warning: failed to read child at index {}: {}", index, _e);
                 None
             }
         }
@@ -322,9 +322,9 @@ impl ObjectReader for OgawaObjectReader {
     fn child_by_name(&self, name: &str) -> Option<Box<dyn ObjectReader + '_>> {
         match self.data.child_by_name(name)? {
             Ok(reader) => Some(Box::new(reader)),
-            Err(e) => {
+            Err(_e) => {
                 #[cfg(debug_assertions)]
-                eprintln!("[alembic] Warning: failed to read child '{}': {}", name, e);
+                eprintln!("[alembic] Warning: failed to read child '{}': {}", name, _e);
                 None
             }
         }
