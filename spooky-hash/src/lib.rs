@@ -473,6 +473,21 @@ fn read_block_from_bytes(bytes: &[u8]) -> [u64; SC_NUM_VARS] {
     block
 }
 
+impl SpookyHash {
+    /// Mix two 128-bit hash values using ShortEnd.
+    /// This is used to accumulate sample hashes incrementally.
+    /// Equivalent to C++ SpookyHash::ShortEnd(h0, h1, h2, h3)
+    #[inline]
+    pub fn short_end_mix(h0: u64, h1: u64, h2: u64, h3: u64) -> (u64, u64) {
+        let mut a = h0;
+        let mut b = h1;
+        let mut c = h2;
+        let mut d = h3;
+        short_end(&mut a, &mut b, &mut c, &mut d);
+        (a, b)
+    }
+}
+
 impl Default for SpookyHash {
     fn default() -> Self {
         Self::new(0, 0)

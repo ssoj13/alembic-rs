@@ -524,7 +524,12 @@ impl OArchive {
     }
     
     /// Write an object and return (position, hash1, hash2).
-    /// The hashes are SpookyHash of property data and child object hashes.
+    /// 
+    /// Matches C++ OwData::writeHeaders() hashing approach:
+    /// - dataHash: computed from properties via CpwData::computeHash()
+    /// - childHash: computed from child object hashes
+    /// - Both hashes written as 32-byte suffix in object headers
+    /// - ioHash returned to parent: childHash updated with dataHash
     fn write_object(&mut self, obj: &OObject, parent_path: &str) -> Result<(u64, u64, u64)> {
         let full_path = if parent_path == "/" {
             format!("/{}", obj.name)
@@ -532,8 +537,8 @@ impl OArchive {
             format!("{}/{}", parent_path, obj.name)
         };
         
-        // Write properties compound and get property data for hashing
-        let (props_pos, props_data) = self.write_properties_with_data(&obj.properties)?;
+        // Write properties compound and get property hash (dataHash)
+        let (props_pos, data_hash1, data_hash2) = self.write_properties_with_data(&obj.properties)?;
         
         // Write child objects and collect their hashes
         let mut child_positions = Vec::new();
@@ -545,21 +550,17 @@ impl OArchive {
             child_hashes.push(h2);
         }
         
-        // Compute property data hash (dataHash)
-        let (data_hash1, data_hash2) = if props_data.is_empty() {
-            SpookyHash::hash128(&[], 0, 0)
-        } else {
-            SpookyHash::hash128(&props_data, 0, 0)
-        };
-        
-        // Compute child objects hash (ioHash)
+        // Compute child objects hash (ioHash) matching C++ OwData::writeHeaders()
+        // ioHash.Update(&m_hashes.front(), m_hashes.size() * 8)
         let (child_hash1, child_hash2) = if child_hashes.is_empty() {
             (0u64, 0u64)
         } else {
             let child_hash_bytes: Vec<u8> = child_hashes.iter()
                 .flat_map(|h| h.to_le_bytes())
                 .collect();
-            SpookyHash::hash128(&child_hash_bytes, 0, 0)
+            let mut hasher = SpookyHash::new(0, 0);
+            hasher.update(&child_hash_bytes);
+            hasher.finalize()
         };
         
         // Write object headers (for children) with 32-byte hash suffix
@@ -589,8 +590,8 @@ impl OArchive {
         
         let pos = self.write_group(&children)?;
         
-        // Combine dataHash with childHash for parent's ioHash
-        // (SpookyHash allows updating after Final)
+        // Combine childHash with dataHash for parent's ioHash
+        // C++: ioHash.Update(hashes, 16) where hashes = [dataHash1, dataHash2]
         let mut combined_hash = SpookyHash::new(0, 0);
         if !child_hashes.is_empty() {
             let child_hash_bytes: Vec<u8> = child_hashes.iter()
@@ -598,6 +599,7 @@ impl OArchive {
                 .collect();
             combined_hash.update(&child_hash_bytes);
         }
+        // Add data hash
         combined_hash.update(&data_hash1.to_le_bytes());
         combined_hash.update(&data_hash2.to_le_bytes());
         let (final_h1, final_h2) = combined_hash.finalize();
@@ -608,32 +610,36 @@ impl OArchive {
     /// Write properties compound and return its position.
     #[allow(dead_code)]
     fn write_properties(&mut self, props: &[OProperty]) -> Result<u64> {
-        let (pos, _) = self.write_properties_with_data(props)?;
+        let (pos, _, _) = self.write_properties_with_data(props)?;
         Ok(pos)
     }
     
-    /// Write properties compound and return (position, serialized_data_for_hashing).
-    fn write_properties_with_data(&mut self, props: &[OProperty]) -> Result<(u64, Vec<u8>)> {
+    /// Write properties compound and return (position, hash1, hash2).
+    /// 
+    /// Matches C++ CpwData::computeHash() approach:
+    /// - Collects (hash1, hash2) pairs from each child property
+    /// - Updates hash with all child hashes
+    fn write_properties_with_data(&mut self, props: &[OProperty]) -> Result<(u64, u64, u64)> {
         if props.is_empty() {
             // Write empty compound
             let pos = self.write_group(&[])?;
-            return Ok((pos, Vec::new()));
+            return Ok((pos, 0, 0));
         }
         
-        // Collect all property data for hashing
-        let mut all_prop_data = Vec::new();
+        // Collect property hashes (pairs of u64)
+        let mut prop_hashes: Vec<u64> = Vec::new();
         
         // Write each property
         let mut prop_positions = Vec::new();
         for prop in props {
-            let (prop_pos, prop_data) = self.write_property_with_data(prop)?;
+            let (prop_pos, h1, h2) = self.write_property_with_data(prop)?;
             prop_positions.push(prop_pos);
-            all_prop_data.extend_from_slice(&prop_data);
+            prop_hashes.push(h1);
+            prop_hashes.push(h2);
         }
         
         // Write property headers
         let headers_data = self.serialize_property_headers(props);
-        all_prop_data.extend_from_slice(&headers_data);
         let headers_pos = self.write_data(&headers_data)?;
         
         // Build compound group
@@ -644,22 +650,42 @@ impl OArchive {
         children.push(make_data_offset(headers_pos));
         
         let pos = self.write_group(&children)?;
-        Ok((pos, all_prop_data))
+        
+        // Compute compound hash matching C++ CpwData::computeHash()
+        // hash.Update(&m_hashes.front(), m_hashes.size() * 8)
+        let (h1, h2) = if prop_hashes.is_empty() {
+            (0u64, 0u64)
+        } else {
+            let hash_bytes: Vec<u8> = prop_hashes.iter()
+                .flat_map(|h| h.to_le_bytes())
+                .collect();
+            let mut hasher = SpookyHash::new(0, 0);
+            hasher.update(&hash_bytes);
+            hasher.finalize()
+        };
+        
+        Ok((pos, h1, h2))
     }
     
     /// Write a single property and return its position.
     #[allow(dead_code)]
     fn write_property(&mut self, prop: &OProperty) -> Result<u64> {
-        let (pos, _) = self.write_property_with_data(prop)?;
+        let (pos, _, _) = self.write_property_with_data(prop)?;
         Ok(pos)
     }
     
-    /// Write a single property and return (position, data_for_hashing).
-    fn write_property_with_data(&mut self, prop: &OProperty) -> Result<(u64, Vec<u8>)> {
-        let mut hash_data = Vec::new();
-        
-        // Get time sampling info before matching on data
+    /// Write a single property and return (position, hash1, hash2).
+    /// 
+    /// Matches C++ SpwImpl/ApwImpl destructor hashing:
+    /// 1. HashPropertyHeader(header, hash)
+    /// 2. If samples exist, hash.Update(m_hash.d, 16)
+    /// 3. hash.Final(&hash0, &hash1)
+    fn write_property_with_data(&mut self, prop: &OProperty) -> Result<(u64, u64, u64)> {
+        // Get time sampling for this property
         let ts_idx = prop.time_sampling_index;
+        let time_sampling = self.time_samplings.get(ts_idx as usize)
+            .cloned()
+            .unwrap_or_else(TimeSampling::identity);
         
         match &prop.data {
             OPropertyData::Scalar(samples) => {
@@ -667,36 +693,97 @@ impl OArchive {
                 let num_samples = samples.len() as u32;
                 self.update_max_samples(ts_idx, num_samples);
                 
-                // Each sample is keyed data
+                // Accumulate sample hashes
+                // C++ uses SpookyHash::ShortEnd to mix sample digests
+                let mut sample_hash: Option<(u64, u64)> = None;
+                
+                // Write samples and accumulate hash
                 let mut children = Vec::new();
                 for sample in samples {
+                    // Compute sample digest (MD5-based key)
+                    let content_key = crate::core::ArraySampleContentKey::from_data(sample);
+                    let digest = content_key.digest();
+                    let d0 = u64::from_le_bytes(digest[0..8].try_into().unwrap());
+                    let d1 = u64::from_le_bytes(digest[8..16].try_into().unwrap());
+                    
+                    // Accumulate hash
+                    sample_hash = match sample_hash {
+                        None => Some((d0, d1)),
+                        Some((h0, h1)) => Some(SpookyHash::short_end_mix(h0, h1, d0, d1)),
+                    };
+                    
                     let pos = self.write_keyed_data(sample)?;
                     children.push(make_data_offset(pos));
-                    hash_data.extend_from_slice(sample);
                 }
                 let pos = self.write_group(&children)?;
-                Ok((pos, hash_data))
+                
+                // Final hash: HashPropertyHeader + sample hash
+                let mut hasher = SpookyHash::new(0, 0);
+                hash_property_header(&mut hasher, prop, &time_sampling);
+                
+                if let Some((sh0, sh1)) = sample_hash {
+                    // Mix in accumulated sample hash
+                    let mut sample_bytes = Vec::with_capacity(16);
+                    sample_bytes.extend_from_slice(&sh0.to_le_bytes());
+                    sample_bytes.extend_from_slice(&sh1.to_le_bytes());
+                    hasher.update(&sample_bytes);
+                }
+                
+                let (h1, h2) = hasher.finalize();
+                Ok((pos, h1, h2))
             }
             OPropertyData::Array(samples) => {
                 // Update max_samples for this time sampling
                 let num_samples = samples.len() as u32;
                 self.update_max_samples(ts_idx, num_samples);
                 
-                // Each sample is (data, dimensions) pair
+                // Accumulate sample hashes with dimensions
+                // C++ calls HashDimensions then SpookyHash::ShortEnd
+                let mut sample_hash: Option<(u64, u64)> = None;
+                
+                // Write samples and accumulate hash
                 let mut children = Vec::new();
                 for (data, dims) in samples {
+                    // Compute sample digest
+                    let content_key = crate::core::ArraySampleContentKey::from_data(data);
+                    let digest = content_key.digest();
+                    let mut d = (
+                        u64::from_le_bytes(digest[0..8].try_into().unwrap()),
+                        u64::from_le_bytes(digest[8..16].try_into().unwrap()),
+                    );
+                    
+                    // Hash dimensions into digest
+                    hash_dimensions(dims, &mut d);
+                    
+                    // Accumulate hash
+                    sample_hash = match sample_hash {
+                        None => Some(d),
+                        Some((h0, h1)) => Some(SpookyHash::short_end_mix(h0, h1, d.0, d.1)),
+                    };
+                    
                     let data_pos = self.write_keyed_data(data)?;
                     let dims_data: Vec<u8> = dims.iter()
-                        .flat_map(|d| (*d as u64).to_le_bytes())
+                        .flat_map(|dim| (*dim as u64).to_le_bytes())
                         .collect();
                     let dims_pos = self.write_data(&dims_data)?;
                     children.push(make_data_offset(data_pos));
                     children.push(make_data_offset(dims_pos));
-                    hash_data.extend_from_slice(data);
-                    hash_data.extend_from_slice(&dims_data);
                 }
                 let pos = self.write_group(&children)?;
-                Ok((pos, hash_data))
+                
+                // Final hash: HashPropertyHeader + sample hash
+                let mut hasher = SpookyHash::new(0, 0);
+                hash_property_header(&mut hasher, prop, &time_sampling);
+                
+                if let Some((sh0, sh1)) = sample_hash {
+                    let mut sample_bytes = Vec::with_capacity(16);
+                    sample_bytes.extend_from_slice(&sh0.to_le_bytes());
+                    sample_bytes.extend_from_slice(&sh1.to_le_bytes());
+                    hasher.update(&sample_bytes);
+                }
+                
+                let (h1, h2) = hasher.finalize();
+                Ok((pos, h1, h2))
             }
             OPropertyData::Compound(sub_props) => {
                 self.write_properties_with_data(sub_props)
@@ -909,6 +996,105 @@ fn pod_to_u8(pod: PlainOldDataType) -> u8 {
         PlainOldDataType::Wstring => 13,
         PlainOldDataType::Unknown => 0,
     }
+}
+
+/// Push f64 (chrono_t) to buffer as little-endian bytes.
+fn push_chrono(buf: &mut Vec<u8>, value: f64) {
+    buf.extend_from_slice(&value.to_le_bytes());
+}
+
+/// Hash a property header matching C++ HashPropertyHeader().
+/// 
+/// This builds the same data buffer as C++ and updates the hasher.
+/// For non-compound properties, includes:
+/// - name bytes
+/// - metadata serialized bytes  
+/// - POD type (1 byte)
+/// - extent (1 byte)
+/// - 0 if scalar (1 byte) - arrays don't get this byte
+/// - timePerCycle (8 bytes)
+/// - samplesPerCycle count (4 bytes)
+/// - each stored time (8 bytes)
+fn hash_property_header(
+    hasher: &mut SpookyHash,
+    prop: &OProperty,
+    time_sampling: &TimeSampling,
+) {
+    let mut data = Vec::new();
+    
+    // Name
+    data.extend_from_slice(prop.name.as_bytes());
+    
+    // Metadata
+    let meta = prop.meta_data.serialize();
+    data.extend_from_slice(meta.as_bytes());
+    
+    // For non-compound properties
+    if !matches!(prop.data, OPropertyData::Compound(_)) {
+        // POD type
+        data.push(pod_to_u8(prop.data_type.pod));
+        // Extent
+        data.push(prop.data_type.extent);
+        
+        // Scalar marker (only for scalars)
+        if matches!(prop.data, OPropertyData::Scalar(_)) {
+            data.push(0);
+        }
+        // Note: Arrays don't push anything here (matches C++)
+        
+        // Time per cycle
+        let (tpc, times) = match &time_sampling.sampling_type {
+            TimeSamplingType::Identity => {
+                (1.0, vec![0.0])
+            }
+            TimeSamplingType::Uniform { time_per_cycle, start_time } => {
+                (*time_per_cycle, vec![*start_time])
+            }
+            TimeSamplingType::Cyclic { time_per_cycle, times } => {
+                (*time_per_cycle, times.clone())
+            }
+            TimeSamplingType::Acyclic { times } => {
+                (ACYCLIC_TIME_PER_CYCLE, times.clone())
+            }
+        };
+        push_chrono(&mut data, tpc);
+        
+        // Samples per cycle count (4 bytes)
+        let spc = times.len() as u32;
+        data.extend_from_slice(&spc.to_le_bytes());
+        
+        // Each stored time
+        for t in times {
+            push_chrono(&mut data, t);
+        }
+    }
+    
+    if !data.is_empty() {
+        hasher.update(&data);
+    }
+}
+
+/// Hash dimensions for array samples, matching C++ HashDimensions().
+fn hash_dimensions(dims: &[usize], digest: &mut (u64, u64)) {
+    if dims.is_empty() {
+        return;
+    }
+    
+    let mut hasher = SpookyHash::new(0, 0);
+    
+    // Dimensions as u64 values
+    let dims_bytes: Vec<u8> = dims.iter()
+        .flat_map(|d| (*d as u64).to_le_bytes())
+        .collect();
+    hasher.update(&dims_bytes);
+    
+    // Update with existing digest
+    let mut digest_bytes = Vec::with_capacity(16);
+    digest_bytes.extend_from_slice(&digest.0.to_le_bytes());
+    digest_bytes.extend_from_slice(&digest.1.to_le_bytes());
+    hasher.update(&digest_bytes);
+    
+    *digest = hasher.finalize();
 }
 
 // ============================================================================
