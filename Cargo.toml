@@ -41,6 +41,9 @@ bytemuck = { version = "1.21", features = ["derive"] }
 # Compression (zlib)
 flate2 = "1.0"
 
+# JSON serialization (for CLI dump)
+serde_json = "1.0"
+
 # MurmurHash3 for array sample content keys (matches C++ Alembic)
 murmur3 = { path = "crates/murmur3" }
 

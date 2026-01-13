@@ -2,6 +2,7 @@
 
 use alembic::prelude::{IObject, IPolyMesh, ISubD, ICurves, IPoints, ICamera, IXform};
 use alembic::abc::IArchive as AbcIArchive;
+use alembic::ogawa::writer::{OArchive, OObject, OPolyMesh, OPolyMeshSample, OXform, OXformSample};
 use std::env;
 use std::path::Path;
 
@@ -90,6 +91,25 @@ fn main() {
             }
             cmd_stats(filtered_args[1]);
         }
+        "dump" | "d" => {
+            if filtered_args.len() < 2 {
+                eprintln!("Usage: {} dump <file.abc> [pattern] [--json]", args[0]);
+                std::process::exit(1);
+            }
+            let json_mode = filtered_args.iter().any(|&s| s == "--json" || s == "-j");
+            if json_mode {
+                set_log_level(LOG_QUIET); // Suppress all logs for clean JSON
+            }
+            let pattern = filtered_args.get(2).filter(|&&s| s != "--json" && s != "-j").map(|s| *s);
+            cmd_dump(filtered_args[1], pattern, json_mode);
+        }
+        "copy" | "c" => {
+            if filtered_args.len() < 3 {
+                eprintln!("Usage: {} copy <input.abc> <output.abc>", args[0]);
+                std::process::exit(1);
+            }
+            cmd_copy(filtered_args[1], filtered_args[2]);
+        }
         "help" | "h" | "-h" | "--help" => print_usage(&args[0]),
         _ => {
             // Assume it's a file path
@@ -113,6 +133,8 @@ fn print_usage(prog: &str) {
     println!("  i, info    Show archive info and object summary");
     println!("  t, tree    Show full object hierarchy");
     println!("  s, stats   Show detailed statistics");
+    println!("  d, dump    Dump xform details (pattern optional)");
+    println!("  c, copy    Copy archive (round-trip test)");
     println!("  h, help    Show this help");
     println!();
     println!("Options:");
@@ -340,6 +362,267 @@ fn schema_to_type(schema: &str) -> &str {
     else if schema.contains("Material") { "Material" }
     else if schema.is_empty() { "Group" }
     else { schema }
+}
+
+fn cmd_dump(path: &str, pattern: Option<&str>, json_mode: bool) {
+    info!("Opening archive: {}", path);
+    
+    let archive = match AbcIArchive::open(path) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Failed to open {}: {}", path, e);
+            std::process::exit(1);
+        }
+    };
+    
+    if json_mode {
+        let root = archive.root();
+        let mut objects = Vec::new();
+        collect_dump_json(&root, glam::Mat4::IDENTITY, pattern, &mut objects);
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "archive": path,
+            "objects": objects
+        })).unwrap_or_default());
+    } else {
+        println!("Archive: {}", path);
+        println!("Xform Dump{}", if let Some(p) = pattern { format!(" (filter: {})", p) } else { String::new() });
+        println!();
+        let root = archive.root();
+        dump_xforms(&root, 0, glam::Mat4::IDENTITY, pattern);
+    }
+}
+
+fn dump_xforms(obj: &IObject, depth: usize, parent_world: glam::Mat4, pattern: Option<&str>) {
+    let indent = "  ".repeat(depth);
+    let name = obj.name();
+    let full_name = obj.full_name();
+    
+    // Check pattern filter
+    let matches_pattern = pattern.map(|p| full_name.contains(p) || name.contains(p)).unwrap_or(true);
+    
+    // Get local transform
+    let local_matrix = if let Some(xform) = IXform::new(obj) {
+        if let Ok(sample) = xform.get_sample(0) {
+            let m = sample.matrix();
+            let inherits = sample.inherits;
+            
+            if matches_pattern {
+                println!("{}[XFORM] {} (inherits={})", indent, name, inherits);
+                println!("{}  ops: {}", indent, sample.ops.len());
+                for (i, op) in sample.ops.iter().enumerate() {
+                    println!("{}    [{i}] {:?}: {:?}", indent, op.op_type, op.values);
+                }
+                println!("{}  local matrix:", indent);
+                print_matrix(&m, &indent);
+                
+                let world = if inherits { parent_world * m } else { m };
+                println!("{}  world matrix:", indent);
+                print_matrix(&world, &indent);
+                println!();
+            }
+            
+            if sample.inherits { parent_world * m } else { m }
+        } else {
+            parent_world
+        }
+    } else {
+        // Not an xform, check if it's a mesh
+        let schema = obj.meta_data().get("schema").unwrap_or_default();
+        if matches_pattern && (schema.contains("PolyMesh") || schema.contains("SubD")) {
+            println!("{}[MESH] {} (world from parent)", indent, name);
+            println!("{}  world matrix:", indent);
+            print_matrix(&parent_world, &indent);
+            
+            // Extract TRS from world matrix for readability
+            let (scale, rotation, translation) = parent_world.to_scale_rotation_translation();
+            let euler = rotation.to_euler(glam::EulerRot::XYZ);
+            println!("{}  decomposed:", indent);
+            println!("{}    T: ({:.4}, {:.4}, {:.4})", indent, translation.x, translation.y, translation.z);
+            println!("{}    R: ({:.2}, {:.2}, {:.2}) deg", indent, 
+                euler.0.to_degrees(), euler.1.to_degrees(), euler.2.to_degrees());
+            println!("{}    S: ({:.4}, {:.4}, {:.4})", indent, scale.x, scale.y, scale.z);
+            println!();
+        }
+        parent_world
+    };
+    
+    // Recurse into children
+    for child in obj.children() {
+        dump_xforms(&child, depth + 1, local_matrix, pattern);
+    }
+}
+
+fn print_matrix(m: &glam::Mat4, indent: &str) {
+    let cols = m.to_cols_array_2d();
+    // Print as rows (transposed view for readability)
+    println!("{}    [{:>10.4} {:>10.4} {:>10.4} {:>10.4}]", indent, cols[0][0], cols[1][0], cols[2][0], cols[3][0]);
+    println!("{}    [{:>10.4} {:>10.4} {:>10.4} {:>10.4}]", indent, cols[0][1], cols[1][1], cols[2][1], cols[3][1]);
+    println!("{}    [{:>10.4} {:>10.4} {:>10.4} {:>10.4}]", indent, cols[0][2], cols[1][2], cols[2][2], cols[3][2]);
+    println!("{}    [{:>10.4} {:>10.4} {:>10.4} {:>10.4}]", indent, cols[0][3], cols[1][3], cols[2][3], cols[3][3]);
+}
+
+fn collect_dump_json(
+    obj: &IObject,
+    parent_world: glam::Mat4,
+    pattern: Option<&str>,
+    out: &mut Vec<serde_json::Value>,
+) -> glam::Mat4 {
+    let name = obj.name();
+    let full_name = obj.full_name();
+    let matches = pattern.map(|p| full_name.contains(p) || name.contains(p)).unwrap_or(true);
+    
+    let local_matrix = if let Some(xform) = IXform::new(obj) {
+        if let Ok(sample) = xform.get_sample(0) {
+            let m = sample.matrix();
+            let world = if sample.inherits { parent_world * m } else { m };
+            
+            if matches {
+                let ops: Vec<serde_json::Value> = sample.ops.iter().map(|op| {
+                    serde_json::json!({
+                        "type": format!("{:?}", op.op_type),
+                        "values": op.values
+                    })
+                }).collect();
+                
+                out.push(serde_json::json!({
+                    "type": "xform",
+                    "name": name,
+                    "path": full_name,
+                    "inherits": sample.inherits,
+                    "ops": ops,
+                    "local": mat4_to_array(&m),
+                    "world": mat4_to_array(&world)
+                }));
+            }
+            world
+        } else {
+            parent_world
+        }
+    } else {
+        let schema = obj.meta_data().get("schema").unwrap_or_default();
+        if matches && (schema.contains("PolyMesh") || schema.contains("SubD")) {
+            let (scale, rot, trans) = parent_world.to_scale_rotation_translation();
+            let euler = rot.to_euler(glam::EulerRot::XYZ);
+            out.push(serde_json::json!({
+                "type": "mesh",
+                "name": name,
+                "path": full_name,
+                "world": mat4_to_array(&parent_world),
+                "decomposed": {
+                    "translate": [trans.x, trans.y, trans.z],
+                    "rotate_deg": [euler.0.to_degrees(), euler.1.to_degrees(), euler.2.to_degrees()],
+                    "scale": [scale.x, scale.y, scale.z]
+                }
+            }));
+        }
+        parent_world
+    };
+    
+    for child in obj.children() {
+        collect_dump_json(&child, local_matrix, pattern, out);
+    }
+    local_matrix
+}
+
+fn mat4_to_array(m: &glam::Mat4) -> [[f32; 4]; 4] {
+    m.to_cols_array_2d()
+}
+
+fn cmd_copy(input: &str, output: &str) {
+    info!("Copying {} -> {}", input, output);
+    
+    let archive = match AbcIArchive::open(input) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Failed to open {}: {}", input, e);
+            std::process::exit(1);
+        }
+    };
+    
+    let mut out_archive = match OArchive::create(output) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Failed to create {}: {}", output, e);
+            std::process::exit(1);
+        }
+    };
+    
+    let root = archive.root();
+    let mut out_root = OObject::new("");
+    
+    // Copy children recursively
+    for child in root.children() {
+        if let Some(out_child) = copy_object(&child) {
+            out_root.add_child(out_child);
+        }
+    }
+    
+    if let Err(e) = out_archive.write_archive(&out_root) {
+        eprintln!("Failed to write archive: {}", e);
+        std::process::exit(1);
+    }
+    
+    println!("Copied {} -> {}", input, output);
+}
+
+fn copy_object(obj: &IObject) -> Option<OObject> {
+    let name = obj.name();
+    let schema = obj.meta_data().get("schema").unwrap_or_default();
+    
+    debug!("Copying object: {} [{}]", name, schema);
+    
+    // Handle different schema types
+    if schema.contains("Xform") {
+        if let Some(xform) = IXform::new(obj) {
+            let mut out_xform = OXform::new(name);
+            
+            // Copy all samples - convert ops to matrix
+            for i in 0..xform.num_samples() {
+                if let Ok(sample) = xform.get_sample(i) {
+                    let matrix = sample.matrix();
+                    out_xform.add_sample(OXformSample::from_matrix(matrix, sample.inherits));
+                }
+            }
+            
+            let mut out_obj = out_xform.build();
+            
+            // Copy children
+            for child in obj.children() {
+                if let Some(out_child) = copy_object(&child) {
+                    out_obj.add_child(out_child);
+                }
+            }
+            
+            return Some(out_obj);
+        }
+    } else if schema.contains("PolyMesh") {
+        if let Some(mesh) = IPolyMesh::new(obj) {
+            let mut out_mesh = OPolyMesh::new(name);
+            
+            // Copy all samples
+            for i in 0..mesh.num_samples() {
+                if let Ok(sample) = mesh.get_sample(i) {
+                    let out_sample = OPolyMeshSample::new(
+                        sample.positions.clone(),
+                        sample.face_counts.clone(),
+                        sample.face_indices.clone(),
+                    );
+                    out_mesh.add_sample(&out_sample);
+                }
+            }
+            
+            return Some(out_mesh.build());
+        }
+    }
+    
+    // Generic object - just copy children
+    let mut out_obj = OObject::new(name);
+    for child in obj.children() {
+        if let Some(out_child) = copy_object(&child) {
+            out_obj.add_child(out_child);
+        }
+    }
+    Some(out_obj)
 }
 
 fn get_object_info(obj: &IObject, schema: &str) -> String {

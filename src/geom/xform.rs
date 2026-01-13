@@ -132,7 +132,8 @@ impl XformSample {
                     )
                 }
             };
-            result *= m;
+            // Alembic uses left-multiply: ret = m * ret (see XformSample.cpp:518)
+            result = m * result;
         }
         
         result

@@ -156,17 +156,22 @@ fn collect_meshes_recursive(
     meshes: &mut Vec<ConvertedMesh>,
 ) {
     // Check if this object is an Xform
-    let local_transform = if let Some(xform) = alembic::geom::IXform::new(obj) {
+    let (local_transform, inherits) = if let Some(xform) = alembic::geom::IXform::new(obj) {
         if let Ok(sample) = xform.get_sample(sample_index) {
-            sample.matrix() // Returns glam::Mat4 directly
+            (sample.matrix(), sample.inherits)
         } else {
-            Mat4::IDENTITY
+            (Mat4::IDENTITY, true)
         }
     } else {
-        Mat4::IDENTITY
+        (Mat4::IDENTITY, true)
     };
     
-    let world_transform = parent_transform * local_transform;
+    // If inherits=false, don't multiply by parent transform
+    let world_transform = if inherits {
+        parent_transform * local_transform
+    } else {
+        local_transform
+    };
     
     // Check if this object is a PolyMesh
     if let Some(polymesh) = IPolyMesh::new(obj) {

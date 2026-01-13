@@ -1535,11 +1535,13 @@ impl OXform {
         if !self.samples.is_empty() {
             let mut geom = OProperty::compound(".xform");
             
-            // .vals - the matrix values
+            // .vals - the matrix values (Alembic stores row-major, glam is column-major)
             let mut vals = OProperty::array(".vals", DataType::new(PlainOldDataType::Float64, 1));
             vals.time_sampling_index = self.time_sampling_index;
             for sample in &self.samples {
-                let cols = sample.matrix.to_cols_array();
+                // Transpose: glam column-major -> Alembic row-major
+                let m = sample.matrix.transpose();
+                let cols = m.to_cols_array();
                 let doubles: Vec<f64> = cols.iter().map(|f| *f as f64).collect();
                 vals.add_array_pod(&doubles);
             }
@@ -1547,8 +1549,8 @@ impl OXform {
             // .ops - operation types
             let mut ops = OProperty::array(".ops", DataType::new(PlainOldDataType::Uint8, 1));
             ops.time_sampling_index = self.time_sampling_index;
-            // Single matrix op = 0 (kMatrixOperation)
-            let op_data = vec![0u8; 1];
+            // Single matrix op = 6 (kMatrixOperation)
+            let op_data = vec![6u8; 1];
             for _ in &self.samples {
                 ops.add_array_sample(&op_data, &[1]);
             }
