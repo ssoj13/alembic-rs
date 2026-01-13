@@ -52,6 +52,9 @@ dirs = "6.0"
 # Image loading (HDR, EXR)
 image = { version = "0.25", default-features = false, features = ["hdr", "exr"] }
 
+# Half precision floats for HDR textures
+half = { version = "2.4", features = ["bytemuck"] }
+
 [[bin]]
 name = "alembic-viewer"
 path = "src/main.rs"

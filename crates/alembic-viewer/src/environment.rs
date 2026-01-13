@@ -1,6 +1,7 @@
 //! HDR/EXR environment map loading and GPU resources
 
 use std::path::Path;
+use half::f16;
 use wgpu::util::DeviceExt;
 
 /// Environment map data
@@ -75,14 +76,16 @@ impl Default for EnvUniform {
     }
 }
 
-/// Load HDR/EXR file using image crate
-fn load_image_file(path: &Path) -> anyhow::Result<(u32, u32, Vec<f32>)> {
+/// Load HDR/EXR file using image crate, convert to f16
+fn load_image_file(path: &Path) -> anyhow::Result<(u32, u32, Vec<f16>)> {
     use image::{GenericImageView, ImageReader};
     
     let img = ImageReader::open(path)?.decode()?;
     let (width, height) = img.dimensions();
     let rgba = img.to_rgba32f();
-    let data: Vec<f32> = rgba.as_raw().to_vec();
+    
+    // Convert f32 to f16 for filterable texture format
+    let data: Vec<f16> = rgba.as_raw().iter().map(|&v| f16::from_f32(v)).collect();
     
     Ok((width, height, data))
 }
@@ -99,7 +102,7 @@ pub fn load_env_map(
     
     let bytes: &[u8] = bytemuck::cast_slice(&data);
     
-    // Create texture
+    // Create texture with Rgba16Float (filterable HDR format)
     let texture = device.create_texture_with_data(
         queue,
         &wgpu::TextureDescriptor {
@@ -112,7 +115,7 @@ pub fn load_env_map(
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba32Float,
+            format: wgpu::TextureFormat::Rgba16Float,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         },
@@ -181,7 +184,8 @@ pub fn create_default_env(
     queue: &wgpu::Queue,
     layout: &wgpu::BindGroupLayout,
 ) -> EnvironmentMap {
-    let data: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+    // Use f16 for Rgba16Float format
+    let data: [f16; 4] = [f16::ZERO, f16::ZERO, f16::ZERO, f16::ONE];
     let bytes: &[u8] = bytemuck::cast_slice(&data);
     
     let texture = device.create_texture_with_data(
@@ -196,7 +200,7 @@ pub fn create_default_env(
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba32Float,
+            format: wgpu::TextureFormat::Rgba16Float,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         },

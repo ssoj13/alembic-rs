@@ -6,7 +6,7 @@ use wgpu::util::DeviceExt;
 
 use standard_surface::{
     BindGroupLayouts, CameraUniform, LightRig, ModelUniform, PipelineConfig,
-    ShadowUniform, StandardSurfaceParams, Vertex,
+    ShadowUniform, StandardSurfaceParams, Vertex, SkyboxVertex,
 };
 
 use crate::environment::{self, EnvironmentMap, EnvUniform};
@@ -25,7 +25,15 @@ pub struct Renderer {
     wireframe_pipeline: wgpu::RenderPipeline,
     wireframe_pipeline_double_sided: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
+    skybox_pipeline: wgpu::RenderPipeline,
     layouts: BindGroupLayouts,
+    
+    // Skybox
+    skybox_camera_layout: wgpu::BindGroupLayout,
+    skybox_camera_bind_group: wgpu::BindGroup,
+    skybox_vertex_buffer: wgpu::Buffer,
+    skybox_index_buffer: wgpu::Buffer,
+    skybox_index_count: u32,
     
     // Uniforms
     camera_buffer: wgpu::Buffer,
@@ -132,6 +140,29 @@ impl Renderer {
         
         // Shadow depth pipeline
         let shadow_pipeline = standard_surface::create_shadow_pipeline(&device, &layouts);
+        
+        // Skybox pipeline and resources
+        let skybox_camera_layout = standard_surface::create_skybox_camera_layout(&device);
+        let skybox_pipeline = standard_surface::create_skybox_pipeline(
+            &device,
+            &skybox_camera_layout,
+            &layouts.environment,
+            format,
+        );
+        
+        // Generate sky sphere mesh
+        let (sky_verts, sky_indices) = standard_surface::generate_sky_sphere(100.0, 32, 16);
+        let skybox_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("skybox_vertex_buffer"),
+            contents: bytemuck::cast_slice(&sky_verts),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let skybox_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("skybox_index_buffer"),
+            contents: bytemuck::cast_slice(&sky_indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let skybox_index_count = sky_indices.len() as u32;
 
         // Camera uniform
         let camera_uniform = CameraUniform {
@@ -144,6 +175,16 @@ impl Renderer {
             label: Some("camera_buffer"),
             contents: bytemuck::bytes_of(&camera_uniform),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        
+        // Skybox camera bind group (uses same camera buffer)
+        let skybox_camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("skybox_camera_bind_group"),
+            layout: &skybox_camera_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
         });
 
         // Light rig (3-point lighting)
@@ -280,7 +321,13 @@ impl Renderer {
             wireframe_pipeline,
             wireframe_pipeline_double_sided,
             shadow_pipeline,
+            skybox_pipeline,
             layouts,
+            skybox_camera_layout,
+            skybox_camera_bind_group,
+            skybox_vertex_buffer,
+            skybox_index_buffer,
+            skybox_index_count,
             camera_buffer,
             light_buffer,
             camera_light_bind_group,
@@ -533,6 +580,18 @@ impl Renderer {
     pub fn has_environment(&self) -> bool {
         self.env_map.intensity > 0.0
     }
+    
+    /// Set environment intensity (exposure)
+    pub fn set_env_intensity(&mut self, intensity: f32) {
+        self.env_map.intensity = intensity;
+        let uniform = EnvUniform {
+            intensity,
+            rotation: 0.0,
+            enabled: if intensity > 0.0 { 1.0 } else { 0.0 },
+            _pad: 0.0,
+        };
+        self.queue.write_buffer(&self.env_map.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+    }
 
     /// Update all mesh normal matrices (call when flip_normals changes)
     pub fn update_normals(&self) {
@@ -620,6 +679,16 @@ impl Renderer {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
+
+            // Draw skybox if environment is loaded
+            if self.has_environment() {
+                render_pass.set_pipeline(&self.skybox_pipeline);
+                render_pass.set_bind_group(0, &self.skybox_camera_bind_group, &[]);
+                render_pass.set_bind_group(1, &self.env_map.bind_group, &[]);
+                render_pass.set_vertex_buffer(0, self.skybox_vertex_buffer.slice(..));
+                render_pass.set_index_buffer(self.skybox_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..self.skybox_index_count, 0, 0..1);
+            }
 
             let pipeline = match (self.show_wireframe, self.double_sided) {
                 (false, false) => &self.pipeline,

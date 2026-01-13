@@ -22,6 +22,7 @@ pub struct ViewerApp {
     // File state
     current_file: Option<PathBuf>,
     pending_file: Option<PathBuf>,
+    pending_hdr_file: Option<PathBuf>,
     archive: Option<Arc<alembic::abc::IArchive>>,
     
     // Animation state
@@ -54,6 +55,7 @@ impl ViewerApp {
             settings,
             current_file: None,
             pending_file: pending,
+            pending_hdr_file: None,
             archive: None,
             num_samples: 0,
             current_frame: 0,
@@ -86,12 +88,37 @@ impl ViewerApp {
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        // Collect recent files to avoid borrow issues
+        let recent: Vec<PathBuf> = self.settings.recent_files().into_iter().cloned().collect();
+        
         menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
                 if ui.button("Open...").clicked() {
                     self.open_file_dialog();
                     ui.close_menu();
                 }
+                
+                // Recent files submenu
+                if !recent.is_empty() {
+                    ui.menu_button("Recent", |ui| {
+                        for path in &recent {
+                            let name = path.file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| path.display().to_string());
+                            if ui.button(&name).clicked() {
+                                self.pending_file = Some(path.clone());
+                                ui.close_menu();
+                            }
+                        }
+                        ui.separator();
+                        if ui.button("Clear Recent").clicked() {
+                            self.settings.recent_files.clear();
+                            self.settings.save();
+                            ui.close_menu();
+                        }
+                    });
+                }
+                
                 ui.separator();
                 if ui.button("Exit").clicked() {
                     std::process::exit(0);
@@ -209,6 +236,42 @@ impl ViewerApp {
         
         let has_env = self.viewport.renderer.as_ref().map(|r| r.has_environment()).unwrap_or(false);
         
+        // HDR enable checkbox + exposure slider
+        ui.horizontal(|ui| {
+            if ui.checkbox(&mut self.settings.hdr_enabled, "HDR").changed() {
+                if self.settings.hdr_enabled {
+                    // Try to load last HDR file if available
+                    if let Some(path) = self.settings.last_hdr_file.clone() {
+                        if path.exists() {
+                            self.pending_hdr_file = Some(path);
+                        } else {
+                            self.load_environment_dialog();
+                        }
+                    } else {
+                        self.load_environment_dialog();
+                    }
+                } else {
+                    // Disable HDR
+                    if let Some(renderer) = &mut self.viewport.renderer {
+                        renderer.clear_environment();
+                    }
+                }
+                self.settings.save();
+            }
+            
+            // Exposure slider (only when HDR enabled)
+            if self.settings.hdr_enabled {
+                ui.label("Exp:");
+                if ui.add(egui::Slider::new(&mut self.settings.hdr_exposure, 0.1..=10.0).logarithmic(true)).changed() {
+                    // Update env intensity
+                    if let Some(renderer) = &mut self.viewport.renderer {
+                        renderer.set_env_intensity(self.settings.hdr_exposure);
+                    }
+                    self.settings.save();
+                }
+            }
+        });
+        
         if ui.button("Load HDR/EXR...").clicked() {
             self.load_environment_dialog();
         }
@@ -218,6 +281,8 @@ impl ViewerApp {
                 if let Some(renderer) = &mut self.viewport.renderer {
                     renderer.clear_environment();
                 }
+                self.settings.hdr_enabled = false;
+                self.settings.save();
             }
         }
 
@@ -346,9 +411,15 @@ impl ViewerApp {
             Ok(()) => {
                 self.status_message = format!("Loaded environment: {}", 
                     path.file_name().unwrap_or_default().to_string_lossy());
+                // Save HDR file and enable
+                self.settings.last_hdr_file = Some(path);
+                self.settings.hdr_enabled = true;
+                self.settings.save();
             }
             Err(e) => {
                 self.status_message = format!("Failed to load environment: {}", e);
+                self.settings.hdr_enabled = false;
+                self.settings.save();
             }
         }
     }
@@ -377,8 +448,8 @@ impl ViewerApp {
                 
                 self.current_file = Some(path.clone());
                 
-                // Save last file to settings
-                self.settings.last_file = Some(path.clone());
+                // Add to recent files
+                self.settings.add_recent(path.clone());
                 self.settings.save();
                 
                 let frames_info = if num_samples > 1 {
@@ -582,13 +653,25 @@ impl eframe::App for ViewerApp {
                 // Apply saved camera settings
                 self.viewport.camera.set_distance(self.settings.camera_distance);
                 self.viewport.camera.set_angles(self.settings.camera_yaw, self.settings.camera_pitch);
+                // Restore HDR if was enabled
+                if self.settings.hdr_enabled {
+                    if let Some(path) = self.settings.last_hdr_file.clone() {
+                        if path.exists() {
+                            self.pending_hdr_file = Some(path);
+                        }
+                    }
+                }
             }
         }
         
-        // Load pending file (from CLI argument)
+        // Load pending file (from CLI argument or recent)
         if self.viewport.renderer.is_some() {
             if let Some(path) = self.pending_file.take() {
                 self.load_file(path);
+            }
+            // Load pending HDR file
+            if let Some(path) = self.pending_hdr_file.take() {
+                self.load_environment(path);
             }
         }
         

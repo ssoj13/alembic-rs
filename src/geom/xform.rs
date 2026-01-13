@@ -16,7 +16,7 @@ pub enum XformOpType {
     RotateX,
     RotateY,
     RotateZ,
-    RotateXYZ,
+    Rotate,    // axis + angle
     Matrix,
 }
 
@@ -106,22 +106,30 @@ impl XformSample {
                     let angle = (op.values[0] as f32).to_radians();
                     glam::Mat4::from_rotation_z(angle)
                 }
-                XformOpType::RotateXYZ => {
-                    let (x, y, z) = (
-                        (op.values[0] as f32).to_radians(),
-                        (op.values[1] as f32).to_radians(),
-                        (op.values[2] as f32).to_radians(),
-                    );
-                    glam::Mat4::from_euler(glam::EulerRot::XYZ, x, y, z)
+                XformOpType::Rotate => {
+                    // axis (x, y, z) + angle (degrees)
+                    let axis = glam::vec3(
+                        op.values[0] as f32,
+                        op.values[1] as f32,
+                        op.values[2] as f32,
+                    ).normalize_or_zero();
+                    let angle = (op.values[3] as f32).to_radians();
+                    if axis.length_squared() > 0.0001 {
+                        glam::Mat4::from_axis_angle(axis, angle)
+                    } else {
+                        glam::Mat4::IDENTITY
+                    }
                 }
                 XformOpType::Matrix => {
+                    // Alembic stores row-major, glam uses column-major
+                    // Need to transpose: read as rows, store as columns
                     let v: Vec<f32> = op.values.iter().map(|&x| x as f32).collect();
-                    glam::Mat4::from_cols_array(&[
-                        v[0], v[1], v[2], v[3],
-                        v[4], v[5], v[6], v[7],
-                        v[8], v[9], v[10], v[11],
-                        v[12], v[13], v[14], v[15],
-                    ])
+                    glam::Mat4::from_cols(
+                        glam::vec4(v[0], v[4], v[8], v[12]),   // col 0 from row 0s
+                        glam::vec4(v[1], v[5], v[9], v[13]),   // col 1 from row 1s
+                        glam::vec4(v[2], v[6], v[10], v[14]),  // col 2 from row 2s
+                        glam::vec4(v[3], v[7], v[11], v[15]),  // col 3 from row 3s
+                    )
                 }
             };
             result *= m;
@@ -457,10 +465,10 @@ fn decode_xform_op(code: u8) -> (Option<XformOpType>, usize) {
     match op_type {
         0 => (Some(XformOpType::Scale), 3),      // kScaleOperation
         1 => (Some(XformOpType::Translate), 3),  // kTranslateOperation
-        2 => (Some(XformOpType::RotateX), 1),    // kRotateXOperation
+        2 => (Some(XformOpType::RotateX), 1),    // kRotateXOperation  
         3 => (Some(XformOpType::RotateY), 1),    // kRotateYOperation
         4 => (Some(XformOpType::RotateZ), 1),    // kRotateZOperation
-        5 => (Some(XformOpType::RotateXYZ), 3),  // kRotateOperation (axis+angle, simplified as XYZ)
+        5 => (Some(XformOpType::Rotate), 4),     // kRotateOperation (axis x,y,z + angle)
         6 => (Some(XformOpType::Matrix), 16),    // kMatrixOperation
         _ => (None, 0),
     }

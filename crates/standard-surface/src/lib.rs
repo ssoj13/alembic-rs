@@ -28,6 +28,69 @@ pub use params::{CameraUniform, Light, LightRig, LightUniform, ModelUniform, Sha
 /// Embedded shader source
 pub const SHADER_SOURCE: &str = include_str!("shaders/standard_surface.wgsl");
 
+/// Skybox shader source (sky sphere with equirectangular mapping)
+pub const SKYBOX_SHADER_SOURCE: &str = r#"
+// Skybox - inverted sphere with equirectangular HDR texture
+
+const PI: f32 = 3.141592653589793;
+
+struct Camera {
+    view_proj: mat4x4<f32>,
+    view: mat4x4<f32>,
+    position: vec3<f32>,
+    _pad: f32,
+}
+
+struct EnvParams {
+    intensity: f32,
+    rotation: f32,
+    enabled: f32,
+    _pad: f32,
+}
+
+@group(0) @binding(0) var<uniform> camera: Camera;
+@group(1) @binding(0) var env_map: texture_2d<f32>;
+@group(1) @binding(1) var env_sampler: sampler;
+@group(1) @binding(2) var<uniform> env: EnvParams;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+}
+
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) world_dir: vec3<f32>,
+}
+
+@vertex
+fn vs_skybox(in: VertexInput) -> VertexOutput {
+    var out: VertexOutput;
+    // Center sphere at camera position (sky follows camera)
+    let world_pos = in.position + camera.position;
+    out.position = camera.view_proj * vec4<f32>(world_pos, 1.0);
+    // Use vertex position as direction (sphere centered at origin)
+    out.world_dir = in.position;
+    return out;
+}
+
+fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
+    let d = normalize(dir);
+    let phi = atan2(d.z, d.x) + rotation;
+    let theta = acos(clamp(d.y, -1.0, 1.0));
+    let u = (phi + PI) / (2.0 * PI);
+    let v = theta / PI;
+    return vec2<f32>(u, v);
+}
+
+@fragment
+fn fs_skybox(in: VertexOutput) -> @location(0) vec4<f32> {
+    let dir = normalize(in.world_dir);
+    let uv = dir_to_equirect_uv(dir, env.rotation);
+    let color = textureSample(env_map, env_sampler, uv).rgb * env.intensity;
+    return vec4<f32>(color, 1.0);
+}
+"#;
+
 /// Shadow depth pass shader source
 pub const SHADOW_SHADER_SOURCE: &str = r#"
 // Shadow depth pass - vertex shader only
@@ -301,6 +364,137 @@ impl Default for PipelineConfig {
             wireframe: false,
         }
     }
+}
+
+/// Simple vertex for skybox (position only)
+#[repr(C)]
+#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct SkyboxVertex {
+    pub position: [f32; 3],
+}
+
+/// Generate inverted sphere mesh for skybox
+pub fn generate_sky_sphere(radius: f32, segments: u32, rings: u32) -> (Vec<SkyboxVertex>, Vec<u32>) {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    
+    // Generate vertices
+    for ring in 0..=rings {
+        let phi = std::f32::consts::PI * ring as f32 / rings as f32;
+        let y = radius * phi.cos();
+        let r = radius * phi.sin();
+        
+        for seg in 0..=segments {
+            let theta = 2.0 * std::f32::consts::PI * seg as f32 / segments as f32;
+            let x = r * theta.cos();
+            let z = r * theta.sin();
+            vertices.push(SkyboxVertex { position: [x, y, z] });
+        }
+    }
+    
+    // Generate indices (inverted winding for inside-out rendering)
+    for ring in 0..rings {
+        for seg in 0..segments {
+            let curr = ring * (segments + 1) + seg;
+            let next = curr + segments + 1;
+            // Inverted winding order (CW instead of CCW)
+            indices.push(curr);
+            indices.push(curr + 1);
+            indices.push(next);
+            indices.push(next);
+            indices.push(curr + 1);
+            indices.push(next + 1);
+        }
+    }
+    
+    (vertices, indices)
+}
+
+/// Create skybox pipeline (renders HDR environment as background)
+pub fn create_skybox_pipeline(
+    device: &wgpu::Device,
+    camera_layout: &wgpu::BindGroupLayout,
+    env_layout: &wgpu::BindGroupLayout,
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("skybox_shader"),
+        source: wgpu::ShaderSource::Wgsl(SKYBOX_SHADER_SOURCE.into()),
+    });
+    
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("skybox_pipeline_layout"),
+        bind_group_layouts: &[camera_layout, env_layout],
+        push_constant_ranges: &[],
+    });
+    
+    // Skybox vertex buffer layout (position only)
+    let skybox_vertex_layout = wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<SkyboxVertex>() as wgpu::BufferAddress,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[wgpu::VertexAttribute {
+            offset: 0,
+            shader_location: 0,
+            format: wgpu::VertexFormat::Float32x3,
+        }],
+    };
+    
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("skybox_pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_skybox"),
+            compilation_options: Default::default(),
+            buffers: &[skybox_vertex_layout],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: None, // No culling - we're inside the sphere
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: false, // Don't write to depth
+            depth_compare: wgpu::CompareFunction::LessEqual, // Draw at far plane
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_skybox"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview: None,
+        cache: None,
+    })
+}
+
+/// Create camera-only bind group layout for skybox
+pub fn create_skybox_camera_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("skybox_camera_layout"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    })
 }
 
 /// Create shadow depth pipeline (renders from light's perspective)

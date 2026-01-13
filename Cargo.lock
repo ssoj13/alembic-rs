@@ -78,6 +78,7 @@ dependencies = [
  "egui-wgpu",
  "env_logger",
  "glam 0.29.3",
+ "half",
  "image",
  "log",
  "mint",

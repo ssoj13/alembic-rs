@@ -25,6 +25,14 @@ pub struct Settings {
     
     // Last opened file
     pub last_file: Option<PathBuf>,
+    
+    // Recent files (most recent first, max 10)
+    pub recent_files: Vec<PathBuf>,
+    
+    // Environment
+    pub hdr_enabled: bool,
+    pub hdr_exposure: f32,
+    pub last_hdr_file: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -41,9 +49,15 @@ impl Default for Settings {
             camera_yaw: 0.0,
             camera_pitch: 0.0,
             last_file: None,
+            recent_files: Vec::new(),
+            hdr_enabled: false,
+            hdr_exposure: 1.0,
+            last_hdr_file: None,
         }
     }
 }
+
+const MAX_RECENT_FILES: usize = 10;
 
 impl Settings {
     /// Get settings file path
@@ -71,5 +85,25 @@ impl Settings {
                 let _ = std::fs::write(path, json);
             }
         }
+    }
+    
+    /// Add file to recent files list (moves to top if already present)
+    pub fn add_recent(&mut self, path: PathBuf) {
+        // Remove if already in list
+        self.recent_files.retain(|p| p != &path);
+        
+        // Insert at front
+        self.recent_files.insert(0, path.clone());
+        
+        // Trim to max size
+        self.recent_files.truncate(MAX_RECENT_FILES);
+        
+        // Also update last_file
+        self.last_file = Some(path);
+    }
+    
+    /// Get recent files (filters out non-existent)
+    pub fn recent_files(&self) -> Vec<&PathBuf> {
+        self.recent_files.iter().filter(|p| p.exists()).collect()
     }
 }
