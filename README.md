@@ -17,18 +17,39 @@
 - **Animation** - Time sampling, keyframes, deformation
 - **Python Bindings** - Complete Python API via PyO3
 - **Binary Compatible** - Hash-compatible output with C++ Alembic
+- **3D Viewer** - Built-in GPU-accelerated viewer with PBR rendering
+- **CLI Tool** - `alembic` command-line utility for inspection and conversion
 
 ## Status
 
 This is an experimental implementation. While it passes compatibility tests with C++ Alembic, edge cases may exist. Use in production at your own discretion.
 
+## CLI Tool
+
+The `alembic` binary provides file inspection and a 3D viewer:
+
+```bash
+alembic view model.abc      # Open in 3D viewer (Esc to exit)
+alembic info scene.abc      # Archive info and object counts
+alembic tree character.abc  # Object hierarchy
+alembic dump scene.abc      # Dump xform transforms
+alembic copy in.abc out.abc # Round-trip copy test
+```
+
+### Viewer Features
+- Orbit camera (LMB drag, scroll to zoom)
+- PBR rendering with environment lighting
+- Wireframe, X-Ray, shadows toggles
+- Animation timeline scrubbing
+- Settings persist between sessions
+
 ## Installation
 
-### Rust
+### Rust Library
 
 ```toml
 [dependencies]
-alembic = "0.1"
+alembic_core = "0.1"
 ```
 
 ### Python
@@ -49,7 +70,7 @@ pip install target/wheels/alembic_rs-*.whl
 ### Reading (Rust)
 
 ```rust
-use alembic::abc::IArchive;
+use alembic_core::abc::IArchive;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let archive = IArchive::open("scene.abc")?;
@@ -88,7 +109,7 @@ for child in root:
 ### Writing (Rust)
 
 ```rust
-use alembic::ogawa::writer::{OArchive, OPolyMesh};
+use alembic_core::ogawa::writer::{OArchive, OPolyMesh};
 
 let mut archive = OArchive::create("output.abc")?;
 archive.set_app_name("MyApp");
