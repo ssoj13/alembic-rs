@@ -1,5 +1,40 @@
 # CHANGELOG
 
+## Session 2026-01-13: Unified CLI + Viewer Binary
+
+### Changes
+Merged `alembic-cli` and `alembic-viewer` into single binary `abc`.
+
+### New Structure
+- `crates/abc/` - Unified CLI with viewer support
+- Binary name: `abc` (was `alembic-cli` and `alembic-viewer`)
+- Viewer enabled by default via `--features viewer`
+
+### CLI Commands
+```
+abc view <file>              # Open 3D viewer (Esc to exit)
+abc info <file>              # Archive info and object counts
+abc tree <file>              # Object hierarchy
+abc stats <file>             # Detailed statistics
+abc dump <file> [pattern]    # Xform transforms (--json for JSON)
+abc copy <in> <out>          # Round-trip copy test
+```
+
+### Viewer Improvements
+- Added **Shadows** toggle checkbox in Display settings
+- Press **Esc** to close viewer
+- Settings persist between sessions
+
+### Files Changed
+- `crates/abc/` - New unified CLI crate
+- `crates/alembic-viewer/src/lib.rs` - Exposed `run()` function
+- `crates/alembic-viewer/src/app.rs` - Esc handling, shadows toggle
+- `crates/alembic-viewer/src/settings.rs` - Added `show_shadows`
+- `crates/alembic-viewer/src/renderer.rs` - Conditional shadow pass
+- `Cargo.toml` - Removed cyclic dependency, added abc to workspace
+
+---
+
 ## Session 2026-01-13: Xform Op Decoding Fix (BMW.abc rendering bug)
 
 ### Problem

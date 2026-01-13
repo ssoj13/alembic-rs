@@ -65,82 +65,133 @@ fn main() {
     }
     
     if filtered_args.is_empty() {
-        print_usage(&args[0]);
+        print_help();
         return;
     }
     
     match filtered_args[0] {
+        // View command - launch 3D viewer
+        "view" | "v" => {
+            #[cfg(feature = "viewer")]
+            {
+                let file = filtered_args.get(1).map(|s| std::path::PathBuf::from(*s));
+                if let Err(e) = alembic_viewer::run(file) {
+                    eprintln!("Viewer error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            #[cfg(not(feature = "viewer"))]
+            {
+                eprintln!("Viewer not available. Rebuild with: cargo build --features viewer");
+                std::process::exit(1);
+            }
+        }
+        
+        // Info command - show archive summary
         "info" | "i" => {
             if filtered_args.len() < 2 {
-                eprintln!("Usage: {} info <file.abc>", args[0]);
+                eprintln!("Error: missing file argument");
+                eprintln!("Usage: abc info <file.abc>");
                 std::process::exit(1);
             }
             cmd_info(filtered_args[1]);
         }
+        
+        // Tree command - show hierarchy
         "tree" | "t" => {
             if filtered_args.len() < 2 {
-                eprintln!("Usage: {} tree <file.abc>", args[0]);
+                eprintln!("Error: missing file argument");
+                eprintln!("Usage: abc tree <file.abc>");
                 std::process::exit(1);
             }
             cmd_tree(filtered_args[1]);
         }
+        
+        // Stats command - detailed statistics
         "stats" | "s" => {
             if filtered_args.len() < 2 {
-                eprintln!("Usage: {} stats <file.abc>", args[0]);
+                eprintln!("Error: missing file argument");
+                eprintln!("Usage: abc stats <file.abc>");
                 std::process::exit(1);
             }
             cmd_stats(filtered_args[1]);
         }
+        
+        // Dump command - xform details
         "dump" | "d" => {
             if filtered_args.len() < 2 {
-                eprintln!("Usage: {} dump <file.abc> [pattern] [--json]", args[0]);
+                eprintln!("Error: missing file argument");
+                eprintln!("Usage: abc dump <file.abc> [pattern] [--json]");
                 std::process::exit(1);
             }
             let json_mode = filtered_args.iter().any(|&s| s == "--json" || s == "-j");
             if json_mode {
-                set_log_level(LOG_QUIET); // Suppress all logs for clean JSON
+                set_log_level(LOG_QUIET);
             }
             let pattern = filtered_args.get(2).filter(|&&s| s != "--json" && s != "-j").map(|s| *s);
             cmd_dump(filtered_args[1], pattern, json_mode);
         }
+        
+        // Copy command - round-trip test
         "copy" | "c" => {
             if filtered_args.len() < 3 {
-                eprintln!("Usage: {} copy <input.abc> <output.abc>", args[0]);
+                eprintln!("Error: missing arguments");
+                eprintln!("Usage: abc copy <input.abc> <output.abc>");
                 std::process::exit(1);
             }
             cmd_copy(filtered_args[1], filtered_args[2]);
         }
-        "help" | "h" | "-h" | "--help" => print_usage(&args[0]),
+        
+        // Help
+        "help" | "h" | "-h" | "--help" => print_help(),
+        
+        // Default: if file exists, show info; otherwise error
         _ => {
-            // Assume it's a file path
             if Path::new(filtered_args[0]).exists() {
                 cmd_info(filtered_args[0]);
             } else {
                 eprintln!("Unknown command: {}", filtered_args[0]);
-                print_usage(&args[0]);
+                eprintln!();
+                print_help();
                 std::process::exit(1);
             }
         }
     }
 }
 
-fn print_usage(prog: &str) {
-    println!("Alembic CLI - Inspect Alembic files");
+fn print_help() {
+    println!("abc - Alembic file toolkit");
     println!();
-    println!("Usage: {} [options] <command> <file.abc>", prog);
+    println!("USAGE:");
+    println!("    abc [OPTIONS] <COMMAND> [ARGS]");
     println!();
-    println!("Commands:");
-    println!("  i, info    Show archive info and object summary");
-    println!("  t, tree    Show full object hierarchy");
-    println!("  s, stats   Show detailed statistics");
-    println!("  d, dump    Dump xform details (pattern optional)");
-    println!("  c, copy    Copy archive (round-trip test)");
-    println!("  h, help    Show this help");
+    println!("COMMANDS:");
+    println!("    v, view   <file>              Open file in 3D viewer (Esc to exit)");
+    println!("    i, info   <file>              Show archive info and object counts");
+    println!("    t, tree   <file>              Show full object hierarchy");
+    println!("    s, stats  <file>              Show detailed statistics with timing info");
+    println!("    d, dump   <file> [pattern]    Dump xform transforms (filter by pattern)");
+    println!("    c, copy   <in> <out>          Copy archive (round-trip test)");
+    println!("    h, help                       Show this help");
     println!();
-    println!("Options:");
-    println!("  -v, --verbose  Debug output");
-    println!("  -vv, --trace   Trace output (very verbose)");
-    println!("  -q, --quiet    Suppress output");
+    println!("OPTIONS:");
+    println!("    -v, --verbose    Show debug output");
+    println!("    -vv, --trace     Show trace output (very verbose)");
+    println!("    -q, --quiet      Suppress all output");
+    println!();
+    println!("EXAMPLES:");
+    println!("    abc view model.abc                    # Open in 3D viewer");
+    println!("    abc info scene.abc                    # Quick overview");
+    println!("    abc tree character.abc                # See hierarchy");
+    println!("    abc dump scene.abc wheel              # Dump transforms matching 'wheel'");
+    println!("    abc dump scene.abc --json             # Export all transforms as JSON");
+    println!("    abc copy input.abc output.abc         # Test round-trip");
+    println!("    abc -v info large.abc                 # Verbose info");
+    println!();
+    println!("NOTES:");
+    println!("    - Passing a .abc file directly is equivalent to 'info'");
+    println!("    - Viewer requires --features viewer (enabled by default)");
+    println!("    - Press Esc to close the viewer");
 }
 
 fn cmd_info(path: &str) {

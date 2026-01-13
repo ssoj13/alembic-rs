@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/murmur3", "crates/spooky-hash", "crates/standard-surface", "crates/alembic-viewer"]
+members = [".", "crates/murmur3", "crates/spooky-hash", "crates/standard-surface", "crates/alembic-viewer", "crates/abc"]
 
 [package]
 name = "alembic"
@@ -53,9 +53,6 @@ spooky-hash = { path = "crates/spooky-hash" }
 # Python bindings (optional)
 pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
 
-# Viewer (optional, included by default)
-alembic-viewer = { path = "crates/alembic-viewer", optional = true }
-
 [dev-dependencies]
 # Temporary files for tests
 tempfile = "3"
@@ -64,12 +61,7 @@ tempfile = "3"
 name = "alembic"
 crate-type = ["lib", "cdylib"]
 
-[[bin]]
-name = "abc"
-path = "src/main.rs"
-
 [features]
-default = ["mmap", "viewer"]
+default = ["mmap"]
 mmap = []
-viewer = ["alembic-viewer"]
 python = ["pyo3"]
