@@ -22,6 +22,7 @@ abc copy <in> <out>          # Round-trip copy test
 
 ### Viewer Improvements
 - Added **Shadows** toggle checkbox in Display settings
+- Added **Opacity** slider (0.1-1.0) for X-Ray mode transparency
 - Press **Esc** to close viewer
 - Settings persist between sessions
 
@@ -29,8 +30,10 @@ abc copy <in> <out>          # Round-trip copy test
 - `crates/abc/` - New unified CLI crate
 - `crates/alembic-viewer/src/lib.rs` - Exposed `run()` function
 - `crates/alembic-viewer/src/app.rs` - Esc handling, shadows toggle
-- `crates/alembic-viewer/src/settings.rs` - Added `show_shadows`
-- `crates/alembic-viewer/src/renderer.rs` - Conditional shadow pass
+- `crates/alembic-viewer/src/settings.rs` - Added `show_shadows`, `xray_alpha`
+- `crates/alembic-viewer/src/renderer.rs` - Conditional shadow pass, xray_alpha uniform
+- `crates/standard-surface/src/params.rs` - Added `xray_alpha` to CameraUniform
+- `crates/standard-surface/src/shaders/standard_surface.wgsl` - Alpha override in fragment shader
 - `Cargo.toml` - Removed cyclic dependency, added abc to workspace
 
 ---

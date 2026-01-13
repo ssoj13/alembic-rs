@@ -5,6 +5,7 @@ use half::f16;
 use wgpu::util::DeviceExt;
 
 /// Environment map data
+#[allow(dead_code)] // GPU resources held alive
 pub struct EnvironmentMap {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -15,6 +16,7 @@ pub struct EnvironmentMap {
 }
 
 /// Create bind group layout for environment map (group 4)
+#[allow(dead_code)] // Available for future use
 pub fn create_env_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("env_map_bind_group_layout"),

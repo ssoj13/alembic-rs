@@ -21,7 +21,7 @@ struct Camera {
     view_proj: mat4x4<f32>,
     view: mat4x4<f32>,
     position: vec3<f32>,
-    _pad: f32,
+    xray_alpha: f32,  // X-Ray mode: 1.0 = normal, 0.5 = transparent
 }
 
 struct Light {
@@ -391,8 +391,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Emission
     color += emission * emission_color;
 
-    // Opacity
-    let alpha = (material.opacity.r + material.opacity.g + material.opacity.b) / 3.0;
+    // Opacity (with X-Ray override)
+    let base_alpha = (material.opacity.r + material.opacity.g + material.opacity.b) / 3.0;
+    let alpha = base_alpha * camera.xray_alpha;
 
     return vec4<f32>(color, alpha);
 }

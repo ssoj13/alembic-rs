@@ -6,7 +6,7 @@ use wgpu::util::DeviceExt;
 
 use standard_surface::{
     BindGroupLayouts, CameraUniform, LightRig, ModelUniform, PipelineConfig,
-    ShadowUniform, StandardSurfaceParams, Vertex, SkyboxVertex,
+    ShadowUniform, StandardSurfaceParams, Vertex,
 };
 
 use crate::environment::{self, EnvironmentMap, EnvUniform};
@@ -29,6 +29,7 @@ pub struct Renderer {
     layouts: BindGroupLayouts,
     
     // Skybox
+    #[allow(dead_code)]
     skybox_camera_layout: wgpu::BindGroupLayout,
     skybox_camera_bind_group: wgpu::BindGroup,
     skybox_vertex_buffer: wgpu::Buffer,
@@ -37,6 +38,7 @@ pub struct Renderer {
     
     // Uniforms
     camera_buffer: wgpu::Buffer,
+    #[allow(dead_code)]
     light_buffer: wgpu::Buffer,
     camera_light_bind_group: wgpu::BindGroup,
     
@@ -58,10 +60,12 @@ pub struct Renderer {
     grid_mesh: Option<Mesh>,
     grid_material: wgpu::BindGroup,
     grid_model: wgpu::BindGroup,
+    #[allow(dead_code)]
     grid_model_buffer: wgpu::Buffer,
     
     // Environment map
     env_map: EnvironmentMap,
+    #[allow(dead_code)]
     env_uniform_buffer: wgpu::Buffer,
     
     // Scene meshes
@@ -71,6 +75,7 @@ pub struct Renderer {
     pub show_wireframe: bool,
     pub show_grid: bool,
     pub show_shadows: bool,
+    pub xray_alpha: f32,
     pub double_sided: bool,
     pub flip_normals: bool,
     pub background_color: [f32; 4],
@@ -97,6 +102,7 @@ pub struct SceneMesh {
     pub model_bind_group: wgpu::BindGroup,
     pub model_buffer: wgpu::Buffer,
     pub transform: Mat4,
+    #[allow(dead_code)]
     pub name: String,
 }
 
@@ -113,7 +119,7 @@ impl Renderer {
         let config = PipelineConfig {
             format,
             depth_format: Some(wgpu::TextureFormat::Depth32Float),
-            blend: false,
+            blend: true,  // Enable alpha blending for X-Ray mode
             cull_mode: Some(wgpu::Face::Back),
             wireframe: false,
         };
@@ -170,7 +176,7 @@ impl Renderer {
             view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             view: Mat4::IDENTITY.to_cols_array_2d(),
             position: Vec3::new(0.0, 0.0, 5.0),
-            _pad: 0.0,
+            xray_alpha: 1.0,
         };
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("camera_buffer"),
@@ -349,6 +355,7 @@ impl Renderer {
             show_wireframe: false,
             show_grid: true,
             show_shadows: true,
+            xray_alpha: 1.0,
             double_sided: false,
             flip_normals: false,
             background_color: [0.1, 0.1, 0.12, 1.0],
@@ -357,11 +364,12 @@ impl Renderer {
 
     /// Update camera uniform
     pub fn update_camera(&self, view_proj: Mat4, view: Mat4, position: Vec3) {
+        let xray_alpha = self.xray_alpha;
         let uniform = CameraUniform {
             view_proj: view_proj.to_cols_array_2d(),
             view: view.to_cols_array_2d(),
             position,
-            _pad: 0.0,
+            xray_alpha,
         };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
     }

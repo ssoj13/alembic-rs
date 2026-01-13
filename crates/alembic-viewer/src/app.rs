@@ -34,7 +34,6 @@ pub struct ViewerApp {
     
     // UI state
     status_message: String,
-    show_settings: bool,
     
     // Scene info
     mesh_count: usize,
@@ -63,7 +62,6 @@ impl ViewerApp {
             playback_fps: 24.0,
             last_frame_time: Instant::now(),
             status_message: "Ready".into(),
-            show_settings: false,
             mesh_count: 0,
             vertex_count: 0,
             face_count: 0,
@@ -198,6 +196,13 @@ impl ViewerApp {
                 renderer.show_shadows = self.settings.show_shadows;
                 changed = true;
             }
+            ui.horizontal(|ui| {
+                ui.label("Opacity:");
+                if ui.add(egui::Slider::new(&mut self.settings.xray_alpha, 0.1..=1.0).step_by(0.1)).changed() {
+                    renderer.xray_alpha = self.settings.xray_alpha;
+                    changed = true;
+                }
+            });
             if ui.checkbox(&mut self.settings.double_sided, "Double Sided").changed() {
                 renderer.double_sided = self.settings.double_sided;
                 changed = true;
@@ -655,6 +660,7 @@ impl eframe::App for ViewerApp {
                     renderer.show_grid = self.settings.show_grid;
                     renderer.show_wireframe = self.settings.show_wireframe;
                     renderer.show_shadows = self.settings.show_shadows;
+                    renderer.xray_alpha = self.settings.xray_alpha;
                     renderer.double_sided = self.settings.double_sided;
                     renderer.flip_normals = self.settings.flip_normals;
                     renderer.background_color = self.settings.background_color;

@@ -153,7 +153,8 @@ pub struct CameraUniform {
     pub view: [[f32; 4]; 4],
     /// Camera world position
     pub position: Vec3,
-    pub _pad: f32,
+    /// X-Ray mode alpha override (1.0 = normal, 0.5 = x-ray)
+    pub xray_alpha: f32,
 }
 
 /// Directional light

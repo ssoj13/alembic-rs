@@ -1,5 +1,6 @@
 [workspace]
 members = [".", "crates/murmur3", "crates/spooky-hash", "crates/standard-surface", "crates/alembic-viewer", "crates/abc"]
+default-members = [".", "crates/abc", "crates/alembic-viewer"]
 
 [package]
 name = "alembic"
