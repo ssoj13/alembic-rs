@@ -1,7 +1,8 @@
 //! MurmurHash3 x64_128 implementation.
 //!
-//! This is a direct port of the Alembic C++ implementation for binary compatibility.
-//! On little-endian systems (x86/x64), this produces identical output to C++.
+//! Original algorithm by Austin Appleby. All rights to the original belong to the author.
+//! This is a Rust implementation aiming to match the original as closely as possible.
+//! Produces binary-compatible output with C++ Alembic on little-endian systems.
 
 /// Compute MurmurHash3 x64_128 hash.
 /// 

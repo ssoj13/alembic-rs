@@ -1,7 +1,8 @@
-//! SpookyHash V2 - A 128-bit non-cryptographic hash function by Bob Jenkins.
+//! SpookyHash V2 - A 128-bit non-cryptographic hash function.
 //!
-//! This is a direct port of the SpookyV2 implementation from Alembic,
-//! ensuring binary compatibility with Alembic files.
+//! Original algorithm by Bob Jenkins. All rights to the original belong to the author.
+//! This is a Rust implementation aiming to match the original as closely as possible.
+//! Ensures binary compatibility with Alembic files.
 //!
 //! # Example
 //! ```

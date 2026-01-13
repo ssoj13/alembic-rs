@@ -2,9 +2,10 @@
 //!
 //! Rust implementation of the Alembic (.abc) 3D interchange format.
 //!
-//! Alembic is an open computer graphics interchange framework developed by
-//! Sony Pictures Imageworks and Industrial Light & Magic. It distills complex,
-//! animated scenes into baked geometric results.
+//! Original Alembic format and C++ library developed by Sony Pictures Imageworks
+//! and Industrial Light & Magic. All rights to the original belong to the authors.
+//! This is an independent Rust implementation aiming to match the original as closely
+//! as possible for binary compatibility.
 //!
 //! ## Modules
 //!

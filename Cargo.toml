@@ -2,7 +2,7 @@
 name = "alembic"
 version = "0.1.0"
 edition = "2021"
-license = "BSD-3-Clause"
+license = "MIT"
 description = "Rust implementation of Alembic (.abc) 3D interchange format"
 keywords = ["3d", "graphics", "animation", "vfx", "alembic"]
 categories = ["multimedia", "graphics", "parser-implementations"]

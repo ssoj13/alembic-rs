@@ -3,8 +3,8 @@ name = "spooky-hash"
 version = "0.1.0"
 edition = "2021"
 description = "SpookyHash V2 - Bob Jenkins' 128-bit non-cryptographic hash (Alembic-compatible)"
-license = "BSD-3-Clause"
-repository = "https://github.com/konton/alembic-rs"
+license = "MIT"
+repository = "https://github.com/ssoj13/alembic-rs"
 keywords = ["hash", "spooky", "alembic", "non-cryptographic"]
 categories = ["algorithms", "no-std"]
 
