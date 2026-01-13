@@ -85,6 +85,8 @@ __all__ = [
     "INuPatchSchema",
     # FaceSet
     "IFaceSet",
+    "IFaceSetTyped",
+    "IFaceSetSchema",
     # GeomParam
     "IGeomParam",
     

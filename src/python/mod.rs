@@ -84,6 +84,8 @@ fn alembic_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     abc_geom.add_class::<schemas::PyILightSchema>()?;
     abc_geom.add_class::<schemas::PyINuPatch>()?;
     abc_geom.add_class::<schemas::PyINuPatchSchema>()?;
+    abc_geom.add_class::<schemas::PyIFaceSetTyped>()?;
+    abc_geom.add_class::<schemas::PyIFaceSetSchema>()?;
     m.add_submodule(&abc_geom)?;
     
     // Register property classes
@@ -129,6 +131,8 @@ fn alembic_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<schemas::PyICamera>()?;
     m.add_class::<schemas::PyILight>()?;
     m.add_class::<schemas::PyINuPatch>()?;
+    m.add_class::<schemas::PyIFaceSetTyped>()?;
+    m.add_class::<schemas::PyIFaceSetSchema>()?;
     // Samples at top level
     m.add_class::<geom::PyPolyMeshSample>()?;
     m.add_class::<geom::PyXformSample>()?;

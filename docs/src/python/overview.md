@@ -34,6 +34,11 @@ mesh = alembic_rs.Abc.OPolyMesh("name")
 |-------|-------------|
 | `IArchive` | Open and read Alembic files |
 | `IObject` | Navigate object hierarchy |
+| `IPolyMesh` | PolyMesh schema wrapper |
+| `IXform` | Xform schema wrapper |
+| `ICamera` | Camera schema wrapper |
+| `ICurves` | Curves schema wrapper |
+| `IPoints` | Points schema wrapper |
 | `PolyMeshSample` | Mesh vertex/face data |
 | `XformSample` | Transform matrix |
 | `CameraSample` | Camera parameters |

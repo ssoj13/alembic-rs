@@ -14,10 +14,10 @@ use pyo3::exceptions::PyValueError;
 use std::sync::Arc;
 
 use crate::abc::IArchive;
-use crate::geom::{IPolyMesh, ISubD, ICurves, IPoints, ICamera, ILight, IXform, INuPatch};
+use crate::geom::{IPolyMesh, ISubD, ICurves, IPoints, ICamera, ILight, IXform, INuPatch, IFaceSet};
 use super::geom::{
     PyPolyMeshSample, PySubDSample, PyCurvesSample, PyPointsSample,
-    PyCameraSample, PyXformSample, PyLightSample, PyNuPatchSample,
+    PyCameraSample, PyXformSample, PyLightSample, PyNuPatchSample, PyFaceSetSample,
 };
 use super::object::PyIObject;
 
@@ -759,6 +759,92 @@ impl PyINuPatchSchema {
         let root = self.archive.root();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&INuPatch<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&INuPatch::new(&obj)?) }
+            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+        }
+        traverse(root, &self.path, f)
+    }
+}
+
+// ============================================================================
+// IFaceSet
+// ============================================================================
+
+#[pyclass(name = "IFaceSetSchema")]
+pub struct PyIFaceSetSchema {
+    archive: Arc<IArchive>,
+    path: Vec<String>,
+}
+
+#[pymethods]
+impl PyIFaceSetSchema {
+    fn getNumSamples(&self) -> usize { self.with_faceset(|f| Some(f.num_samples())).unwrap_or(0) }
+    fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
+    
+    #[pyo3(signature = (index=0))]
+    fn getValue(&self, index: usize) -> PyResult<PyFaceSetSample> {
+        self.with_faceset(|f| f.get_sample(index).ok().map(|v| v.into()))
+            .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
+    }
+    
+    fn getTimeSamplingIndex(&self) -> u32 { self.with_faceset(|f| Some(f.time_sampling_index())).unwrap_or(0) }
+    
+    /// Get face exclusivity setting.
+    fn getFaceExclusivity(&self) -> String {
+        self.with_faceset(|f| Some(format!("{:?}", f.face_exclusivity())))
+            .unwrap_or_else(|| "NonExclusive".to_string())
+    }
+    
+    fn __repr__(&self) -> String { format!("<IFaceSetSchema {} samples>", self.getNumSamples()) }
+}
+
+impl PyIFaceSetSchema {
+    fn with_faceset<T, F>(&self, f: F) -> Option<T>
+    where F: FnOnce(&IFaceSet<'_>) -> Option<T> {
+        let root = self.archive.root();
+        fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&IFaceSet<'_>) -> Option<T>) -> Option<T> {
+            if path.is_empty() { f(&IFaceSet::new(&obj)?) }
+            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+        }
+        traverse(root, &self.path, f)
+    }
+}
+
+/// Schema-style wrapper for IFaceSet (matches original Alembic API).
+#[pyclass(name = "IFaceSetTyped")]
+pub struct PyIFaceSetTyped {
+    archive: Arc<IArchive>,
+    path: Vec<String>,
+}
+
+#[pymethods]
+impl PyIFaceSetTyped {
+    #[new]
+    fn new(obj: &PyIObject) -> PyResult<Self> {
+        if !obj.isFaceSet() {
+            return Err(PyValueError::new_err("Object is not a FaceSet"));
+        }
+        Ok(Self { archive: obj.archive.clone(), path: obj.path.clone() })
+    }
+    
+    fn getSchema(&self) -> PyIFaceSetSchema {
+        PyIFaceSetSchema { archive: self.archive.clone(), path: self.path.clone() }
+    }
+    
+    fn valid(&self) -> bool { self.with_faceset(|_| Some(true)).unwrap_or(false) }
+    fn getName(&self) -> String { self.path.last().cloned().unwrap_or_default() }
+    fn getFullName(&self) -> String {
+        if self.path.is_empty() { "/".to_string() }
+        else { format!("/{}", self.path.join("/")) }
+    }
+    fn __repr__(&self) -> String { format!("<IFaceSetTyped '{}'>", self.getName()) }
+}
+
+impl PyIFaceSetTyped {
+    fn with_faceset<T, F>(&self, f: F) -> Option<T>
+    where F: FnOnce(&IFaceSet<'_>) -> Option<T> {
+        let root = self.archive.root();
+        fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&IFaceSet<'_>) -> Option<T>) -> Option<T> {
+            if path.is_empty() { f(&IFaceSet::new(&obj)?) }
             else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)

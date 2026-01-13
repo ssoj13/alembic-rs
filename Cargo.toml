@@ -7,7 +7,8 @@ description = "Rust implementation of Alembic (.abc) 3D interchange format"
 keywords = ["3d", "graphics", "animation", "vfx", "alembic"]
 categories = ["multimedia", "graphics", "parser-implementations"]
 readme = "README.md"
-repository = "https://github.com/example/alembic-rs"
+authors = ["Alex Khalyavin <joss13@gmail.com>"]
+repository = "https://github.com/ssoj13/alembic-rs"
 
 [dependencies]
 # Half-precision floats (f16)

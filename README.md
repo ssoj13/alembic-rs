@@ -2,14 +2,11 @@
 
 > **Experimental** pure Rust implementation of the [Alembic](http://www.alembic.io/) file format.
 >
-> This is an attempt to bring native Alembic support to the Rust ecosystem and provide the Rust community access to this industry-standard 3D interchange format - without requiring C++ dependencies.
->
-> Developed with the assistance of modern AI tools as an experiment in specification-driven development.
+> An experimental pure Rust implementation of the Alembic file format, developed with AI assistance as an exploration of specification-driven development.
 
 ## Why?
 
-- **Rust deserves native 3D formats** - No more wrestling with C++ bindings
-- **Simple builds** - Pure Rust, no CMake, no vcpkg, just `cargo build`
+- **Native Alembic** - No C++ dependencies, just `cargo build`
 - **Memory safe** - Rust's guarantees for handling complex binary formats
 - **Cross-platform** - Windows, macOS, Linux out of the box
 

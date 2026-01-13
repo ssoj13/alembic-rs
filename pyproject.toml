@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "BSD-3-Clause"}
 requires-python = ">=3.8"
 authors = [
-    {name = "alembic-rs contributors"}
+    {name = "Alex Khalyavin", email = "joss13@gmail.com"}
 ]
 keywords = ["alembic", "abc", "3d", "graphics", "animation", "vfx", "geometry", "cache"]
 classifiers = [
@@ -33,10 +33,10 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/example/alembic-rs"
-Documentation = "https://github.com/example/alembic-rs#readme"
-Repository = "https://github.com/example/alembic-rs"
-Issues = "https://github.com/example/alembic-rs/issues"
+Homepage = "https://github.com/ssoj13/alembic-rs"
+Documentation = "https://github.com/ssoj13/alembic-rs#readme"
+Repository = "https://github.com/ssoj13/alembic-rs"
+Issues = "https://github.com/ssoj13/alembic-rs/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -55,7 +55,7 @@ strip = true
 python-source = "python"
 
 [tool.pytest.ini_options]
-testpaths = ["python_tests"]
+testpaths = ["python/tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]

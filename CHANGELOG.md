@@ -1,4 +1,44 @@
-# CHANGELOG - Ogawa Writer Binary Compatibility
+# CHANGELOG
+
+## Session 2026-01-12: Python API Parity & Documentation
+
+### Schema Reader Classes (Original Alembic API Style)
+Added full set of schema reader wrappers matching the original C++ Alembic Python bindings:
+
+- `IPolyMesh` / `IPolyMeshSchema`
+- `IXform` / `IXformSchema`
+- `ISubD` / `ISubDSchema`
+- `ICurves` / `ICurvesSchema`
+- `IPoints` / `IPointsSchema`
+- `ICamera` / `ICameraSchema`
+- `ILight` / `ILightSchema`
+- `INuPatch` / `INuPatchSchema`
+- `IFaceSetTyped` / `IFaceSetSchema`
+
+Usage:
+```python
+from alembic_rs import IPolyMesh
+
+mesh = IPolyMesh(obj)
+schema = mesh.getSchema()
+sample = schema.getValue()  # default frame 0
+sample = schema.getValue(5)  # specific frame
+```
+
+### Documentation Updates
+- Created README.md with experimental notice
+- Updated mdbook Python API docs with schema-style API
+- Added Python examples to reference/schemas.md
+
+### Files Changed
+- `src/python/schemas.rs` - New file with 18 schema classes
+- `src/python/mod.rs` - Registered all new classes
+- `python/alembic_rs/__init__.py` - Updated __all__ exports
+- `docs/src/python/overview.md` - Added schema reader classes
+- `docs/src/python/reading.md` - Added schema-style API section
+- `docs/src/reference/schemas.md` - Added Python examples
+
+---
 
 ## Session 2026-01-12: Binary Compatibility Achieved
 

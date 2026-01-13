@@ -73,7 +73,12 @@ elif obj.isSubD():
 
 ## Reading Geometry
 
-### PolyMesh
+alembic_rs provides two API styles for reading geometry:
+
+1. **Direct access** - Call methods directly on `IObject` (simpler)
+2. **Schema-style** - Use typed wrappers like `IPolyMesh` (matches original Alembic API)
+
+### PolyMesh (Direct Access)
 
 ```python
 if obj.isPolyMesh():
@@ -100,6 +105,27 @@ if obj.isPolyMesh():
         min_pt, max_pt = sample.selfBounds
         print(f"Bounds: {min_pt} to {max_pt}")
 ```
+
+### PolyMesh (Schema-Style API)
+
+```python
+from alembic_rs import IPolyMesh
+
+if obj.isPolyMesh():
+    # Wrap object in typed schema
+    mesh = IPolyMesh(obj)
+    schema = mesh.getSchema()
+    
+    print(f"Samples: {schema.getNumSamples()}")
+    print(f"Constant: {schema.isConstant()}")
+    
+    # Get sample (default index 0)
+    sample = schema.getValue()
+    # Or specific frame
+    sample = schema.getValue(5)
+```
+
+All geometry types have schema wrappers: `IPolyMesh`, `IXform`, `ISubD`, `ICurves`, `IPoints`, `ICamera`, `ILight`, `INuPatch`.
 
 ### Transform (Xform)
 

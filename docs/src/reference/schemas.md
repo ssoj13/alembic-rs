@@ -48,6 +48,17 @@ xform.add_scale_sample(1.0, 1.0, 1.0);
 xform.add_matrix_sample(&matrix_4x4);
 ```
 
+**Python API:**
+
+```python
+from alembic_rs import IXform
+
+# Reading
+xform = IXform(obj)
+sample = xform.getSchema().getValue()
+print(sample.matrix)  # 4x4 matrix
+```
+
 ### PolyMesh
 
 Polygonal mesh geometry.
@@ -75,6 +86,18 @@ let mut mesh = OPolyMesh::new("myMesh");
 mesh.add_sample(&positions, &face_counts, &face_indices);
 mesh.set_normals(&normals, &normal_indices);
 mesh.set_uvs(&uvs, &uv_indices);
+```
+
+**Python API:**
+
+```python
+from alembic_rs import IPolyMesh
+
+# Reading with schema API
+mesh = IPolyMesh(obj)
+schema = mesh.getSchema()
+sample = schema.getValue()  # frame 0
+print(len(sample.positions))  # vertex count
 ```
 
 ### SubD
