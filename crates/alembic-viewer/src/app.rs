@@ -194,6 +194,10 @@ impl ViewerApp {
                 renderer.show_wireframe = self.settings.show_wireframe;
                 changed = true;
             }
+            if ui.checkbox(&mut self.settings.show_shadows, "Shadows").changed() {
+                renderer.show_shadows = self.settings.show_shadows;
+                changed = true;
+            }
             if ui.checkbox(&mut self.settings.double_sided, "Double Sided").changed() {
                 renderer.double_sided = self.settings.double_sided;
                 changed = true;
@@ -630,6 +634,12 @@ impl eframe::App for ViewerApp {
     }
     
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Close on Escape
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        
         self.initialize(ctx);
 
         // Initialize renderer if needed
@@ -644,6 +654,7 @@ impl eframe::App for ViewerApp {
                 if let Some(renderer) = &mut self.viewport.renderer {
                     renderer.show_grid = self.settings.show_grid;
                     renderer.show_wireframe = self.settings.show_wireframe;
+                    renderer.show_shadows = self.settings.show_shadows;
                     renderer.double_sided = self.settings.double_sided;
                     renderer.flip_normals = self.settings.flip_normals;
                     renderer.background_color = self.settings.background_color;

@@ -55,6 +55,10 @@ image = { version = "0.25", default-features = false, features = ["hdr", "exr"] 
 # Half precision floats for HDR textures
 half = { version = "2.4", features = ["bytemuck"] }
 
+[lib]
+name = "alembic_viewer"
+path = "src/lib.rs"
+
 [[bin]]
 name = "alembic-viewer"
 path = "src/main.rs"

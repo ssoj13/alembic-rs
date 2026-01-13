@@ -70,6 +70,7 @@ pub struct Renderer {
     // Settings
     pub show_wireframe: bool,
     pub show_grid: bool,
+    pub show_shadows: bool,
     pub double_sided: bool,
     pub flip_normals: bool,
     pub background_color: [f32; 4],
@@ -347,6 +348,7 @@ impl Renderer {
             meshes: Vec::new(),
             show_wireframe: false,
             show_grid: true,
+            show_shadows: true,
             double_sided: false,
             flip_normals: false,
             background_color: [0.1, 0.1, 0.12, 1.0],
@@ -623,7 +625,7 @@ impl Renderer {
         });
 
         // Shadow depth pass - render scene from light's perspective
-        {
+        if self.show_shadows {
             let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("shadow_depth_pass"),
                 color_attachments: &[],

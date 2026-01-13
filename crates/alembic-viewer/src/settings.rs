@@ -10,6 +10,7 @@ pub struct Settings {
     // Display
     pub show_grid: bool,
     pub show_wireframe: bool,
+    pub show_shadows: bool,
     pub double_sided: bool,
     pub flip_normals: bool,
     pub background_color: [f32; 4],
@@ -40,6 +41,7 @@ impl Default for Settings {
         Self {
             show_grid: true,
             show_wireframe: false,
+            show_shadows: true,
             double_sided: false,
             flip_normals: false,
             background_color: [0.1, 0.1, 0.12, 1.0],

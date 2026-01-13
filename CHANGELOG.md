@@ -1,5 +1,72 @@
 # CHANGELOG
 
+## Session 2026-01-13: Xform Op Decoding Fix (BMW.abc rendering bug)
+
+### Problem
+BMW.abc geometry was "flying apart" in the viewer - wheels and body parts scattered instead of showing assembled car.
+
+### Root Cause
+Xform operation code decoding used wrong nibble order.
+
+**C++ encoding** (XformOp.cpp line 279):
+```cpp
+return ( m_type << 4 ) | ( m_hint & 0xF );
+```
+- Upper nibble (bits 4-7) = operation type
+- Lower nibble (bits 0-3) = hint
+
+**Bug in Rust** (decode_xform_op):
+```rust
+// WRONG: was extracting lower nibble as type
+let op_type = code & 0x0F;
+```
+
+**Fix**:
+```rust
+// CORRECT: extract upper nibble
+let op_type = code >> 4;
+```
+
+### Secondary Bug - Writer Op Encoding
+Writer was encoding Matrix op incorrectly:
+```rust
+// WRONG
+let op_data = vec![3u8; 1];  // Type 3 in lower nibble
+
+// CORRECT
+let op_data = vec![0x30u8; 1];  // (3 << 4) | 0 = 0x30
+```
+
+### Tertiary Bug - Ops/Vals Size Reading
+Was finding ops count by searching for null byte (0x00), but 0x00 is valid Scale operation!
+
+**C++ behavior** (IXform.cpp):
+```cpp
+std::size_t numOps = ops->getHeader().getDataType().getExtent();
+```
+
+**Fix**: Use `header().data_type.extent` instead of null-byte search.
+
+### XformOperationType Enum (Foundation.h)
+```
+0 = kScaleOperation
+1 = kTranslateOperation
+2 = kRotateOperation
+3 = kMatrixOperation
+4 = kRotateXOperation
+5 = kRotateYOperation
+6 = kRotateZOperation
+```
+
+### Files Changed
+- `src/geom/xform.rs` - Fixed `decode_xform_op()` and ops/vals reading
+- `src/ogawa/writer.rs` - Fixed Matrix op encoding (3 -> 0x30)
+
+### Verification
+BMW.abc now renders correctly with all parts in place.
+
+---
+
 ## Session 2026-01-12: Python API Parity & Documentation
 
 ### Schema Reader Classes (Original Alembic API Style)

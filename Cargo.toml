@@ -53,6 +53,9 @@ spooky-hash = { path = "crates/spooky-hash" }
 # Python bindings (optional)
 pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
 
+# Viewer (optional, included by default)
+alembic-viewer = { path = "crates/alembic-viewer", optional = true }
+
 [dev-dependencies]
 # Temporary files for tests
 tempfile = "3"
@@ -62,10 +65,11 @@ name = "alembic"
 crate-type = ["lib", "cdylib"]
 
 [[bin]]
-name = "alembic-cli"
+name = "abc"
 path = "src/main.rs"
 
 [features]
-default = ["mmap"]
+default = ["mmap", "viewer"]
 mmap = []
+viewer = ["alembic-viewer"]
 python = ["pyo3"]
