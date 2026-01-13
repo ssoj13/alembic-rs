@@ -117,7 +117,8 @@ impl OStream {
 const ALEMBIC_LIBRARY_VERSION: i32 = 10709;
 
 /// Ogawa file version.
-const OGAWA_FILE_VERSION: i32 = 1;
+/// Ogawa file format version - matches C++ ALEMBIC_OGAWA_FILE_VERSION = 0
+const OGAWA_FILE_VERSION: i32 = 0;
 
 /// Acyclic time per cycle marker.
 /// Must match C++: std::numeric_limits<chrono_t>::max() / 32.0
@@ -590,18 +591,36 @@ impl OArchive {
         
         let pos = self.write_group(&children)?;
         
-        // Combine childHash with dataHash for parent's ioHash
-        // C++: ioHash.Update(hashes, 16) where hashes = [dataHash1, dataHash2]
+        // Compute the final hash returned to parent.
+        // C++ in OwImpl::~OwImpl() does:
+        //   1. hash.Init(0, 0)
+        //   2. writeHeaders updates hash with child_hashes + data_hash
+        //   3. hash.Update(metadata.serialize())
+        //   4. hash.Update(object_name)
+        //   5. hash.Final()
         let mut combined_hash = SpookyHash::new(0, 0);
+        
+        // Step 2a: Update with child hashes (if any)
         if !child_hashes.is_empty() {
             let child_hash_bytes: Vec<u8> = child_hashes.iter()
                 .flat_map(|h| h.to_le_bytes())
                 .collect();
             combined_hash.update(&child_hash_bytes);
         }
-        // Add data hash
+        // Step 2b: Update with data hash
         combined_hash.update(&data_hash1.to_le_bytes());
         combined_hash.update(&data_hash2.to_le_bytes());
+        
+        // Step 3: Update with metadata (if not empty)
+        let meta_str = obj.meta_data.serialize();
+        if !meta_str.is_empty() {
+            combined_hash.update(meta_str.as_bytes());
+        }
+        
+        // Step 4: Update with object name
+        combined_hash.update(obj.name.as_bytes());
+        
+        // Step 5: Finalize
         let (final_h1, final_h2) = combined_hash.finalize();
         
         Ok((pos, final_h1, final_h2))
@@ -623,7 +642,11 @@ impl OArchive {
         if props.is_empty() {
             // Write empty compound
             let pos = self.write_group(&[])?;
-            return Ok((pos, 0, 0));
+            // C++ calls dataHash.Final() even for empty compound, which returns non-zero
+            // SpookyHash::new(0,0).finalize() matches C++ SpookyHash::Final() with no updates
+            let hasher = SpookyHash::new(0, 0);
+            let (h1, h2) = hasher.finalize();
+            return Ok((pos, h1, h2));
         }
         
         // Collect property hashes (pairs of u64)

@@ -9,17 +9,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use parking_lot::RwLock;
-use md5::{Md5, Digest};
-
 /// 128-bit digest for content-based deduplication.
 pub type SampleDigest = [u8; 16];
 
-/// Compute MD5 digest of data for deduplication.
+/// Compute MurmurHash3 x64_128 digest of data.
+/// This matches the C++ Alembic implementation for binary compatibility.
 #[inline]
 pub fn compute_digest(data: &[u8]) -> SampleDigest {
-    let mut hasher = Md5::new();
-    hasher.update(data);
-    hasher.finalize().into()
+    murmur3::hash128_bytes(data)
 }
 
 /// Key for cache entries (position-based for reading).

@@ -507,6 +507,16 @@ mod tests {
     }
     
     #[test]
+    fn test_finalize_without_update() {
+        // SpookyHash::finalize() without any update should return non-zero
+        let mut h = SpookyHash::new(0, 0);
+        let (h1, h2) = h.finalize();
+        println!("finalize no updates: h1={:016x}, h2={:016x}", h1, h2);
+        // This is what C++ would return for empty compound properties
+        assert_ne!((h1, h2), (0, 0), "finalize without updates should be non-zero");
+    }
+    
+    #[test]
     fn test_incremental() {
         let data = b"hello world this is a test message";
         

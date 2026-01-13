@@ -1,0 +1,8 @@
+[package]
+name = "murmur3"
+version = "0.1.0"
+edition = "2021"
+description = "MurmurHash3 x64_128 implementation compatible with Alembic C++"
+license = "BSD-3-Clause"
+
+[dependencies]
