@@ -12,23 +12,25 @@ Example usage:
     archive = abc.IArchive("scene.abc")
     root = archive.getTop()
     
-    for i in range(root.getNumChildren()):
-        child = root.getChild(i)
+    for child in root:
         print(f"Object: {child.getName()}")
+        if child.isPolyMesh():
+            # Simple API
+            sample = child.getPolyMeshSample(0)
+            # Or original Alembic-style API
+            mesh = abc.IPolyMesh(child)
+            sample = mesh.getSchema().getValue()
+            print(f"  Vertices: {len(sample.positions)}")
     
     # Write an archive
     out = abc.OArchive.create("output.abc")
     out.setAppName("MyApp v1.0")
     
     mesh = abc.OPolyMesh("cube")
-    sample = abc.OPolyMeshSample()
-    sample.setPositions([...])
-    sample.setFaceCounts([...])
-    sample.setFaceIndices([...])
-    mesh.addSample(sample)
+    mesh.addSample(positions, face_counts, face_indices)
     
     root = abc.OObject("")
-    root.addChild(mesh.build())
+    root.addPolyMesh(mesh)
     out.writeArchive(root)
 """
 
@@ -37,57 +39,103 @@ from .alembic_rs import *
 
 __version__ = "0.1.0"
 __all__ = [
+    # =========================================================================
     # Archives
+    # =========================================================================
     "IArchive",
     "OArchive",
+    
+    # =========================================================================
     # Objects
+    # =========================================================================
     "IObject",
     "OObject",
+    
+    # =========================================================================
     # Time Sampling
+    # =========================================================================
     "TimeSampling",
-    # Geometry - PolyMesh
+    
+    # =========================================================================
+    # Schema Readers (original Alembic API style)
+    # =========================================================================
+    # PolyMesh
     "IPolyMesh",
-    "IPolyMeshSample",
-    "OPolyMesh",
-    "OPolyMeshSample",
-    # Geometry - Xform
+    "IPolyMeshSchema",
+    # Xform
     "IXform",
-    "IXformSample",
+    "IXformSchema",
+    # SubD
+    "ISubD",
+    "ISubDSchema",
+    # Curves
+    "ICurves",
+    "ICurvesSchema",
+    # Points
+    "IPoints",
+    "IPointsSchema",
+    # Camera
+    "ICamera",
+    "ICameraSchema",
+    # Light
+    "ILight",
+    "ILightSchema",
+    # NuPatch
+    "INuPatch",
+    "INuPatchSchema",
+    # FaceSet
+    "IFaceSet",
+    # GeomParam
+    "IGeomParam",
+    
+    # =========================================================================
+    # Sample Types (read)
+    # =========================================================================
+    "PolyMeshSample",
+    "XformSample",
+    "SubDSample",
+    "CurvesSample",
+    "PointsSample",
+    "CameraSample",
+    "LightSample",
+    "NuPatchSample",
+    "FaceSetSample",
+    "GeomParamSample",
+    
+    # =========================================================================
+    # Schema Writers
+    # =========================================================================
+    "OPolyMesh",
     "OXform",
-    "OXformSample",
-    # Geometry - Curves
-    "OCurves",
-    "OCurvesSample",
-    # Geometry - Points
-    "OPoints",
-    "OPointsSample",
-    # Geometry - SubD
     "OSubD",
-    "OSubDSample",
-    # Geometry - Camera
+    "OCurves",
+    "OPoints",
     "OCamera",
-    # Geometry - NuPatch
-    "ONuPatch",
-    "ONuPatchSample",
-    # Geometry - Light
     "OLight",
-    # Geometry - FaceSet
+    "ONuPatch",
     "OFaceSet",
-    "OFaceSetSample",
-    # Materials
+    
+    # =========================================================================
+    # Materials & Collections
+    # =========================================================================
     "OMaterial",
-    "OMaterialSample",
-    # Collections
     "OCollections",
+    "IMaterial",
+    "ICollections",
+    "Collection",
+    
+    # =========================================================================
     # Properties
+    # =========================================================================
+    "ICompoundProperty",
+    "PropertyInfo",
     "OScalarProperty",
     "OArrayProperty",
     "OCompoundProperty",
+    
+    # =========================================================================
     # Visibility
+    # =========================================================================
     "ObjectVisibility",
     "OVisibilityProperty",
-    # GeomParam
-    "IGeomParam",
-    # FaceSet
-    "IFaceSet",
 ]

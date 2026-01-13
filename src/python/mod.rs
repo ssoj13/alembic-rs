@@ -30,6 +30,7 @@ mod geom;
 mod properties;
 mod write;
 mod materials;
+mod schemas;
 
 pub use archive::*;
 pub use object::*;
@@ -38,6 +39,7 @@ pub use geom::*;
 pub use properties::*;
 pub use write::*;
 pub use materials::*;
+pub use schemas::*;
 
 /// Alembic Python module.
 #[pymodule]
@@ -65,6 +67,23 @@ fn alembic_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     abc_geom.add_class::<geom::PyIGeomParam>()?;
     abc_geom.add_class::<geom::PyObjectVisibility>()?;
     abc_geom.add_class::<geom::PyOVisibilityProperty>()?;
+    // Schema reader classes (original Alembic API style)
+    abc_geom.add_class::<schemas::PyIPolyMesh>()?;
+    abc_geom.add_class::<schemas::PyIPolyMeshSchema>()?;
+    abc_geom.add_class::<schemas::PyIXform>()?;
+    abc_geom.add_class::<schemas::PyIXformSchema>()?;
+    abc_geom.add_class::<schemas::PyISubD>()?;
+    abc_geom.add_class::<schemas::PyISubDSchema>()?;
+    abc_geom.add_class::<schemas::PyICurves>()?;
+    abc_geom.add_class::<schemas::PyICurvesSchema>()?;
+    abc_geom.add_class::<schemas::PyIPoints>()?;
+    abc_geom.add_class::<schemas::PyIPointsSchema>()?;
+    abc_geom.add_class::<schemas::PyICamera>()?;
+    abc_geom.add_class::<schemas::PyICameraSchema>()?;
+    abc_geom.add_class::<schemas::PyILight>()?;
+    abc_geom.add_class::<schemas::PyILightSchema>()?;
+    abc_geom.add_class::<schemas::PyINuPatch>()?;
+    abc_geom.add_class::<schemas::PyINuPatchSchema>()?;
     m.add_submodule(&abc_geom)?;
     
     // Register property classes
@@ -101,6 +120,28 @@ fn alembic_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<write::PyOArchive>()?;
     m.add_class::<write::PyOPolyMesh>()?;
     m.add_class::<write::PyOXform>()?;
+    // Schema readers at top level
+    m.add_class::<schemas::PyIPolyMesh>()?;
+    m.add_class::<schemas::PyIXform>()?;
+    m.add_class::<schemas::PyISubD>()?;
+    m.add_class::<schemas::PyICurves>()?;
+    m.add_class::<schemas::PyIPoints>()?;
+    m.add_class::<schemas::PyICamera>()?;
+    m.add_class::<schemas::PyILight>()?;
+    m.add_class::<schemas::PyINuPatch>()?;
+    // Samples at top level
+    m.add_class::<geom::PyPolyMeshSample>()?;
+    m.add_class::<geom::PyXformSample>()?;
+    m.add_class::<geom::PySubDSample>()?;
+    m.add_class::<geom::PyCurvesSample>()?;
+    m.add_class::<geom::PyPointsSample>()?;
+    m.add_class::<geom::PyCameraSample>()?;
+    m.add_class::<geom::PyLightSample>()?;
+    m.add_class::<geom::PyNuPatchSample>()?;
+    m.add_class::<geom::PyFaceSetSample>()?;
+    m.add_class::<geom::PyIFaceSet>()?;
+    m.add_class::<geom::PyIGeomParam>()?;
+    m.add_class::<geom::PyObjectVisibility>()?;
     
     Ok(())
 }
