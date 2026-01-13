@@ -272,24 +272,16 @@ impl<'a> IXform<'a> {
         }
         
         // Read .ops (static scalar with uint8 operation codes)
-        // Try scalar first, then array (depends on Alembic version)
+        // Per IXform.cpp: numOps = ops->getHeader().getDataType().getExtent()
         let ops_data = if let Some(ops_prop) = geom.property_by_name(".ops") {
-            if ops_prop.is_scalar() {
-                if let Some(scalar) = ops_prop.as_scalar() {
-                    // Read op codes - typically small buffer
-                    let mut buf = vec![0u8; 16];
-                    if scalar.read_sample(0, &mut buf).is_ok() {
-                        // Find actual length (non-zero entries)
-                        let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-                        Some(buf[..len].to_vec())
-                    } else {
-                        None
-                    }
+            if let Some(scalar) = ops_prop.as_scalar() {
+                let num_ops = scalar.header().data_type.extent as usize;
+                let mut buf = vec![0u8; num_ops];
+                if scalar.read_sample(0, &mut buf).is_ok() {
+                    Some(buf)
                 } else {
                     None
                 }
-            } else if let Some(array_reader) = ops_prop.as_array() {
-                array_reader.read_sample_vec(0).ok()
             } else {
                 None
             }
@@ -298,11 +290,14 @@ impl<'a> IXform<'a> {
         };
         
         // Read .vals (doubles - can be scalar or array)
+        // Per IXform.cpp: useArrayProp determines which method
         let vals_data = if let Some(vals_prop) = geom.property_by_name(".vals") {
             if vals_prop.is_scalar() {
                 if let Some(scalar) = vals_prop.as_scalar() {
-                    // Read up to 128 doubles (enough for most xforms)
-                    let mut buf = vec![0u8; 128 * 8];
+                    // Per IXform.cpp: dataVec.resize( extent )
+                    let num_vals = scalar.header().data_type.extent as usize;
+                    let byte_count = num_vals * 8; // f64 = 8 bytes
+                    let mut buf = vec![0u8; byte_count];
                     if scalar.read_sample(index, &mut buf).is_ok() {
                         Some(buf)
                     } else {
@@ -312,6 +307,7 @@ impl<'a> IXform<'a> {
                     None
                 }
             } else if let Some(array_reader) = vals_prop.as_array() {
+                // Array property - size comes from the sample itself
                 array_reader.read_sample_vec(index).ok()
             } else {
                 None
@@ -323,6 +319,11 @@ impl<'a> IXform<'a> {
         // Parse ops and vals
         if let (Some(ops), Some(vals)) = (ops_data, vals_data) {
             let doubles: &[f64] = bytemuck::try_cast_slice(&vals).unwrap_or(&[]);
+            
+            // DEBUG: show raw data
+            eprintln!("[DEBUG] ops bytes: {:?}", ops);
+            eprintln!("[DEBUG] vals count: {} doubles", doubles.len());
+            
             let mut val_idx = 0;
             
             for &op_code in &ops {
@@ -458,19 +459,20 @@ impl<'a> IXform<'a> {
 }
 
 /// Decode xform operation code to type and number of values.
+/// Per XformOp.cpp: getOpEncoding() returns (m_type << 4) | (m_hint & 0xF)
 fn decode_xform_op(code: u8) -> (Option<XformOpType>, usize) {
-    // Alembic xform op encoding:
-    // Lower nibble is op type, upper nibble has flags
-    let op_type = code & 0x0F;
+    // Upper nibble = op type, lower nibble = hint
+    let op_type = code >> 4;
     
+    // Foundation.h enum XformOperationType
     match op_type {
         0 => (Some(XformOpType::Scale), 3),      // kScaleOperation
         1 => (Some(XformOpType::Translate), 3),  // kTranslateOperation
-        2 => (Some(XformOpType::RotateX), 1),    // kRotateXOperation  
-        3 => (Some(XformOpType::RotateY), 1),    // kRotateYOperation
-        4 => (Some(XformOpType::RotateZ), 1),    // kRotateZOperation
-        5 => (Some(XformOpType::Rotate), 4),     // kRotateOperation (axis x,y,z + angle)
-        6 => (Some(XformOpType::Matrix), 16),    // kMatrixOperation
+        2 => (Some(XformOpType::Rotate), 4),     // kRotateOperation (axis + angle)
+        3 => (Some(XformOpType::Matrix), 16),    // kMatrixOperation
+        4 => (Some(XformOpType::RotateX), 1),    // kRotateXOperation  
+        5 => (Some(XformOpType::RotateY), 1),    // kRotateYOperation
+        6 => (Some(XformOpType::RotateZ), 1),    // kRotateZOperation
         _ => (None, 0),
     }
 }

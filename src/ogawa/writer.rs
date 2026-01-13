@@ -1549,8 +1549,9 @@ impl OXform {
             // .ops - operation types
             let mut ops = OProperty::array(".ops", DataType::new(PlainOldDataType::Uint8, 1));
             ops.time_sampling_index = self.time_sampling_index;
-            // Single matrix op = 6 (kMatrixOperation)
-            let op_data = vec![6u8; 1];
+            // Op encoding: (type << 4) | hint
+            // Matrix = type 3, hint 0 -> (3 << 4) | 0 = 0x30
+            let op_data = vec![0x30u8; 1];
             for _ in &self.samples {
                 ops.add_array_sample(&op_data, &[1]);
             }
