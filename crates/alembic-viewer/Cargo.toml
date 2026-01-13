@@ -1,0 +1,49 @@
+[package]
+name = "alembic-viewer"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "3D viewer for Alembic (.abc) files"
+
+[dependencies]
+# Core alembic library
+alembic = { path = "../.." }
+
+# Standard Surface shader
+standard-surface = { path = "../standard-surface" }
+
+# GUI framework
+eframe = { version = "0.31", default-features = false, features = [
+    "default_fonts",
+    "wgpu",
+] }
+egui = "0.31"
+egui-wgpu = "0.31"
+
+# GPU abstraction
+wgpu = "24"
+
+# Camera controls
+dolly = "0.6"
+
+# Math
+glam = { version = "0.29", features = ["bytemuck", "mint"] }
+mint = "0.5"
+
+# Memory casting
+bytemuck = { version = "1.21", features = ["derive"] }
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# File dialogs
+rfd = "0.15"
+
+[[bin]]
+name = "alembic-viewer"
+path = "src/main.rs"

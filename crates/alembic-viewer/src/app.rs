@@ -1,0 +1,360 @@
+//! Main application state and UI
+
+use std::path::PathBuf;
+
+use egui::{menu, Color32, RichText, TopBottomPanel, CentralPanel, SidePanel};
+use glam::{Mat4, Vec3};
+
+use standard_surface::{StandardSurfaceParams, Vertex};
+
+use crate::mesh_converter;
+use crate::viewport::Viewport;
+
+/// Main viewer application
+pub struct ViewerApp {
+    viewport: Viewport,
+    initialized: bool,
+    
+    // File state
+    current_file: Option<PathBuf>,
+    pending_file: Option<PathBuf>,
+    
+    // UI state
+    show_settings: bool,
+    status_message: String,
+    
+    // Scene info
+    mesh_count: usize,
+    vertex_count: usize,
+    face_count: usize,
+}
+
+impl ViewerApp {
+    pub fn new(_cc: &eframe::CreationContext<'_>, initial_file: Option<PathBuf>) -> Self {
+        Self {
+            viewport: Viewport::new(),
+            initialized: false,
+            current_file: None,
+            pending_file: initial_file,
+            show_settings: false,
+            status_message: "Ready".into(),
+            mesh_count: 0,
+            vertex_count: 0,
+            face_count: 0,
+        }
+    }
+
+    fn initialize(&mut self, ctx: &egui::Context) {
+        if self.initialized {
+            return;
+        }
+
+        // Get wgpu render state from egui
+        let _render_state = ctx.input(|i| {
+            i.viewport()
+                .clone()
+        });
+
+        // We need to get the render state differently
+        // For now, mark as initialized and we'll init the renderer later
+        self.initialized = true;
+        self.status_message = "Viewport ready".into();
+    }
+
+    fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        menu::bar(ui, |ui| {
+            ui.menu_button("File", |ui| {
+                if ui.button("Open...").clicked() {
+                    self.open_file_dialog();
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("Exit").clicked() {
+                    std::process::exit(0);
+                }
+            });
+
+            ui.menu_button("View", |ui| {
+                if let Some(renderer) = &mut self.viewport.renderer {
+                    ui.checkbox(&mut renderer.show_grid, "Show Grid");
+                    ui.checkbox(&mut renderer.show_wireframe, "Wireframe");
+                }
+                ui.separator();
+                if ui.button("Reset Camera").clicked() {
+                    self.viewport.camera.reset();
+                    ui.close_menu();
+                }
+            });
+
+            ui.menu_button("Help", |ui| {
+                if ui.button("About").clicked() {
+                    self.status_message = "Alembic Viewer v0.1.0".into();
+                    ui.close_menu();
+                }
+            });
+        });
+    }
+
+    fn side_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Scene");
+        ui.separator();
+
+        // File info
+        if let Some(path) = &self.current_file {
+            ui.label(format!("File: {}", path.file_name().unwrap_or_default().to_string_lossy()));
+        } else {
+            ui.label("No file loaded");
+        }
+
+        ui.separator();
+
+        // Stats
+        ui.label(RichText::new("Statistics").strong());
+        ui.label(format!("Meshes: {}", self.mesh_count));
+        ui.label(format!("Vertices: {}", self.vertex_count));
+        ui.label(format!("Faces: {}", self.face_count));
+
+        ui.separator();
+
+        // Camera info
+        ui.label(RichText::new("Camera").strong());
+        let pos = self.viewport.camera.position();
+        ui.label(format!("Position: ({:.2}, {:.2}, {:.2})", pos.x, pos.y, pos.z));
+        ui.label(format!("Distance: {:.2}", self.viewport.camera.distance()));
+
+        ui.separator();
+
+        // View settings
+        ui.label(RichText::new("Display").strong());
+        if let Some(renderer) = &mut self.viewport.renderer {
+            ui.checkbox(&mut renderer.show_grid, "Grid");
+            ui.checkbox(&mut renderer.show_wireframe, "Wireframe");
+            
+            ui.horizontal(|ui| {
+                ui.label("Background:");
+                let mut color = Color32::from_rgba_unmultiplied(
+                    (renderer.background_color[0] * 255.0) as u8,
+                    (renderer.background_color[1] * 255.0) as u8,
+                    (renderer.background_color[2] * 255.0) as u8,
+                    255,
+                );
+                if ui.color_edit_button_srgba(&mut color).changed() {
+                    renderer.background_color = [
+                        color.r() as f32 / 255.0,
+                        color.g() as f32 / 255.0,
+                        color.b() as f32 / 255.0,
+                        1.0,
+                    ];
+                }
+            });
+        }
+
+        ui.separator();
+
+        // Actions
+        if ui.button("Load Test Cube").clicked() {
+            self.load_test_cube();
+        }
+
+        if ui.button("Clear Scene").clicked() {
+            self.clear_scene();
+        }
+    }
+
+    fn status_bar(&self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.label(&self.status_message);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(format!("FPS: {:.0}", ui.ctx().input(|i| 1.0 / i.stable_dt)));
+            });
+        });
+    }
+
+    fn open_file_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Alembic", &["abc"])
+            .pick_file()
+        {
+            self.load_file(path);
+        }
+    }
+
+    fn load_file(&mut self, path: PathBuf) {
+        self.status_message = format!("Loading: {}", path.display());
+        
+        let renderer = match &mut self.viewport.renderer {
+            Some(r) => r,
+            None => {
+                self.status_message = "Renderer not initialized".into();
+                return;
+            }
+        };
+        
+        match alembic::abc::IArchive::open(&path) {
+            Ok(archive) => {
+                // Clear existing meshes
+                renderer.clear_meshes();
+                
+                // Collect and convert all meshes
+                let meshes = mesh_converter::collect_meshes(&archive, 0);
+                let stats = mesh_converter::compute_stats(&meshes);
+                
+                // Add meshes to renderer
+                for mesh in meshes {
+                    let material = StandardSurfaceParams::plastic(
+                        Vec3::new(0.7, 0.7, 0.75),
+                        0.4,
+                    );
+                    renderer.add_mesh(
+                        mesh.name,
+                        &mesh.vertices,
+                        &mesh.indices,
+                        mesh.transform,
+                        &material,
+                    );
+                }
+                
+                // Update stats
+                self.mesh_count = stats.mesh_count;
+                self.vertex_count = stats.vertex_count;
+                self.face_count = stats.triangle_count;
+                self.current_file = Some(path.clone());
+                
+                self.status_message = format!(
+                    "Loaded: {} meshes, {} vertices, {} triangles",
+                    stats.mesh_count, stats.vertex_count, stats.triangle_count
+                );
+            }
+            Err(e) => {
+                self.status_message = format!("Error: {}", e);
+            }
+        }
+    }
+
+    fn load_test_cube(&mut self) {
+        let renderer = match &mut self.viewport.renderer {
+            Some(r) => r,
+            None => {
+                self.status_message = "Renderer not initialized".into();
+                return;
+            }
+        };
+
+        // Simple cube vertices
+        let vertices = [
+            // Front face
+            Vertex { position: [-0.5, -0.5, 0.5], normal: [0.0, 0.0, 1.0], uv: [0.0, 0.0] },
+            Vertex { position: [0.5, -0.5, 0.5], normal: [0.0, 0.0, 1.0], uv: [1.0, 0.0] },
+            Vertex { position: [0.5, 0.5, 0.5], normal: [0.0, 0.0, 1.0], uv: [1.0, 1.0] },
+            Vertex { position: [-0.5, 0.5, 0.5], normal: [0.0, 0.0, 1.0], uv: [0.0, 1.0] },
+            // Back face
+            Vertex { position: [0.5, -0.5, -0.5], normal: [0.0, 0.0, -1.0], uv: [0.0, 0.0] },
+            Vertex { position: [-0.5, -0.5, -0.5], normal: [0.0, 0.0, -1.0], uv: [1.0, 0.0] },
+            Vertex { position: [-0.5, 0.5, -0.5], normal: [0.0, 0.0, -1.0], uv: [1.0, 1.0] },
+            Vertex { position: [0.5, 0.5, -0.5], normal: [0.0, 0.0, -1.0], uv: [0.0, 1.0] },
+            // Top face
+            Vertex { position: [-0.5, 0.5, 0.5], normal: [0.0, 1.0, 0.0], uv: [0.0, 0.0] },
+            Vertex { position: [0.5, 0.5, 0.5], normal: [0.0, 1.0, 0.0], uv: [1.0, 0.0] },
+            Vertex { position: [0.5, 0.5, -0.5], normal: [0.0, 1.0, 0.0], uv: [1.0, 1.0] },
+            Vertex { position: [-0.5, 0.5, -0.5], normal: [0.0, 1.0, 0.0], uv: [0.0, 1.0] },
+            // Bottom face
+            Vertex { position: [-0.5, -0.5, -0.5], normal: [0.0, -1.0, 0.0], uv: [0.0, 0.0] },
+            Vertex { position: [0.5, -0.5, -0.5], normal: [0.0, -1.0, 0.0], uv: [1.0, 0.0] },
+            Vertex { position: [0.5, -0.5, 0.5], normal: [0.0, -1.0, 0.0], uv: [1.0, 1.0] },
+            Vertex { position: [-0.5, -0.5, 0.5], normal: [0.0, -1.0, 0.0], uv: [0.0, 1.0] },
+            // Right face
+            Vertex { position: [0.5, -0.5, 0.5], normal: [1.0, 0.0, 0.0], uv: [0.0, 0.0] },
+            Vertex { position: [0.5, -0.5, -0.5], normal: [1.0, 0.0, 0.0], uv: [1.0, 0.0] },
+            Vertex { position: [0.5, 0.5, -0.5], normal: [1.0, 0.0, 0.0], uv: [1.0, 1.0] },
+            Vertex { position: [0.5, 0.5, 0.5], normal: [1.0, 0.0, 0.0], uv: [0.0, 1.0] },
+            // Left face
+            Vertex { position: [-0.5, -0.5, -0.5], normal: [-1.0, 0.0, 0.0], uv: [0.0, 0.0] },
+            Vertex { position: [-0.5, -0.5, 0.5], normal: [-1.0, 0.0, 0.0], uv: [1.0, 0.0] },
+            Vertex { position: [-0.5, 0.5, 0.5], normal: [-1.0, 0.0, 0.0], uv: [1.0, 1.0] },
+            Vertex { position: [-0.5, 0.5, -0.5], normal: [-1.0, 0.0, 0.0], uv: [0.0, 1.0] },
+        ];
+
+        let indices: Vec<u32> = (0..6)
+            .flat_map(|face| {
+                let base = face * 4;
+                [base, base + 1, base + 2, base, base + 2, base + 3]
+            })
+            .collect();
+
+        let material = StandardSurfaceParams::plastic(Vec3::new(0.8, 0.2, 0.2), 0.3);
+
+        renderer.add_mesh(
+            "TestCube".into(),
+            &vertices,
+            &indices,
+            Mat4::IDENTITY,
+            &material,
+        );
+
+        self.mesh_count = renderer.meshes.len();
+        self.vertex_count = vertices.len();
+        self.face_count = indices.len() / 3;
+        self.status_message = "Loaded test cube".into();
+    }
+
+    fn clear_scene(&mut self) {
+        if let Some(renderer) = &mut self.viewport.renderer {
+            renderer.clear_meshes();
+        }
+        self.mesh_count = 0;
+        self.vertex_count = 0;
+        self.face_count = 0;
+        self.current_file = None;
+        self.status_message = "Scene cleared".into();
+    }
+}
+
+impl eframe::App for ViewerApp {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.initialize(ctx);
+
+        // Initialize renderer if needed
+        if self.viewport.renderer.is_none() {
+            if let Some(render_state) = frame.wgpu_render_state() {
+                self.viewport.init_renderer(
+                    &render_state.device,
+                    &render_state.queue,
+                    render_state.target_format,
+                );
+            }
+        }
+        
+        // Load pending file (from CLI argument)
+        if self.viewport.renderer.is_some() {
+            if let Some(path) = self.pending_file.take() {
+                self.load_file(path);
+            }
+        }
+
+        // Top menu bar
+        TopBottomPanel::top("menu_bar").show(ctx, |ui| {
+            self.menu_bar(ui);
+        });
+
+        // Bottom status bar
+        TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+            self.status_bar(ui);
+        });
+
+        // Right side panel
+        SidePanel::right("side_panel")
+            .default_width(200.0)
+            .show(ctx, |ui| {
+                self.side_panel(ui);
+            });
+
+        // Central viewport
+        CentralPanel::default().show(ctx, |ui| {
+            let render_state = frame.wgpu_render_state();
+            self.viewport.show(ui, render_state);
+        });
+
+        // Request continuous repaint for smooth camera animation
+        ctx.request_repaint();
+    }
+}
