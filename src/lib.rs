@@ -42,6 +42,10 @@ pub mod collection;
 #[cfg(feature = "python")]
 pub mod python;
 
+// 3D Viewer (optional, enabled with "viewer" feature)
+#[cfg(feature = "viewer")]
+pub mod viewer;
+
 // Re-export commonly used types
 pub use util::{DataType, PlainOldDataType, Error, Result};
 pub use ogawa::{IArchive as OgawaIArchive, OArchive as OgawaOArchive};

@@ -9,7 +9,7 @@ use standard_surface::{
     ShadowUniform, StandardSurfaceParams, Vertex,
 };
 
-use crate::environment::{self, EnvironmentMap, EnvUniform};
+use super::environment::{self, EnvironmentMap, EnvUniform};
 
 /// Shadow map resolution
 const SHADOW_MAP_SIZE: u32 = 2048;

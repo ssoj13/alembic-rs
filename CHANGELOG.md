@@ -1,5 +1,29 @@
 # CHANGELOG
 
+## Session 2026-01-13: Project Restructuring
+
+### Changes
+Moved viewer and CLI from separate crates into main library structure.
+
+### New Structure
+- `src/viewer/` - Viewer module (was `crates/alembic-viewer/`)
+- `src/bin/alembic/main.rs` - CLI binary (was `crates/abc/`)
+- Library: `alembic_core` (renamed to avoid collision with binary)
+- Binary: `alembic`
+
+### Removed
+- `crates/alembic-viewer/` - moved to `src/viewer/`
+- `crates/abc/` - moved to `src/bin/alembic/`
+
+### Files Changed
+- `src/viewer/mod.rs` - New viewer module entry point
+- `src/viewer/*.rs` - Updated imports (`alembic::` -> `crate::`, `crate::` -> `super::`)
+- `src/bin/alembic/main.rs` - CLI using `alembic_core::`
+- `src/lib.rs` - Added `#[cfg(feature = "viewer")] pub mod viewer`
+- `Cargo.toml` - Removed old workspace members, lib renamed to `alembic_core`
+
+---
+
 ## Session 2026-01-13: Unified CLI + Viewer Binary
 
 ### Changes

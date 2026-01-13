@@ -1,4 +1,4 @@
-//! Alembic Viewer library - 3D viewer for .abc files
+//! Alembic Viewer - 3D viewer for .abc files
 
 mod app;
 mod camera;

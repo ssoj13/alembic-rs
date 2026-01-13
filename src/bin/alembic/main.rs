@@ -1,8 +1,8 @@
 //! Alembic CLI - Tool for inspecting and manipulating Alembic files.
 
-use alembic::prelude::{IObject, IPolyMesh, ISubD, ICurves, IPoints, ICamera, IXform};
-use alembic::abc::IArchive as AbcIArchive;
-use alembic::ogawa::writer::{OArchive, OObject, OPolyMesh, OPolyMeshSample, OXform, OXformSample};
+use alembic_core::prelude::{IObject, IPolyMesh, ISubD, ICurves, IPoints, ICamera, IXform};
+use alembic_core::abc::IArchive as AbcIArchive;
+use alembic_core::ogawa::writer::{OArchive, OObject, OPolyMesh, OPolyMeshSample, OXform, OXformSample};
 use std::env;
 use std::path::Path;
 
@@ -75,7 +75,7 @@ fn main() {
             #[cfg(feature = "viewer")]
             {
                 let file = filtered_args.get(1).map(|s| std::path::PathBuf::from(*s));
-                if let Err(e) = alembic_viewer::run(file) {
+                if let Err(e) = alembic_core::viewer::run(file) {
                     eprintln!("Viewer error: {}", e);
                     std::process::exit(1);
                 }
@@ -91,7 +91,7 @@ fn main() {
         "info" | "i" => {
             if filtered_args.len() < 2 {
                 eprintln!("Error: missing file argument");
-                eprintln!("Usage: abc info <file.abc>");
+                eprintln!("Usage: alembic info <file.abc>");
                 std::process::exit(1);
             }
             cmd_info(filtered_args[1]);
@@ -101,7 +101,7 @@ fn main() {
         "tree" | "t" => {
             if filtered_args.len() < 2 {
                 eprintln!("Error: missing file argument");
-                eprintln!("Usage: abc tree <file.abc>");
+                eprintln!("Usage: alembic tree <file.abc>");
                 std::process::exit(1);
             }
             cmd_tree(filtered_args[1]);
@@ -111,7 +111,7 @@ fn main() {
         "stats" | "s" => {
             if filtered_args.len() < 2 {
                 eprintln!("Error: missing file argument");
-                eprintln!("Usage: abc stats <file.abc>");
+                eprintln!("Usage: alembic stats <file.abc>");
                 std::process::exit(1);
             }
             cmd_stats(filtered_args[1]);
@@ -121,7 +121,7 @@ fn main() {
         "dump" | "d" => {
             if filtered_args.len() < 2 {
                 eprintln!("Error: missing file argument");
-                eprintln!("Usage: abc dump <file.abc> [pattern] [--json]");
+                eprintln!("Usage: alembic dump <file.abc> [pattern] [--json]");
                 std::process::exit(1);
             }
             let json_mode = filtered_args.iter().any(|&s| s == "--json" || s == "-j");
@@ -136,7 +136,7 @@ fn main() {
         "copy" | "c" => {
             if filtered_args.len() < 3 {
                 eprintln!("Error: missing arguments");
-                eprintln!("Usage: abc copy <input.abc> <output.abc>");
+                eprintln!("Usage: alembic copy <input.abc> <output.abc>");
                 std::process::exit(1);
             }
             cmd_copy(filtered_args[1], filtered_args[2]);
@@ -160,10 +160,10 @@ fn main() {
 }
 
 fn print_help() {
-    println!("abc - Alembic file toolkit");
+    println!("alembic - Alembic file toolkit");
     println!();
     println!("USAGE:");
-    println!("    abc [OPTIONS] <COMMAND> [ARGS]");
+    println!("    alembic [OPTIONS] <COMMAND> [ARGS]");
     println!();
     println!("COMMANDS:");
     println!("    v, view   <file>              Open file in 3D viewer (Esc to exit)");
@@ -180,13 +180,13 @@ fn print_help() {
     println!("    -q, --quiet      Suppress all output");
     println!();
     println!("EXAMPLES:");
-    println!("    abc view model.abc                    # Open in 3D viewer");
-    println!("    abc info scene.abc                    # Quick overview");
-    println!("    abc tree character.abc                # See hierarchy");
-    println!("    abc dump scene.abc wheel              # Dump transforms matching 'wheel'");
-    println!("    abc dump scene.abc --json             # Export all transforms as JSON");
-    println!("    abc copy input.abc output.abc         # Test round-trip");
-    println!("    abc -v info large.abc                 # Verbose info");
+    println!("    alembic view model.abc                # Open in 3D viewer");
+    println!("    alembic info scene.abc                # Quick overview");
+    println!("    alembic tree character.abc            # See hierarchy");
+    println!("    alembic dump scene.abc wheel          # Dump transforms matching 'wheel'");
+    println!("    alembic dump scene.abc --json         # Export all transforms as JSON");
+    println!("    alembic copy input.abc output.abc     # Test round-trip");
+    println!("    alembic -v info large.abc             # Verbose info");
     println!();
     println!("NOTES:");
     println!("    - Passing a .abc file directly is equivalent to 'info'");

@@ -19,16 +19,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 
 [[package]]
-name = "abc"
-version = "0.1.0"
-dependencies = [
- "alembic",
- "alembic-viewer",
- "glam 0.29.3",
- "serde_json",
-]
-
-[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -59,44 +49,32 @@ dependencies = [
 name = "alembic"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
- "byteorder",
- "flate2",
- "glam 0.29.3",
- "half",
- "memmap2",
- "murmur3",
- "parking_lot",
- "pyo3",
- "serde_json",
- "smallvec",
- "spooky-hash",
- "tempfile",
- "thiserror 2.0.17",
-]
-
-[[package]]
-name = "alembic-viewer"
-version = "0.1.0"
-dependencies = [
- "alembic",
  "anyhow",
  "bytemuck",
+ "byteorder",
  "dirs",
  "dolly",
  "eframe",
  "egui",
  "egui-wgpu",
  "env_logger",
+ "flate2",
  "glam 0.29.3",
  "half",
  "image",
  "log",
+ "memmap2",
  "mint",
+ "murmur3",
+ "parking_lot",
+ "pyo3",
  "rfd",
  "serde",
  "serde_json",
+ "smallvec",
+ "spooky-hash",
  "standard-surface",
+ "tempfile",
  "thiserror 2.0.17",
  "wgpu",
 ]

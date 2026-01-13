@@ -9,9 +9,9 @@ use glam::{Mat4, Vec3};
 
 use standard_surface::{StandardSurfaceParams, Vertex};
 
-use crate::mesh_converter;
-use crate::settings::Settings;
-use crate::viewport::Viewport;
+use super::mesh_converter;
+use super::settings::Settings;
+use super::viewport::Viewport;
 
 /// Main viewer application
 pub struct ViewerApp {
@@ -23,7 +23,7 @@ pub struct ViewerApp {
     current_file: Option<PathBuf>,
     pending_file: Option<PathBuf>,
     pending_hdr_file: Option<PathBuf>,
-    archive: Option<Arc<alembic::abc::IArchive>>,
+    archive: Option<Arc<crate::abc::IArchive>>,
     
     // Animation state
     num_samples: usize,
@@ -441,7 +441,7 @@ impl ViewerApp {
             return;
         }
         
-        match alembic::abc::IArchive::open(&path) {
+        match crate::abc::IArchive::open(&path) {
             Ok(archive) => {
                 // Detect animation - find max samples across all meshes
                 let num_samples = Self::detect_num_samples(&archive);
@@ -479,21 +479,21 @@ impl ViewerApp {
     }
     
     /// Detect maximum number of samples in archive
-    fn detect_num_samples(archive: &alembic::abc::IArchive) -> usize {
+    fn detect_num_samples(archive: &crate::abc::IArchive) -> usize {
         let root = archive.root();
         Self::detect_num_samples_recursive(&root, 1)
     }
     
-    fn detect_num_samples_recursive(obj: &alembic::abc::IObject, max: usize) -> usize {
+    fn detect_num_samples_recursive(obj: &crate::abc::IObject, max: usize) -> usize {
         let mut current_max = max;
         
         // Check if PolyMesh
-        if let Some(polymesh) = alembic::geom::IPolyMesh::new(obj) {
+        if let Some(polymesh) = crate::geom::IPolyMesh::new(obj) {
             current_max = current_max.max(polymesh.num_samples());
         }
         
         // Check if Xform
-        if let Some(xform) = alembic::geom::IXform::new(obj) {
+        if let Some(xform) = crate::geom::IXform::new(obj) {
             current_max = current_max.max(xform.num_samples());
         }
         

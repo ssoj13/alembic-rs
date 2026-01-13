@@ -320,10 +320,6 @@ impl<'a> IXform<'a> {
         if let (Some(ops), Some(vals)) = (ops_data, vals_data) {
             let doubles: &[f64] = bytemuck::try_cast_slice(&vals).unwrap_or(&[]);
             
-            // DEBUG: show raw data
-            eprintln!("[DEBUG] ops bytes: {:?}", ops);
-            eprintln!("[DEBUG] vals count: {} doubles", doubles.len());
-            
             let mut val_idx = 0;
             
             for &op_code in &ops {

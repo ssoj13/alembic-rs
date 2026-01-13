@@ -1,6 +1,6 @@
 //! Convert Alembic PolyMesh to GPU-ready triangulated mesh
 
-use alembic::geom::{IPolyMesh, PolyMeshSample};
+use crate::geom::{IPolyMesh, PolyMeshSample};
 use glam::{Mat4, Vec3};
 use standard_surface::Vertex;
 
@@ -142,7 +142,7 @@ pub fn convert_polymesh(sample: &PolyMeshSample, name: &str, transform: Mat4) ->
 }
 
 /// Recursively collect all PolyMeshes from an archive
-pub fn collect_meshes(archive: &alembic::abc::IArchive, sample_index: usize) -> Vec<ConvertedMesh> {
+pub fn collect_meshes(archive: &crate::abc::IArchive, sample_index: usize) -> Vec<ConvertedMesh> {
     let mut meshes = Vec::new();
     let root = archive.root();
     collect_meshes_recursive(&root, Mat4::IDENTITY, sample_index, &mut meshes);
@@ -150,13 +150,13 @@ pub fn collect_meshes(archive: &alembic::abc::IArchive, sample_index: usize) -> 
 }
 
 fn collect_meshes_recursive(
-    obj: &alembic::abc::IObject,
+    obj: &crate::abc::IObject,
     parent_transform: Mat4,
     sample_index: usize,
     meshes: &mut Vec<ConvertedMesh>,
 ) {
     // Check if this object is an Xform
-    let (local_transform, inherits) = if let Some(xform) = alembic::geom::IXform::new(obj) {
+    let (local_transform, inherits) = if let Some(xform) = crate::geom::IXform::new(obj) {
         if let Ok(sample) = xform.get_sample(sample_index) {
             (sample.matrix(), sample.inherits)
         } else {

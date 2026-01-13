@@ -2,8 +2,8 @@
 
 use egui::{Response, Sense, Ui, Vec2};
 
-use crate::camera::OrbitCamera;
-use crate::renderer::Renderer;
+use super::camera::OrbitCamera;
+use super::renderer::Renderer;
 
 /// 3D Viewport state
 pub struct Viewport {
