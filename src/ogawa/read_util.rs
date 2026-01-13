@@ -83,9 +83,9 @@ pub fn read_time_samplings_and_max(
         }
         
         // Determine sampling type
-        // Acyclic detection: tpc is set to -f64::MAX to indicate acyclic sampling.
-        // We check for very large negative values rather than exact comparison.
-        let ts = if tpc < -1e307 {
+        // Acyclic detection: C++ uses std::numeric_limits<chrono_t>::max() / 32.0
+        // That's ~5.6e306, so we check for values > 1e306 to detect acyclic.
+        let ts = if tpc > 1e306 {
             // Acyclic: explicit times for each sample
             TimeSampling::acyclic(sample_times)
         } else if num_samples == 1 {

@@ -120,7 +120,8 @@ const ALEMBIC_LIBRARY_VERSION: i32 = 10709;
 const OGAWA_FILE_VERSION: i32 = 1;
 
 /// Acyclic time per cycle marker.
-const ACYCLIC_TIME_PER_CYCLE: f64 = -f64::MAX;
+/// Must match C++: std::numeric_limits<chrono_t>::max() / 32.0
+const ACYCLIC_TIME_PER_CYCLE: f64 = f64::MAX / 32.0;
 
 /// Size of digest/key prefix in data blocks.
 const DATA_KEY_SIZE: usize = 16;
@@ -657,8 +658,15 @@ impl OArchive {
     fn write_property_with_data(&mut self, prop: &OProperty) -> Result<(u64, Vec<u8>)> {
         let mut hash_data = Vec::new();
         
+        // Get time sampling info before matching on data
+        let ts_idx = prop.time_sampling_index;
+        
         match &prop.data {
             OPropertyData::Scalar(samples) => {
+                // Update max_samples for this time sampling
+                let num_samples = samples.len() as u32;
+                self.update_max_samples(ts_idx, num_samples);
+                
                 // Each sample is keyed data
                 let mut children = Vec::new();
                 for sample in samples {
@@ -670,6 +678,10 @@ impl OArchive {
                 Ok((pos, hash_data))
             }
             OPropertyData::Array(samples) => {
+                // Update max_samples for this time sampling
+                let num_samples = samples.len() as u32;
+                self.update_max_samples(ts_idx, num_samples);
+                
                 // Each sample is (data, dimensions) pair
                 let mut children = Vec::new();
                 for (data, dims) in samples {
@@ -1133,6 +1145,7 @@ pub struct OPolyMesh {
     object: OObject,
     geom_compound: OProperty,
     arb_geom_compound: Option<OProperty>,
+    time_sampling_index: u32,
 }
 
 impl OPolyMesh {
@@ -1147,7 +1160,19 @@ impl OPolyMesh {
             object,
             geom_compound: OProperty::compound(".geom"),
             arb_geom_compound: None,
+            time_sampling_index: 0,
         }
+    }
+    
+    /// Set time sampling index for animated properties.
+    pub fn with_time_sampling(mut self, index: u32) -> Self {
+        self.time_sampling_index = index;
+        self
+    }
+    
+    /// Set time sampling index for animated properties.
+    pub fn set_time_sampling(&mut self, index: u32) {
+        self.time_sampling_index = index;
     }
     
     /// Add a sample.
@@ -1194,13 +1219,15 @@ impl OPolyMesh {
     
     /// Get or create array property in compound.
     fn get_or_create_array(&mut self, _compound_name: &str, prop_name: &str, data_type: DataType) -> &mut OProperty {
+        let ts_idx = self.time_sampling_index;
         if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
             // Find existing
             if let Some(idx) = children.iter().position(|p| p.name == prop_name) {
                 return &mut children[idx];
             }
-            // Create new
-            let prop = OProperty::array(prop_name, data_type);
+            // Create new with time sampling
+            let mut prop = OProperty::array(prop_name, data_type);
+            prop.time_sampling_index = ts_idx;
             children.push(prop);
             children.last_mut().unwrap()
         } else {
@@ -1210,12 +1237,14 @@ impl OPolyMesh {
     
     /// Get or create arb geom param array.
     fn get_or_create_arb_array(&mut self, prop_name: &str, data_type: DataType) -> &mut OProperty {
+        let ts_idx = self.time_sampling_index;
         let arb = self.arb_geom_compound.get_or_insert_with(|| OProperty::compound(".arbGeomParams"));
         if let OPropertyData::Compound(children) = &mut arb.data {
             if let Some(idx) = children.iter().position(|p| p.name == prop_name) {
                 return &mut children[idx];
             }
-            let prop = OProperty::array(prop_name, data_type);
+            let mut prop = OProperty::array(prop_name, data_type);
+            prop.time_sampling_index = ts_idx;
             children.push(prop);
             children.last_mut().unwrap()
         } else {
@@ -1258,6 +1287,7 @@ impl OXformSample {
 pub struct OXform {
     object: OObject,
     samples: Vec<OXformSample>,
+    time_sampling_index: u32,
 }
 
 impl OXform {
@@ -1271,7 +1301,19 @@ impl OXform {
         Self {
             object,
             samples: Vec::new(),
+            time_sampling_index: 0,
         }
+    }
+    
+    /// Set time sampling index for animated properties.
+    pub fn with_time_sampling(mut self, index: u32) -> Self {
+        self.time_sampling_index = index;
+        self
+    }
+    
+    /// Set time sampling index for animated properties.
+    pub fn set_time_sampling(&mut self, index: u32) {
+        self.time_sampling_index = index;
     }
     
     /// Add a sample.
@@ -1286,6 +1328,7 @@ impl OXform {
             
             // .vals - the matrix values
             let mut vals = OProperty::array(".vals", DataType::new(PlainOldDataType::Float64, 1));
+            vals.time_sampling_index = self.time_sampling_index;
             for sample in &self.samples {
                 let cols = sample.matrix.to_cols_array();
                 let doubles: Vec<f64> = cols.iter().map(|f| *f as f64).collect();
@@ -1294,6 +1337,7 @@ impl OXform {
             
             // .ops - operation types
             let mut ops = OProperty::array(".ops", DataType::new(PlainOldDataType::Uint8, 1));
+            ops.time_sampling_index = self.time_sampling_index;
             // Single matrix op = 0 (kMatrixOperation)
             let op_data = vec![0u8; 1];
             for _ in &self.samples {
@@ -1302,6 +1346,7 @@ impl OXform {
             
             // .inherits
             let mut inherits = OProperty::scalar(".inherits", DataType::new(PlainOldDataType::Boolean, 1));
+            inherits.time_sampling_index = self.time_sampling_index;
             for sample in &self.samples {
                 inherits.add_scalar_pod(&(sample.inherits as u8));
             }

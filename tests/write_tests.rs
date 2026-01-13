@@ -459,7 +459,103 @@ fn test_write_file_is_readable_by_low_level() {
 
 const BMW_PATH: &str = "data/bmw.abc";
 
-/// Convert IObject hierarchy to OObject hierarchy
+/// Copy all time samplings from source archive to output archive.
+/// Returns mapping of old indices to new indices.
+fn copy_time_samplings(src: &alembic::abc::IArchive, dst: &mut OArchive) -> std::collections::HashMap<u32, u32> {
+    let mut mapping = std::collections::HashMap::new();
+    
+    // Index 0 is identity in both - always maps to 0
+    mapping.insert(0, 0);
+    
+    // Copy remaining time samplings
+    for i in 1..src.num_time_samplings() {
+        if let Some(ts) = src.time_sampling(i) {
+            let new_idx = dst.add_time_sampling(ts.clone());
+            mapping.insert(i as u32, new_idx);
+        }
+    }
+    
+    mapping
+}
+
+/// Convert IObject hierarchy to OObject hierarchy with time sampling preservation.
+fn convert_object_with_ts(
+    obj: &alembic::abc::IObject,
+    src_archive: &alembic::abc::IArchive,
+    ts_map: &std::collections::HashMap<u32, u32>,
+) -> OObject {
+    let mut out = OObject::new(obj.name());
+    
+    // Copy metadata
+    let header = obj.header();
+    out.meta_data = header.meta_data.clone();
+    
+    // Check if it's an Xform - copy ALL transform samples with time sampling
+    if obj.matches_schema(XFORM_SCHEMA) {
+        if let Some(xform) = IXform::new(obj) {
+            let num_samples = xform.num_samples();
+            let mut oxform = OXform::new(obj.name());
+            
+            // Get and map time sampling index
+            let src_ts_idx = xform.child_bounds_time_sampling_index();
+            let dst_ts_idx = *ts_map.get(&src_ts_idx).unwrap_or(&0);
+            oxform.set_time_sampling(dst_ts_idx);
+            
+            for i in 0..num_samples {
+                if let Ok(sample) = xform.get_sample(i) {
+                    let matrix = sample.matrix();
+                    oxform.add_sample(OXformSample::from_matrix(matrix, sample.inherits));
+                }
+            }
+            let built = oxform.build();
+            out.meta_data = built.meta_data;
+            out.properties = built.properties;
+        }
+    }
+    
+    // Check if it's a PolyMesh - copy ALL geometry samples with time sampling
+    if obj.matches_schema(POLYMESH_SCHEMA) {
+        if let Some(mesh) = IPolyMesh::new(obj) {
+            let num_samples = mesh.num_samples();
+            let mut omesh = OPolyMesh::new(obj.name());
+            
+            // Get and map time sampling index
+            let src_ts_idx = mesh.child_bounds_time_sampling_index();
+            let dst_ts_idx = *ts_map.get(&src_ts_idx).unwrap_or(&0);
+            omesh.set_time_sampling(dst_ts_idx);
+            
+            for i in 0..num_samples {
+                if let Ok(sample) = mesh.get_sample(i) {
+                    if sample.num_vertices() > 0 {
+                        let mut out_sample = OPolyMeshSample::new(
+                            sample.positions.clone(),
+                            sample.face_counts.clone(),
+                            sample.face_indices.clone(),
+                        );
+                        // Copy optional attributes
+                        out_sample.velocities = sample.velocities.clone();
+                        out_sample.normals = sample.normals.clone();
+                        out_sample.uvs = sample.uvs.clone();
+                        omesh.add_sample(&out_sample);
+                    }
+                }
+            }
+            let built = omesh.build();
+            out.meta_data = built.meta_data;
+            out.properties = built.properties;
+        }
+    }
+    
+    // Recurse children
+    for child in obj.children() {
+        let child_out = convert_object_with_ts(&child, src_archive, ts_map);
+        out.children.push(child_out);
+    }
+    
+    out
+}
+
+/// Convert IObject hierarchy to OObject hierarchy (legacy, no time sampling).
 fn convert_object(obj: &alembic::abc::IObject) -> OObject {
     let mut out = OObject::new(obj.name());
     
@@ -1227,4 +1323,191 @@ fn test_format_self_consistency() {
         
         assert_eq!(diff_count, 0, "Format should be self-consistent");
     }
+}
+
+/// Detailed analysis of binary differences between original and converted files
+#[test]
+fn test_binary_diff_analysis() {
+    use std::fs::File;
+    use std::io::Read;
+    use std::collections::HashMap;
+    
+    if !std::path::Path::new(BMW_PATH).exists() {
+        println!("Skipping - BMW file not found");
+        return;
+    }
+    
+    let output_path = std::env::temp_dir().join("bmw_diff_analysis.abc");
+    
+    // Read and convert with time sampling preservation
+    let original = IArchive::open(BMW_PATH).expect("Failed to open BMW");
+    let orig_root = original.root();
+    
+    {
+        let mut archive = OArchive::create(&output_path).expect("Failed to create archive");
+        
+        // Copy time samplings first
+        let ts_map = copy_time_samplings(&original, &mut archive);
+        println!("Copied {} time samplings", ts_map.len());
+        
+        // Convert with time sampling mapping
+        let mut out_root = OObject::new("");
+        for child in orig_root.children() {
+            out_root.children.push(convert_object_with_ts(&child, &original, &ts_map));
+        }
+        
+        archive.write_archive(&out_root).expect("Failed to write archive");
+    }
+    
+    // Verify the written file can be read back
+    {
+        let written = IArchive::open(&output_path).expect("Failed to re-open written file");
+        assert_eq!(written.num_time_samplings(), 2, "Should have 2 time samplings");
+        let root = written.root();
+        assert_eq!(root.num_children(), 1, "Should have 1 child");
+    }
+    
+    // Read both files
+    let mut orig_data = Vec::new();
+    let mut out_data = Vec::new();
+    File::open(BMW_PATH).unwrap().read_to_end(&mut orig_data).unwrap();
+    File::open(&output_path).unwrap().read_to_end(&mut out_data).unwrap();
+    
+    println!("\n{}", "=".repeat(60));
+    println!("BINARY DIFFERENCE ANALYSIS");
+    println!("{}", "=".repeat(60));
+    
+    // 1. Header analysis (first 16 bytes)
+    println!("\n[1] OGAWA HEADER (16 bytes)");
+    println!("    Offset  Field           Original        Output          Match");
+    println!("    ------  -----           --------        ------          -----");
+    
+    // Magic (5 bytes)
+    let orig_magic = &orig_data[0..5];
+    let out_magic = &out_data[0..5];
+    let magic_ok = orig_magic == out_magic;
+    println!("    0x0000  Magic           {:?}    {:?}    {}", 
+             String::from_utf8_lossy(orig_magic), 
+             String::from_utf8_lossy(out_magic),
+             if magic_ok { "OK" } else { "DIFF" });
+    
+    // Frozen byte
+    let frozen_ok = orig_data[5] == out_data[5];
+    println!("    0x0005  Frozen          0x{:02x}            0x{:02x}            {}",
+             orig_data[5], out_data[5], if frozen_ok { "OK" } else { "DIFF" });
+    
+    // Version (2 bytes, big-endian)
+    let orig_ver = u16::from_be_bytes([orig_data[6], orig_data[7]]);
+    let out_ver = u16::from_be_bytes([out_data[6], out_data[7]]);
+    let ver_ok = orig_ver == out_ver;
+    println!("    0x0006  Version         {}               {}               {}",
+             orig_ver, out_ver, if ver_ok { "OK" } else { "DIFF" });
+    
+    // Root position (8 bytes, little-endian)
+    let orig_root_pos = u64::from_le_bytes(orig_data[8..16].try_into().unwrap());
+    let out_root_pos = u64::from_le_bytes(out_data[8..16].try_into().unwrap());
+    println!("    0x0008  RootPos         0x{:08x}      0x{:08x}      {}",
+             orig_root_pos, out_root_pos, 
+             if orig_root_pos == out_root_pos { "OK" } else { "DIFF (expected)" });
+    
+    // 2. Analyze difference regions
+    println!("\n[2] DIFFERENCE REGIONS");
+    
+    let min_len = orig_data.len().min(out_data.len());
+    let mut regions: Vec<(usize, usize)> = Vec::new();
+    let mut in_diff = false;
+    let mut diff_start = 0;
+    
+    for i in 0..min_len {
+        if orig_data[i] != out_data[i] {
+            if !in_diff {
+                in_diff = true;
+                diff_start = i;
+            }
+        } else if in_diff {
+            regions.push((diff_start, i));
+            in_diff = false;
+        }
+    }
+    if in_diff {
+        regions.push((diff_start, min_len));
+    }
+    
+    println!("    Total different regions: {}", regions.len());
+    println!("    Total bytes differing: {}", 
+             regions.iter().map(|(s, e)| e - s).sum::<usize>());
+    
+    // Categorize regions by size
+    let mut size_buckets: HashMap<&str, usize> = HashMap::new();
+    for (start, end) in &regions {
+        let size = end - start;
+        let bucket = if size <= 8 { "1-8 bytes" }
+                    else if size <= 32 { "9-32 bytes" }
+                    else if size <= 128 { "33-128 bytes" }
+                    else if size <= 1024 { "129-1KB" }
+                    else if size <= 65536 { "1KB-64KB" }
+                    else { ">64KB" };
+        *size_buckets.entry(bucket).or_insert(0) += 1;
+    }
+    
+    println!("\n    Region size distribution:");
+    for (bucket, count) in &size_buckets {
+        println!("      {}: {} regions", bucket, count);
+    }
+    
+    // 3. First 10 different regions
+    println!("\n[3] FIRST 10 DIFFERENT REGIONS");
+    for (i, (start, end)) in regions.iter().take(10).enumerate() {
+        let size = end - start;
+        println!("\n    Region {}: 0x{:08x} - 0x{:08x} ({} bytes)", i+1, start, end, size);
+        
+        // Show up to 32 bytes from each
+        let show_len = size.min(32);
+        print!("      Original: ");
+        for j in 0..show_len {
+            print!("{:02x} ", orig_data[start + j]);
+        }
+        if size > 32 { print!("..."); }
+        println!();
+        
+        print!("      Output:   ");
+        for j in 0..show_len {
+            print!("{:02x} ", out_data[start + j]);
+        }
+        if size > 32 { print!("..."); }
+        println!();
+        
+        // Try to interpret what this might be
+        if size == 8 {
+            let orig_u64 = u64::from_le_bytes(orig_data[*start..*end].try_into().unwrap());
+            let out_u64 = u64::from_le_bytes(out_data[*start..*end].try_into().unwrap());
+            println!("      As u64 LE: {} vs {}", orig_u64, out_u64);
+        } else if size == 16 || size == 32 {
+            println!("      Likely: Hash value or position data");
+        }
+    }
+    
+    // 4. Summary of what's likely different
+    println!("\n[4] ANALYSIS SUMMARY");
+    println!("    File sizes: {} vs {} (diff: {} bytes)", 
+             orig_data.len(), out_data.len(), 
+             orig_data.len() as i64 - out_data.len() as i64);
+    
+    // Count hash-like regions (32 bytes that look random)
+    let hash_regions = regions.iter()
+        .filter(|(s, e)| *e - *s == 32 || *e - *s == 16)
+        .count();
+    println!("    Hash-sized regions (16/32 bytes): {}", hash_regions);
+    
+    // Count position-like regions (8 bytes)
+    let pos_regions = regions.iter()
+        .filter(|(s, e)| *e - *s == 8)
+        .count();
+    println!("    Position-sized regions (8 bytes): {}", pos_regions);
+    
+    println!("\n    CONCLUSION:");
+    println!("    The differences are primarily:");
+    println!("    - File positions (different layout = different offsets)");
+    println!("    - Hash values (computed from positions, so they differ)");
+    println!("    - Object ordering (we may write in different order)");
 }
