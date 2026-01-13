@@ -5,9 +5,14 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use standard_surface::{
-    BindGroupLayouts, CameraUniform, LightUniform, ModelUniform, PipelineConfig,
-    StandardSurfaceParams, Vertex,
+    BindGroupLayouts, CameraUniform, LightRig, ModelUniform, PipelineConfig,
+    ShadowUniform, StandardSurfaceParams, Vertex,
 };
+
+use crate::environment::{self, EnvironmentMap, EnvUniform};
+
+/// Shadow map resolution
+const SHADOW_MAP_SIZE: u32 = 2048;
 
 /// Main renderer state
 pub struct Renderer {
@@ -16,7 +21,10 @@ pub struct Renderer {
     
     // Pipelines
     pipeline: wgpu::RenderPipeline,
+    pipeline_double_sided: wgpu::RenderPipeline,
     wireframe_pipeline: wgpu::RenderPipeline,
+    wireframe_pipeline_double_sided: wgpu::RenderPipeline,
+    shadow_pipeline: wgpu::RenderPipeline,
     layouts: BindGroupLayouts,
     
     // Uniforms
@@ -27,11 +35,26 @@ pub struct Renderer {
     // Depth buffer
     depth_texture: Option<DepthTexture>,
     
+    // Shadow mapping
+    #[allow(dead_code)]
+    shadow_texture: wgpu::Texture,
+    #[allow(dead_code)]
+    shadow_view: wgpu::TextureView,
+    #[allow(dead_code)]
+    shadow_sampler: wgpu::Sampler,
+    shadow_uniform_buffer: wgpu::Buffer,
+    shadow_bind_group: wgpu::BindGroup,
+    shadow_pass_bind_group: wgpu::BindGroup,
+    
     // Grid
     grid_mesh: Option<Mesh>,
     grid_material: wgpu::BindGroup,
     grid_model: wgpu::BindGroup,
     grid_model_buffer: wgpu::Buffer,
+    
+    // Environment map
+    env_map: EnvironmentMap,
+    env_uniform_buffer: wgpu::Buffer,
     
     // Scene meshes
     pub meshes: Vec<SceneMesh>,
@@ -39,6 +62,8 @@ pub struct Renderer {
     // Settings
     pub show_wireframe: bool,
     pub show_grid: bool,
+    pub double_sided: bool,
+    pub flip_normals: bool,
     pub background_color: [f32; 4],
 }
 
@@ -87,9 +112,26 @@ impl Renderer {
 
         let wireframe_config = PipelineConfig {
             wireframe: true,
-            ..config
+            ..config.clone()
         };
         let wireframe_pipeline = standard_surface::create_pipeline(&device, &layouts, &wireframe_config);
+        
+        // Double-sided pipelines (no backface culling)
+        let double_sided_config = PipelineConfig {
+            cull_mode: None,
+            ..config
+        };
+        let pipeline_double_sided = standard_surface::create_pipeline(&device, &layouts, &double_sided_config);
+        
+        let wireframe_double_sided_config = PipelineConfig {
+            wireframe: true,
+            cull_mode: None,
+            ..double_sided_config
+        };
+        let wireframe_pipeline_double_sided = standard_surface::create_pipeline(&device, &layouts, &wireframe_double_sided_config);
+        
+        // Shadow depth pipeline
+        let shadow_pipeline = standard_surface::create_shadow_pipeline(&device, &layouts);
 
         // Camera uniform
         let camera_uniform = CameraUniform {
@@ -104,11 +146,11 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        // Light uniform
-        let light_uniform = LightUniform::default();
+        // Light rig (3-point lighting)
+        let light_rig = LightRig::three_point();
         let light_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("light_buffer"),
-            contents: bytemuck::bytes_of(&light_uniform),
+            label: Some("light_rig_buffer"),
+            contents: bytemuck::bytes_of(&light_rig),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
@@ -126,6 +168,73 @@ impl Renderer {
                     resource: light_buffer.as_entire_binding(),
                 },
             ],
+        });
+
+        // Shadow map resources
+        let shadow_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("shadow_map_texture"),
+            size: wgpu::Extent3d {
+                width: SHADOW_MAP_SIZE,
+                height: SHADOW_MAP_SIZE,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let shadow_view = shadow_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        
+        let shadow_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("shadow_sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
+        });
+        
+        // Shadow uniform (light view-proj matrix)
+        let shadow_uniform = ShadowUniform::default();
+        let shadow_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("shadow_uniform_buffer"),
+            contents: bytemuck::bytes_of(&shadow_uniform),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        
+        // Shadow bind group (for main pass - samples shadow map)
+        let shadow_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow_bind_group"),
+            layout: &layouts.shadow,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&shadow_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&shadow_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: shadow_uniform_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        
+        // Shadow pass bind group (for shadow depth pass - group 0)
+        let shadow_pass_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("shadow_pass_bind_group"),
+            layout: &layouts.shadow_pass,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: shadow_uniform_buffer.as_entire_binding(),
+            }],
         });
 
         // Grid material (gray diffuse)
@@ -155,23 +264,44 @@ impl Renderer {
             }],
         });
 
+        // Default environment map (disabled)
+        let env_map = environment::create_default_env(&device, &queue, &layouts.environment);
+        let env_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("env_uniform_buffer"),
+            contents: bytemuck::bytes_of(&EnvUniform::default()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
         Self {
             device,
             queue,
             pipeline,
+            pipeline_double_sided,
             wireframe_pipeline,
+            wireframe_pipeline_double_sided,
+            shadow_pipeline,
             layouts,
             camera_buffer,
             light_buffer,
             camera_light_bind_group,
             depth_texture: None,
+            shadow_texture,
+            shadow_view,
+            shadow_sampler,
+            shadow_uniform_buffer,
+            shadow_bind_group,
+            shadow_pass_bind_group,
             grid_mesh: None,
             grid_material,
             grid_model,
             grid_model_buffer,
+            env_map,
+            env_uniform_buffer,
             meshes: Vec::new(),
             show_wireframe: false,
             show_grid: true,
+            double_sided: false,
+            flip_normals: false,
             background_color: [0.1, 0.1, 0.12, 1.0],
         }
     }
@@ -185,6 +315,34 @@ impl Renderer {
             _pad: 0.0,
         };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
+    }
+
+    /// Update shadow map for key light
+    /// Creates orthographic projection from light's perspective
+    pub fn update_shadow(&self, light_dir: Vec3, scene_center: Vec3, scene_radius: f32) {
+        // Light position far from scene, looking at center
+        let light_pos = scene_center - light_dir.normalize() * scene_radius * 3.0;
+        let up = if light_dir.y.abs() > 0.99 {
+            Vec3::Z
+        } else {
+            Vec3::Y
+        };
+        
+        let light_view = Mat4::look_at_rh(light_pos, scene_center, up);
+        // Orthographic projection covering scene
+        let half_size = scene_radius * 1.5;
+        let light_proj = Mat4::orthographic_rh(
+            -half_size, half_size,
+            -half_size, half_size,
+            0.1, scene_radius * 6.0,
+        );
+        
+        let light_view_proj = light_proj * light_view;
+        
+        let uniform = ShadowUniform {
+            light_view_proj: light_view_proj.to_cols_array_2d(),
+        };
+        self.queue.write_buffer(&self.shadow_uniform_buffer, 0, bytemuck::bytes_of(&uniform));
     }
 
     /// Ensure depth buffer matches viewport size
@@ -351,6 +509,46 @@ impl Renderer {
         self.meshes.clear();
     }
 
+    /// Load HDR/EXR environment map
+    pub fn load_environment(&mut self, path: &std::path::Path) -> anyhow::Result<()> {
+        self.env_map = environment::load_env_map(
+            &self.device,
+            &self.queue,
+            &self.layouts.environment,
+            path,
+        )?;
+        Ok(())
+    }
+
+    /// Clear environment map (use default flat ambient)
+    pub fn clear_environment(&mut self) {
+        self.env_map = environment::create_default_env(
+            &self.device,
+            &self.queue,
+            &self.layouts.environment,
+        );
+    }
+
+    /// Check if environment map is loaded
+    pub fn has_environment(&self) -> bool {
+        self.env_map.intensity > 0.0
+    }
+
+    /// Update all mesh normal matrices (call when flip_normals changes)
+    pub fn update_normals(&self) {
+        let flip_scale = if self.flip_normals { -1.0 } else { 1.0 };
+        
+        for mesh in &self.meshes {
+            let normal_matrix = mesh.transform.inverse().transpose() 
+                * Mat4::from_scale(Vec3::splat(flip_scale));
+            let model_uniform = ModelUniform {
+                model: mesh.transform.to_cols_array_2d(),
+                normal_matrix: normal_matrix.to_cols_array_2d(),
+            };
+            self.queue.write_buffer(&mesh.model_buffer, 0, bytemuck::bytes_of(&model_uniform));
+        }
+    }
+
     /// Render the scene
     pub fn render(&mut self, view: &wgpu::TextureView, width: u32, height: u32) {
         self.ensure_depth_texture(width, height);
@@ -365,6 +563,36 @@ impl Renderer {
             label: Some("render_encoder"),
         });
 
+        // Shadow depth pass - render scene from light's perspective
+        {
+            let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("shadow_depth_pass"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.shadow_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            shadow_pass.set_pipeline(&self.shadow_pipeline);
+            shadow_pass.set_bind_group(0, &self.shadow_pass_bind_group, &[]);
+
+            // Render scene meshes to shadow map
+            for mesh in &self.meshes {
+                shadow_pass.set_bind_group(1, &mesh.model_bind_group, &[]);
+                shadow_pass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
+                shadow_pass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                shadow_pass.draw_indexed(0..mesh.mesh.index_count, 0, 0..1);
+            }
+        }
+
+        // Main render pass
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("main_render_pass"),
@@ -393,14 +621,17 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            let pipeline = if self.show_wireframe {
-                &self.wireframe_pipeline
-            } else {
-                &self.pipeline
+            let pipeline = match (self.show_wireframe, self.double_sided) {
+                (false, false) => &self.pipeline,
+                (false, true) => &self.pipeline_double_sided,
+                (true, false) => &self.wireframe_pipeline,
+                (true, true) => &self.wireframe_pipeline_double_sided,
             };
 
             render_pass.set_pipeline(pipeline);
             render_pass.set_bind_group(0, &self.camera_light_bind_group, &[]);
+            render_pass.set_bind_group(3, &self.shadow_bind_group, &[]);
+            render_pass.set_bind_group(4, &self.env_map.bind_group, &[]);
 
             // Draw grid
             if self.show_grid {

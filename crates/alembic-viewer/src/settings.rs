@@ -1,0 +1,75 @@
+//! Persistent application settings
+
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+/// Application settings that persist between sessions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Settings {
+    // Display
+    pub show_grid: bool,
+    pub show_wireframe: bool,
+    pub double_sided: bool,
+    pub flip_normals: bool,
+    pub background_color: [f32; 4],
+    
+    // Window
+    pub window_width: f32,
+    pub window_height: f32,
+    
+    // Camera
+    pub camera_distance: f32,
+    pub camera_yaw: f32,
+    pub camera_pitch: f32,
+    
+    // Last opened file
+    pub last_file: Option<PathBuf>,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            show_grid: true,
+            show_wireframe: false,
+            double_sided: false,
+            flip_normals: false,
+            background_color: [0.1, 0.1, 0.12, 1.0],
+            window_width: 1280.0,
+            window_height: 720.0,
+            camera_distance: 5.0,
+            camera_yaw: 0.0,
+            camera_pitch: 0.0,
+            last_file: None,
+        }
+    }
+}
+
+impl Settings {
+    /// Get settings file path
+    fn path() -> Option<PathBuf> {
+        dirs::config_dir().map(|mut p| {
+            p.push("alembic-viewer");
+            std::fs::create_dir_all(&p).ok();
+            p.push("settings.json");
+            p
+        })
+    }
+
+    /// Load settings from file
+    pub fn load() -> Self {
+        Self::path()
+            .and_then(|p| std::fs::read_to_string(&p).ok())
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    /// Save settings to file
+    pub fn save(&self) {
+        if let Some(path) = Self::path() {
+            if let Ok(json) = serde_json::to_string_pretty(self) {
+                let _ = std::fs::write(path, json);
+            }
+        }
+    }
+}

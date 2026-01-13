@@ -91,6 +91,27 @@ struct ModelUniform {
 
 @group(2) @binding(0) var<uniform> model: ModelUniform;
 
+// Shadow mapping for key light
+struct ShadowUniform {
+    light_view_proj: mat4x4<f32>,
+}
+
+@group(3) @binding(0) var shadow_map: texture_depth_2d;
+@group(3) @binding(1) var shadow_sampler: sampler_comparison;
+@group(3) @binding(2) var<uniform> shadow: ShadowUniform;
+
+// Environment map (equirectangular HDR/EXR)
+struct EnvParams {
+    intensity: f32,
+    rotation: f32,
+    enabled: f32,
+    _pad: f32,
+}
+
+@group(4) @binding(0) var env_map: texture_2d<f32>;
+@group(4) @binding(1) var env_sampler: sampler;
+@group(4) @binding(2) var<uniform> env: EnvParams;
+
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
@@ -164,22 +185,136 @@ fn oren_nayar(NdotV: f32, NdotL: f32, LdotV: f32, roughness: f32) -> f32 {
     return A + B * s / t;
 }
 
+// Direction to equirectangular UV
+fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
+    let d = normalize(dir);
+    // Spherical coordinates
+    let phi = atan2(d.z, d.x) + rotation;
+    let theta = acos(clamp(d.y, -1.0, 1.0));
+    // Map to [0,1]
+    let u = (phi + PI) / (2.0 * PI);
+    let v = theta / PI;
+    return vec2<f32>(u, v);
+}
+
+// Sample environment map
+fn sample_env(dir: vec3<f32>) -> vec3<f32> {
+    if env.enabled < 0.5 {
+        return vec3<f32>(0.0);
+    }
+    let uv = dir_to_equirect_uv(dir, env.rotation);
+    let color = textureSample(env_map, env_sampler, uv).rgb;
+    return color * env.intensity;
+}
+
+// Shadow sampling with PCF (percentage closer filtering)
+fn sample_shadow(world_pos: vec3<f32>) -> f32 {
+    // Transform to light space
+    let light_space = shadow.light_view_proj * vec4<f32>(world_pos, 1.0);
+    let proj_coords = light_space.xyz / light_space.w;
+    
+    // Transform to [0, 1] range for texture sampling (flip Y for WGSL)
+    let shadow_uv = proj_coords.xy * vec2<f32>(0.5, -0.5) + vec2<f32>(0.5);
+    let current_depth = proj_coords.z;
+    
+    // Check if outside shadow map bounds
+    if shadow_uv.x < 0.0 || shadow_uv.x > 1.0 || shadow_uv.y < 0.0 || shadow_uv.y > 1.0 || current_depth > 1.0 {
+        return 1.0; // No shadow outside map
+    }
+    
+    // PCF - sample multiple points for soft shadows
+    let texel_size = 1.0 / 2048.0; // SHADOW_MAP_SIZE
+    var shadow_sum = 0.0;
+    let bias = 0.002; // Bias to reduce shadow acne
+    
+    // 3x3 PCF kernel
+    for (var x = -1; x <= 1; x++) {
+        for (var y = -1; y <= 1; y++) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+            shadow_sum += textureSampleCompare(
+                shadow_map,
+                shadow_sampler,
+                shadow_uv + offset,
+                current_depth - bias
+            );
+        }
+    }
+    
+    return shadow_sum / 9.0;
+}
+
 // ============================================================================
 // Fragment Shader
 // ============================================================================
+
+// Compute lighting contribution from a single directional light
+fn compute_light(
+    light: Light,
+    N: vec3<f32>,
+    V: vec3<f32>,
+    NdotV: f32,
+    effective_base: vec3<f32>,
+    F0: vec3<f32>,
+    diffuse_roughness: f32,
+    specular_roughness: f32,
+    specular: f32,
+    metalness: f32,
+    coat: f32,
+    coat_color: vec3<f32>,
+    coat_roughness: f32,
+    coat_IOR: f32,
+) -> vec3<f32> {
+    // Skip if light is off
+    if light.intensity < EPSILON {
+        return vec3<f32>(0.0);
+    }
+    
+    let L = normalize(-light.direction);
+    let H = normalize(V + L);
+    
+    let NdotL = max(dot(N, L), 0.0);
+    if NdotL < EPSILON {
+        return vec3<f32>(0.0);
+    }
+    
+    let NdotH = max(dot(N, H), 0.0);
+    let VdotH = max(dot(V, H), 0.0);
+    let LdotV = max(dot(L, V), 0.0);
+    
+    // Diffuse (Oren-Nayar)
+    let diffuse_factor = oren_nayar(NdotV, NdotL, LdotV, diffuse_roughness);
+    let diffuse = effective_base * diffuse_factor * PI_INV;
+    
+    // Specular (GGX)
+    let D = distribution_ggx(NdotH, specular_roughness);
+    let G = geometry_smith(NdotV, NdotL, specular_roughness);
+    let F = fresnel_schlick(VdotH, F0);
+    let specular_brdf = (D * G * F) / (4.0 * NdotV * NdotL + EPSILON);
+    
+    // Energy conservation
+    let kS = F;
+    let kD = (vec3<f32>(1.0) - kS) * (1.0 - metalness);
+    
+    // Coat layer
+    var coat_contribution = vec3<f32>(0.0);
+    if coat > EPSILON {
+        let coat_F0 = vec3<f32>(ior_to_f0(coat_IOR));
+        let coat_D = distribution_ggx(NdotH, coat_roughness);
+        let coat_G = geometry_smith(NdotV, NdotL, coat_roughness);
+        let coat_F = fresnel_schlick(VdotH, coat_F0);
+        coat_contribution = coat * coat_color *
+                           (coat_D * coat_G * coat_F) / (4.0 * NdotV * NdotL + EPSILON);
+    }
+    
+    let radiance = light.color * light.intensity;
+    return (kD * diffuse + specular_brdf * specular + coat_contribution) * radiance * NdotL;
+}
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let N = normalize(in.world_normal);
     let V = normalize(camera.position - in.world_position);
-    let L = normalize(-light.direction);
-    let H = normalize(V + L);
-
     let NdotV = max(dot(N, V), EPSILON);
-    let NdotL = max(dot(N, L), 0.0);
-    let NdotH = max(dot(N, H), 0.0);
-    let VdotH = max(dot(V, H), 0.0);
-    let LdotV = max(dot(L, V), 0.0);
 
     // Unpack material parameters
     let base_color = material.base_color_weight.rgb;
@@ -205,58 +340,56 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let dielectric_F0 = vec3<f32>(ior_to_f0(specular_IOR));
     let F0 = mix(dielectric_F0 * specular_color, effective_base, metalness);
 
-    // ========================================
-    // Diffuse Layer (Oren-Nayar)
-    // ========================================
-    let diffuse_factor = oren_nayar(NdotV, NdotL, LdotV, diffuse_roughness);
-    let diffuse = effective_base * diffuse_factor * PI_INV;
+    // Sample shadow for key light
+    let shadow_factor = sample_shadow(in.world_position);
+    
+    // Accumulate lighting from all 3 lights
+    var color = vec3<f32>(0.0);
+    
+    // Key light (main light) - with shadow
+    color += shadow_factor * compute_light(
+        lights.key, N, V, NdotV,
+        effective_base, F0,
+        diffuse_roughness, specular_roughness, specular, metalness,
+        coat, coat_color, coat_roughness, coat_IOR
+    );
+    
+    // Fill light (softer, side light)
+    color += compute_light(
+        lights.fill, N, V, NdotV,
+        effective_base, F0,
+        diffuse_roughness, specular_roughness, specular, metalness,
+        coat, coat_color, coat_roughness, coat_IOR
+    );
+    
+    // Rim light (back/edge light)
+    color += compute_light(
+        lights.rim, N, V, NdotV,
+        effective_base, F0,
+        diffuse_roughness, specular_roughness, specular, metalness,
+        coat, coat_color, coat_roughness, coat_IOR
+    );
 
-    // ========================================
-    // Specular Layer (GGX)
-    // ========================================
-    let D = distribution_ggx(NdotH, specular_roughness);
-    let G = geometry_smith(NdotV, NdotL, specular_roughness);
-    let F = fresnel_schlick(VdotH, F0);
-
-    let specular_brdf = (D * G * F) / (4.0 * NdotV * NdotL + EPSILON);
-
-    // ========================================
-    // Energy Conservation
-    // ========================================
-    let kS = F;
-    let kD = (vec3<f32>(1.0) - kS) * (1.0 - metalness);
-
-    // ========================================
-    // Coat Layer (simplified)
-    // ========================================
-    var coat_contribution = vec3<f32>(0.0);
-    if coat > EPSILON {
-        let coat_F0 = vec3<f32>(ior_to_f0(coat_IOR));
-
-        let coat_D = distribution_ggx(NdotH, coat_roughness);
-        let coat_G = geometry_smith(NdotV, NdotL, coat_roughness);
-        let coat_F = fresnel_schlick(VdotH, coat_F0);
-
-        coat_contribution = coat * coat_color *
-                           (coat_D * coat_G * coat_F) / (4.0 * NdotV * NdotL + EPSILON);
+    // Ambient / IBL
+    if env.enabled > 0.5 {
+        // Diffuse IBL - sample along normal
+        let env_diffuse = sample_env(N) * effective_base * (1.0 - metalness);
+        
+        // Specular IBL - sample along reflection
+        let R = reflect(-V, N);
+        let env_specular = sample_env(R) * F0;
+        
+        // Roughness attenuation for specular (rough surfaces reflect less sharply)
+        let spec_atten = 1.0 - specular_roughness;
+        
+        color += env_diffuse * 0.3 + env_specular * spec_atten * 0.5;
+    } else {
+        // Fallback to flat ambient
+        color += lights.ambient * effective_base;
     }
-
-    // ========================================
+    
     // Emission
-    // ========================================
-    let emissive = emission * emission_color;
-
-    // ========================================
-    // Combine
-    // ========================================
-    let radiance = light.color * light.intensity;
-    var color = (kD * diffuse + specular_brdf * specular) * radiance * NdotL;
-    color += coat_contribution * radiance * NdotL;
-    color += emissive;
-
-    // Simple ambient
-    let ambient = vec3<f32>(0.03) * effective_base;
-    color += ambient;
+    color += emission * emission_color;
 
     // Opacity
     let alpha = (material.opacity.r + material.opacity.g + material.opacity.b) / 3.0;

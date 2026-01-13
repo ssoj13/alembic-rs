@@ -156,11 +156,11 @@ pub struct CameraUniform {
     pub _pad: f32,
 }
 
-/// Directional light uniform
+/// Directional light
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-pub struct LightUniform {
-    /// Light direction (normalized, pointing toward light)
+pub struct Light {
+    /// Light direction (normalized, pointing toward light source)
     pub direction: Vec3,
     pub _pad1: f32,
     /// Light color (linear RGB)
@@ -169,16 +169,142 @@ pub struct LightUniform {
     pub intensity: f32,
 }
 
-impl Default for LightUniform {
-    fn default() -> Self {
+impl Light {
+    pub fn new(direction: Vec3, color: Vec3, intensity: f32) -> Self {
         Self {
-            direction: Vec3::new(0.0, -1.0, -1.0).normalize(),
+            direction: direction.normalize(),
             _pad1: 0.0,
-            color: Vec3::ONE,
-            intensity: 1.0,
+            color,
+            intensity,
+        }
+    }
+    
+    /// Create a light pointing in direction
+    pub fn directional(dir: Vec3, intensity: f32) -> Self {
+        Self::new(dir, Vec3::ONE, intensity)
+    }
+    
+    /// Disabled light
+    pub fn off() -> Self {
+        Self {
+            direction: Vec3::NEG_Y,
+            _pad1: 0.0,
+            color: Vec3::ZERO,
+            intensity: 0.0,
         }
     }
 }
+
+impl Default for Light {
+    fn default() -> Self {
+        Self::directional(Vec3::new(0.0, -1.0, -1.0), 1.0)
+    }
+}
+
+/// 3-point lighting rig (key, fill, rim)
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct LightRig {
+    /// Key light - main light, typically 45° above and to the side
+    pub key: Light,
+    /// Fill light - softer light from opposite side
+    pub fill: Light,
+    /// Rim light - back light for edge definition
+    pub rim: Light,
+    /// Ambient light color
+    pub ambient: Vec3,
+    pub _pad: f32,
+}
+
+impl Default for LightRig {
+    fn default() -> Self {
+        Self::three_point()
+    }
+}
+
+impl LightRig {
+    /// Classic 3-point lighting setup
+    pub fn three_point() -> Self {
+        Self {
+            // Key: 45° front-right, above
+            key: Light::new(
+                Vec3::new(-0.5, -0.7, -0.5),
+                Vec3::new(1.0, 0.98, 0.95), // Slightly warm
+                1.2,
+            ),
+            // Fill: 45° front-left, at eye level (softer)
+            fill: Light::new(
+                Vec3::new(0.6, -0.3, -0.6),
+                Vec3::new(0.9, 0.95, 1.0), // Slightly cool
+                0.4,
+            ),
+            // Rim: from behind, above
+            rim: Light::new(
+                Vec3::new(0.0, -0.5, 0.8),
+                Vec3::new(1.0, 1.0, 1.0),
+                0.6,
+            ),
+            ambient: Vec3::splat(0.08),
+            _pad: 0.0,
+        }
+    }
+    
+    /// Simple single key light
+    pub fn single_key() -> Self {
+        Self {
+            key: Light::new(
+                Vec3::new(-0.5, -0.8, -0.3),
+                Vec3::ONE,
+                1.0,
+            ),
+            fill: Light::off(),
+            rim: Light::off(),
+            ambient: Vec3::splat(0.15),
+            _pad: 0.0,
+        }
+    }
+    
+    /// Studio lighting (flat, even)
+    pub fn studio() -> Self {
+        Self {
+            key: Light::new(
+                Vec3::new(0.0, -1.0, 0.0),
+                Vec3::ONE,
+                0.8,
+            ),
+            fill: Light::new(
+                Vec3::new(0.0, 0.0, -1.0),
+                Vec3::ONE,
+                0.5,
+            ),
+            rim: Light::off(),
+            ambient: Vec3::splat(0.2),
+            _pad: 0.0,
+        }
+    }
+    
+    /// Dramatic lighting (high contrast)
+    pub fn dramatic() -> Self {
+        Self {
+            key: Light::new(
+                Vec3::new(-0.8, -0.5, -0.2),
+                Vec3::new(1.0, 0.9, 0.8),
+                1.5,
+            ),
+            fill: Light::off(),
+            rim: Light::new(
+                Vec3::new(0.3, -0.2, 0.9),
+                Vec3::new(0.8, 0.9, 1.0),
+                0.8,
+            ),
+            ambient: Vec3::splat(0.03),
+            _pad: 0.0,
+        }
+    }
+}
+
+// Legacy alias
+pub type LightUniform = Light;
 
 /// Model transform uniform
 #[repr(C)]
@@ -201,6 +327,27 @@ impl Default for ModelUniform {
         Self {
             model: identity,
             normal_matrix: identity,
+        }
+    }
+}
+
+/// Shadow mapping uniform
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct ShadowUniform {
+    /// Light view-projection matrix
+    pub light_view_proj: [[f32; 4]; 4],
+}
+
+impl Default for ShadowUniform {
+    fn default() -> Self {
+        Self {
+            light_view_proj: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
         }
     }
 }

@@ -91,6 +91,31 @@ impl OrbitCamera {
         self.rig.driver::<Arm>().offset.z
     }
 
+    /// Set distance from target
+    pub fn set_distance(&mut self, dist: f32) {
+        self.rig.driver_mut::<Arm>().offset.z = dist.clamp(0.1, 500.0);
+    }
+
+    /// Get yaw and pitch angles in degrees (from final transform)
+    pub fn angles(&self) -> (f32, f32) {
+        // Extract euler angles from the final transform rotation
+        let rot = self.rig.final_transform.rotation;
+        let q = glam::Quat::from_xyzw(rot.v.x, rot.v.y, rot.v.z, rot.s);
+        let (yaw, pitch, _) = q.to_euler(glam::EulerRot::YXZ);
+        (yaw.to_degrees(), pitch.to_degrees())
+    }
+
+    /// Set yaw and pitch angles in degrees
+    pub fn set_angles(&mut self, yaw: f32, pitch: f32) {
+        let yp = self.rig.driver_mut::<YawPitch>();
+        yp.set_rotation_quat(mint::Quaternion::from(glam::Quat::from_euler(
+            glam::EulerRot::YXZ,
+            yaw.to_radians(),
+            pitch.to_radians(),
+            0.0,
+        )));
+    }
+
     /// Update camera (call each frame)
     pub fn update(&mut self, dt: f32) {
         self.rig.update(dt);

@@ -2,24 +2,55 @@
 
 mod app;
 mod camera;
+mod environment;
 mod mesh_converter;
 mod renderer;
+mod settings;
 mod viewport;
+
+use settings::Settings;
 
 use std::path::PathBuf;
 use anyhow::Result;
+use wgpu;
 
 fn main() -> Result<()> {
     env_logger::init();
+    
+    // Load settings
+    let settings = Settings::load();
     
     // Get file path from command line if provided
     let initial_file: Option<PathBuf> = std::env::args().nth(1).map(PathBuf::from);
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 720.0])
+            .with_inner_size([settings.window_width, settings.window_height])
             .with_title("Alembic Viewer"),
         renderer: eframe::Renderer::Wgpu,
+        wgpu_options: egui_wgpu::WgpuConfiguration {
+            wgpu_setup: egui_wgpu::WgpuSetup::CreateNew(egui_wgpu::WgpuSetupCreateNew {
+                device_descriptor: std::sync::Arc::new(|adapter| {
+                    let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
+                        wgpu::Limits::downlevel_webgl2_defaults()
+                    } else {
+                        wgpu::Limits::default()
+                    };
+                    wgpu::DeviceDescriptor {
+                        label: Some("alembic-viewer device"),
+                        required_features: wgpu::Features::POLYGON_MODE_LINE,
+                        required_limits: wgpu::Limits {
+                            max_texture_dimension_2d: 8192,
+                            max_bind_groups: 8, // Need 5 groups (0-4) for environment map
+                            ..base_limits
+                        },
+                        ..Default::default()
+                    }
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
         ..Default::default()
     };
 

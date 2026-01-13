@@ -23,10 +23,39 @@
 
 mod params;
 
-pub use params::{CameraUniform, LightUniform, ModelUniform, StandardSurfaceParams};
+pub use params::{CameraUniform, Light, LightRig, LightUniform, ModelUniform, ShadowUniform, StandardSurfaceParams};
 
 /// Embedded shader source
 pub const SHADER_SOURCE: &str = include_str!("shaders/standard_surface.wgsl");
+
+/// Shadow depth pass shader source
+pub const SHADOW_SHADER_SOURCE: &str = r#"
+// Shadow depth pass - vertex shader only
+
+struct ShadowUniform {
+    light_view_proj: mat4x4<f32>,
+}
+
+struct ModelUniform {
+    model: mat4x4<f32>,
+    normal_matrix: mat4x4<f32>,
+}
+
+@group(0) @binding(0) var<uniform> shadow: ShadowUniform;
+@group(1) @binding(0) var<uniform> model: ModelUniform;
+
+struct VertexInput {
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_shadow(in: VertexInput) -> @builtin(position) vec4<f32> {
+    let world_pos = model.model * vec4<f32>(in.position, 1.0);
+    return shadow.light_view_proj * world_pos;
+}
+"#;
 
 /// Shader library modules (for advanced users who want to compose shaders)
 pub mod shader_lib {
@@ -134,10 +163,100 @@ pub fn create_bind_group_layouts(device: &wgpu::Device) -> BindGroupLayouts {
         }],
     });
 
+    // Group 3: Shadow map
+    let shadow = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("standard_surface_shadow"),
+        entries: &[
+            // Shadow depth texture
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Depth,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Comparison sampler
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+                count: None,
+            },
+            // Light view-projection matrix
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    // Shadow pass: just the light view-proj uniform
+    let shadow_pass = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("shadow_pass_uniform"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        }],
+    });
+
+    // Group 4: Environment map
+    let environment = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("standard_surface_environment"),
+        entries: &[
+            // Environment texture
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Sampler
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            // Environment params
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
     BindGroupLayouts {
         camera_light,
         material,
         model,
+        shadow,
+        shadow_pass,
+        environment,
     }
 }
 
@@ -149,6 +268,12 @@ pub struct BindGroupLayouts {
     pub material: wgpu::BindGroupLayout,
     /// Group 2: Model transform
     pub model: wgpu::BindGroupLayout,
+    /// Group 3: Shadow map (for main pass)
+    pub shadow: wgpu::BindGroupLayout,
+    /// Shadow pass: light view-proj uniform only
+    pub shadow_pass: wgpu::BindGroupLayout,
+    /// Group 4: Environment map
+    pub environment: wgpu::BindGroupLayout,
 }
 
 /// Pipeline configuration
@@ -178,6 +303,59 @@ impl Default for PipelineConfig {
     }
 }
 
+/// Create shadow depth pipeline (renders from light's perspective)
+pub fn create_shadow_pipeline(
+    device: &wgpu::Device,
+    layouts: &BindGroupLayouts,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("shadow_depth_shader"),
+        source: wgpu::ShaderSource::Wgsl(SHADOW_SHADER_SOURCE.into()),
+    });
+
+    // Shadow pass needs: shadow uniform (group 0) + model transform (group 1)
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("shadow_pipeline_layout"),
+        bind_group_layouts: &[&layouts.shadow_pass, &layouts.model],
+        push_constant_ranges: &[],
+    });
+
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("shadow_pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_shadow"),
+            compilation_options: Default::default(),
+            buffers: &[vertex_buffer_layout()],
+        },
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            strip_index_format: None,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Back),
+            polygon_mode: wgpu::PolygonMode::Fill,
+            unclipped_depth: false,
+            conservative: false,
+        },
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: wgpu::TextureFormat::Depth32Float,
+            depth_write_enabled: true,
+            depth_compare: wgpu::CompareFunction::Less,
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState {
+                constant: 2, // Bias to reduce shadow acne
+                slope_scale: 2.0,
+                clamp: 0.0,
+            },
+        }),
+        multisample: wgpu::MultisampleState::default(),
+        fragment: None, // No fragment shader - depth only
+        multiview: None,
+        cache: None,
+    })
+}
+
 /// Create the standard surface render pipeline
 pub fn create_pipeline(
     device: &wgpu::Device,
@@ -191,7 +369,13 @@ pub fn create_pipeline(
 
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("standard_surface_pipeline_layout"),
-        bind_group_layouts: &[&layouts.camera_light, &layouts.material, &layouts.model],
+        bind_group_layouts: &[
+            &layouts.camera_light,
+            &layouts.material,
+            &layouts.model,
+            &layouts.shadow,
+            &layouts.environment,
+        ],
         push_constant_ranges: &[],
     });
 
@@ -221,7 +405,7 @@ pub fn create_pipeline(
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
             cull_mode: config.cull_mode,
-            polygon_mode: wgpu::PolygonMode::Fill,
+            polygon_mode: if config.wireframe { wgpu::PolygonMode::Line } else { wgpu::PolygonMode::Fill },
             unclipped_depth: false,
             conservative: false,
         },
@@ -303,15 +487,27 @@ mod tests {
     }
 
     #[test]
-    fn test_light_uniform_size() {
+    fn test_light_size() {
         // vec3 + pad + vec3 + f32 = 32 bytes
-        assert_eq!(std::mem::size_of::<LightUniform>(), 32);
+        assert_eq!(std::mem::size_of::<Light>(), 32);
+    }
+    
+    #[test]
+    fn test_light_rig_size() {
+        // 3 lights (3 * 32) + ambient vec3 + pad = 96 + 16 = 112 bytes
+        assert_eq!(std::mem::size_of::<LightRig>(), 112);
     }
 
     #[test]
     fn test_model_uniform_size() {
         // 2 mat4 = 128 bytes
         assert_eq!(std::mem::size_of::<ModelUniform>(), 128);
+    }
+
+    #[test]
+    fn test_shadow_uniform_size() {
+        // 1 mat4 = 64 bytes
+        assert_eq!(std::mem::size_of::<ShadowUniform>(), 64);
     }
 
     #[test]
@@ -347,12 +543,32 @@ mod tests {
 
     #[test]
     fn test_default_light() {
-        let l = LightUniform::default();
+        let l = Light::default();
         assert_eq!(l.intensity, 1.0);
         assert_eq!(l.color, Vec3::ONE);
         // Direction should be normalized
         let len = l.direction.length();
         assert!((len - 1.0).abs() < 0.001);
+    }
+    
+    #[test]
+    fn test_light_rig_three_point() {
+        let rig = LightRig::three_point();
+        // Key light should be brightest
+        assert!(rig.key.intensity > rig.fill.intensity);
+        // Fill should be non-zero
+        assert!(rig.fill.intensity > 0.0);
+        // Rim should be non-zero
+        assert!(rig.rim.intensity > 0.0);
+        // Ambient should be subtle
+        assert!(rig.ambient.x < 0.2);
+    }
+    
+    #[test]
+    fn test_light_off() {
+        let l = Light::off();
+        assert_eq!(l.intensity, 0.0);
+        assert_eq!(l.color, Vec3::ZERO);
     }
 
     // === Preset tests ===

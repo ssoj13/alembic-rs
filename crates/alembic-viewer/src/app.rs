@@ -1,6 +1,8 @@
 //! Main application state and UI
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Instant;
 
 use egui::{menu, Color32, RichText, TopBottomPanel, CentralPanel, SidePanel};
 use glam::{Mat4, Vec3};
@@ -8,20 +10,30 @@ use glam::{Mat4, Vec3};
 use standard_surface::{StandardSurfaceParams, Vertex};
 
 use crate::mesh_converter;
+use crate::settings::Settings;
 use crate::viewport::Viewport;
 
 /// Main viewer application
 pub struct ViewerApp {
     viewport: Viewport,
     initialized: bool,
+    settings: Settings,
     
     // File state
     current_file: Option<PathBuf>,
     pending_file: Option<PathBuf>,
+    archive: Option<Arc<alembic::abc::IArchive>>,
+    
+    // Animation state
+    num_samples: usize,
+    current_frame: usize,
+    playing: bool,
+    playback_fps: f32,
+    last_frame_time: Instant,
     
     // UI state
-    show_settings: bool,
     status_message: String,
+    show_settings: bool,
     
     // Scene info
     mesh_count: usize,
@@ -31,13 +43,25 @@ pub struct ViewerApp {
 
 impl ViewerApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, initial_file: Option<PathBuf>) -> Self {
+        let settings = Settings::load();
+        
+        // Use last file if no initial file provided
+        let pending = initial_file.or_else(|| settings.last_file.clone());
+        
         Self {
             viewport: Viewport::new(),
             initialized: false,
+            settings,
             current_file: None,
-            pending_file: initial_file,
-            show_settings: false,
+            pending_file: pending,
+            archive: None,
+            num_samples: 0,
+            current_frame: 0,
+            playing: false,
+            playback_fps: 24.0,
+            last_frame_time: Instant::now(),
             status_message: "Ready".into(),
+            show_settings: false,
             mesh_count: 0,
             vertex_count: 0,
             face_count: 0,
@@ -76,8 +100,14 @@ impl ViewerApp {
 
             ui.menu_button("View", |ui| {
                 if let Some(renderer) = &mut self.viewport.renderer {
-                    ui.checkbox(&mut renderer.show_grid, "Show Grid");
-                    ui.checkbox(&mut renderer.show_wireframe, "Wireframe");
+                    if ui.checkbox(&mut renderer.show_grid, "Show Grid").changed() {
+                        self.settings.show_grid = renderer.show_grid;
+                        self.settings.save();
+                    }
+                    if ui.checkbox(&mut renderer.show_wireframe, "Wireframe").changed() {
+                        self.settings.show_wireframe = renderer.show_wireframe;
+                        self.settings.save();
+                    }
                 }
                 ui.separator();
                 if ui.button("Reset Camera").clicked() {
@@ -127,26 +157,68 @@ impl ViewerApp {
         // View settings
         ui.label(RichText::new("Display").strong());
         if let Some(renderer) = &mut self.viewport.renderer {
-            ui.checkbox(&mut renderer.show_grid, "Grid");
-            ui.checkbox(&mut renderer.show_wireframe, "Wireframe");
+            let mut changed = false;
+            
+            if ui.checkbox(&mut self.settings.show_grid, "Grid").changed() {
+                renderer.show_grid = self.settings.show_grid;
+                changed = true;
+            }
+            if ui.checkbox(&mut self.settings.show_wireframe, "Wireframe").changed() {
+                renderer.show_wireframe = self.settings.show_wireframe;
+                changed = true;
+            }
+            if ui.checkbox(&mut self.settings.double_sided, "Double Sided").changed() {
+                renderer.double_sided = self.settings.double_sided;
+                changed = true;
+            }
+            if ui.checkbox(&mut self.settings.flip_normals, "Flip Normals").changed() {
+                renderer.flip_normals = self.settings.flip_normals;
+                renderer.update_normals();
+                changed = true;
+            }
             
             ui.horizontal(|ui| {
                 ui.label("Background:");
                 let mut color = Color32::from_rgba_unmultiplied(
-                    (renderer.background_color[0] * 255.0) as u8,
-                    (renderer.background_color[1] * 255.0) as u8,
-                    (renderer.background_color[2] * 255.0) as u8,
+                    (self.settings.background_color[0] * 255.0) as u8,
+                    (self.settings.background_color[1] * 255.0) as u8,
+                    (self.settings.background_color[2] * 255.0) as u8,
                     255,
                 );
                 if ui.color_edit_button_srgba(&mut color).changed() {
-                    renderer.background_color = [
+                    self.settings.background_color = [
                         color.r() as f32 / 255.0,
                         color.g() as f32 / 255.0,
                         color.b() as f32 / 255.0,
                         1.0,
                     ];
+                    renderer.background_color = self.settings.background_color;
+                    changed = true;
                 }
             });
+            
+            if changed {
+                self.settings.save();
+            }
+            
+        }
+        
+        // Environment section (outside renderer borrow)
+        ui.separator();
+        ui.label(RichText::new("Environment").strong());
+        
+        let has_env = self.viewport.renderer.as_ref().map(|r| r.has_environment()).unwrap_or(false);
+        
+        if ui.button("Load HDR/EXR...").clicked() {
+            self.load_environment_dialog();
+        }
+        
+        if has_env {
+            if ui.button("Clear Environment").clicked() {
+                if let Some(renderer) = &mut self.viewport.renderer {
+                    renderer.clear_environment();
+                }
+            }
         }
 
         ui.separator();
@@ -169,6 +241,79 @@ impl ViewerApp {
             });
         });
     }
+    
+    fn timeline_panel(&mut self, ui: &mut egui::Ui) {
+        // Only show if we have animation
+        if self.num_samples <= 1 {
+            return;
+        }
+        
+        ui.horizontal(|ui| {
+            // Play/Pause button
+            let icon = if self.playing { "\u{23F8}" } else { "\u{25B6}" }; // ⏸ or ▶
+            if ui.button(icon).clicked() {
+                self.playing = !self.playing;
+                self.last_frame_time = Instant::now();
+            }
+            
+            // Stop/reset button
+            if ui.button("\u{23F9}").clicked() { // ⏹
+                self.playing = false;
+                if self.current_frame != 0 {
+                    self.load_frame(0);
+                }
+            }
+            
+            // Frame slider
+            let mut frame = self.current_frame as f32;
+            let max_frame = (self.num_samples - 1) as f32;
+            
+            if ui.add(
+                egui::Slider::new(&mut frame, 0.0..=max_frame)
+                    .step_by(1.0)
+                    .show_value(false)
+            ).changed() {
+                let new_frame = frame as usize;
+                if new_frame != self.current_frame {
+                    self.load_frame(new_frame);
+                }
+            }
+            
+            // Frame counter
+            ui.label(format!("{} / {}", self.current_frame + 1, self.num_samples));
+            
+            ui.separator();
+            
+            // FPS selector
+            ui.label("FPS:");
+            egui::ComboBox::from_id_salt("fps_select")
+                .selected_text(format!("{:.0}", self.playback_fps))
+                .width(50.0)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.playback_fps, 12.0, "12");
+                    ui.selectable_value(&mut self.playback_fps, 24.0, "24");
+                    ui.selectable_value(&mut self.playback_fps, 30.0, "30");
+                    ui.selectable_value(&mut self.playback_fps, 60.0, "60");
+                });
+        });
+    }
+    
+    fn update_animation(&mut self) {
+        if !self.playing || self.num_samples <= 1 {
+            return;
+        }
+        
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_frame_time).as_secs_f32();
+        let frame_duration = 1.0 / self.playback_fps;
+        
+        if elapsed >= frame_duration {
+            self.last_frame_time = now;
+            
+            let next_frame = (self.current_frame + 1) % self.num_samples;
+            self.load_frame(next_frame);
+        }
+    }
 
     fn open_file_dialog(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
@@ -179,9 +324,16 @@ impl ViewerApp {
         }
     }
 
-    fn load_file(&mut self, path: PathBuf) {
-        self.status_message = format!("Loading: {}", path.display());
-        
+    fn load_environment_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("HDR/EXR", &["hdr", "exr"])
+            .pick_file()
+        {
+            self.load_environment(path);
+        }
+    }
+
+    fn load_environment(&mut self, path: PathBuf) {
         let renderer = match &mut self.viewport.renderer {
             Some(r) => r,
             None => {
@@ -190,45 +342,128 @@ impl ViewerApp {
             }
         };
         
+        match renderer.load_environment(&path) {
+            Ok(()) => {
+                self.status_message = format!("Loaded environment: {}", 
+                    path.file_name().unwrap_or_default().to_string_lossy());
+            }
+            Err(e) => {
+                self.status_message = format!("Failed to load environment: {}", e);
+            }
+        }
+    }
+
+    fn load_file(&mut self, path: PathBuf) {
+        self.status_message = format!("Loading: {}", path.display());
+        
+        if self.viewport.renderer.is_none() {
+            self.status_message = "Renderer not initialized".into();
+            return;
+        }
+        
         match alembic::abc::IArchive::open(&path) {
             Ok(archive) => {
-                // Clear existing meshes
-                renderer.clear_meshes();
+                // Detect animation - find max samples across all meshes
+                let num_samples = Self::detect_num_samples(&archive);
                 
-                // Collect and convert all meshes
-                let meshes = mesh_converter::collect_meshes(&archive, 0);
-                let stats = mesh_converter::compute_stats(&meshes);
+                // Store archive for animation playback
+                self.archive = Some(Arc::new(archive));
+                self.num_samples = num_samples;
+                self.current_frame = 0;
+                self.playing = false;
                 
-                // Add meshes to renderer
-                for mesh in meshes {
-                    let material = StandardSurfaceParams::plastic(
-                        Vec3::new(0.7, 0.7, 0.75),
-                        0.4,
-                    );
-                    renderer.add_mesh(
-                        mesh.name,
-                        &mesh.vertices,
-                        &mesh.indices,
-                        mesh.transform,
-                        &material,
-                    );
-                }
+                // Load frame 0
+                self.load_frame(0);
                 
-                // Update stats
-                self.mesh_count = stats.mesh_count;
-                self.vertex_count = stats.vertex_count;
-                self.face_count = stats.triangle_count;
                 self.current_file = Some(path.clone());
                 
+                // Save last file to settings
+                self.settings.last_file = Some(path.clone());
+                self.settings.save();
+                
+                let frames_info = if num_samples > 1 {
+                    format!(", {} frames", num_samples)
+                } else {
+                    String::new()
+                };
+                
                 self.status_message = format!(
-                    "Loaded: {} meshes, {} vertices, {} triangles",
-                    stats.mesh_count, stats.vertex_count, stats.triangle_count
+                    "Loaded: {} meshes, {} vertices, {} triangles{}",
+                    self.mesh_count, self.vertex_count, self.face_count, frames_info
                 );
             }
             Err(e) => {
                 self.status_message = format!("Error: {}", e);
             }
         }
+    }
+    
+    /// Detect maximum number of samples in archive
+    fn detect_num_samples(archive: &alembic::abc::IArchive) -> usize {
+        let root = archive.root();
+        Self::detect_num_samples_recursive(&root, 1)
+    }
+    
+    fn detect_num_samples_recursive(obj: &alembic::abc::IObject, max: usize) -> usize {
+        let mut current_max = max;
+        
+        // Check if PolyMesh
+        if let Some(polymesh) = alembic::geom::IPolyMesh::new(obj) {
+            current_max = current_max.max(polymesh.num_samples());
+        }
+        
+        // Check if Xform
+        if let Some(xform) = alembic::geom::IXform::new(obj) {
+            current_max = current_max.max(xform.num_samples());
+        }
+        
+        // Recurse children
+        for child in obj.children() {
+            current_max = Self::detect_num_samples_recursive(&child, current_max);
+        }
+        
+        current_max
+    }
+    
+    /// Load meshes for a specific frame
+    fn load_frame(&mut self, frame: usize) {
+        let archive = match &self.archive {
+            Some(a) => a.clone(),
+            None => return,
+        };
+        
+        let renderer = match &mut self.viewport.renderer {
+            Some(r) => r,
+            None => return,
+        };
+        
+        // Clear existing meshes
+        renderer.clear_meshes();
+        
+        // Collect and convert all meshes at this frame
+        let meshes = mesh_converter::collect_meshes(&archive, frame);
+        let stats = mesh_converter::compute_stats(&meshes);
+        
+        // Add meshes to renderer
+        for mesh in meshes {
+            let material = StandardSurfaceParams::plastic(
+                Vec3::new(0.7, 0.7, 0.75),
+                0.4,
+            );
+            renderer.add_mesh(
+                mesh.name,
+                &mesh.vertices,
+                &mesh.indices,
+                mesh.transform,
+                &material,
+            );
+        }
+        
+        // Update stats
+        self.mesh_count = stats.mesh_count;
+        self.vertex_count = stats.vertex_count;
+        self.face_count = stats.triangle_count;
+        self.current_frame = frame;
     }
 
     fn load_test_cube(&mut self) {
@@ -305,11 +540,24 @@ impl ViewerApp {
         self.vertex_count = 0;
         self.face_count = 0;
         self.current_file = None;
+        self.archive = None;
+        self.num_samples = 0;
+        self.current_frame = 0;
+        self.playing = false;
         self.status_message = "Scene cleared".into();
     }
 }
 
 impl eframe::App for ViewerApp {
+    fn on_exit(&mut self) {
+        // Save camera state
+        self.settings.camera_distance = self.viewport.camera.distance();
+        let (yaw, pitch) = self.viewport.camera.angles();
+        self.settings.camera_yaw = yaw;
+        self.settings.camera_pitch = pitch;
+        self.settings.save();
+    }
+    
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.initialize(ctx);
 
@@ -321,6 +569,19 @@ impl eframe::App for ViewerApp {
                     &render_state.queue,
                     render_state.target_format,
                 );
+                // Apply saved settings to renderer
+                if let Some(renderer) = &mut self.viewport.renderer {
+                    renderer.show_grid = self.settings.show_grid;
+                    renderer.show_wireframe = self.settings.show_wireframe;
+                    renderer.double_sided = self.settings.double_sided;
+                    renderer.flip_normals = self.settings.flip_normals;
+                    renderer.background_color = self.settings.background_color;
+                }
+                // Ensure settings file exists
+                self.settings.save();
+                // Apply saved camera settings
+                self.viewport.camera.set_distance(self.settings.camera_distance);
+                self.viewport.camera.set_angles(self.settings.camera_yaw, self.settings.camera_pitch);
             }
         }
         
@@ -330,12 +591,24 @@ impl eframe::App for ViewerApp {
                 self.load_file(path);
             }
         }
+        
+        // Update animation playback
+        self.update_animation();
 
         // Top menu bar
         TopBottomPanel::top("menu_bar").show(ctx, |ui| {
             self.menu_bar(ui);
         });
 
+        // Timeline (above status bar)
+        if self.num_samples > 1 {
+            TopBottomPanel::bottom("timeline")
+                .resizable(false)
+                .show(ctx, |ui| {
+                    self.timeline_panel(ui);
+                });
+        }
+        
         // Bottom status bar
         TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             self.status_bar(ui);
@@ -354,6 +627,14 @@ impl eframe::App for ViewerApp {
             self.viewport.show(ui, render_state);
         });
 
+        // Track window size for saving on exit
+        ctx.input(|i| {
+            if let Some(rect) = i.viewport().inner_rect {
+                self.settings.window_width = rect.width();
+                self.settings.window_height = rect.height();
+            }
+        });
+        
         // Request continuous repaint for smooth camera animation
         ctx.request_repaint();
     }
