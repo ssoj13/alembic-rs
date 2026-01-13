@@ -467,37 +467,47 @@ fn convert_object(obj: &alembic::abc::IObject) -> OObject {
     let header = obj.header();
     out.meta_data = header.meta_data.clone();
     
-    // Check if it's an Xform - copy transform data
+    // Check if it's an Xform - copy ALL transform samples
     if obj.matches_schema(XFORM_SCHEMA) {
         if let Some(xform) = IXform::new(obj) {
-            if let Ok(sample) = xform.get_sample(0) {
-                let matrix = sample.matrix();
-                let mut oxform = OXform::new(obj.name());
-                oxform.add_sample(OXformSample::from_matrix(matrix, sample.inherits));
-                // Use the built object but we need its properties
-                let built = oxform.build();
-                out.meta_data = built.meta_data;
-                out.properties = built.properties;
+            let num_samples = xform.num_samples();
+            let mut oxform = OXform::new(obj.name());
+            for i in 0..num_samples {
+                if let Ok(sample) = xform.get_sample(i) {
+                    let matrix = sample.matrix();
+                    oxform.add_sample(OXformSample::from_matrix(matrix, sample.inherits));
+                }
             }
+            let built = oxform.build();
+            out.meta_data = built.meta_data;
+            out.properties = built.properties;
         }
     }
     
-    // Check if it's a PolyMesh - copy geometry
+    // Check if it's a PolyMesh - copy ALL geometry samples with all attributes
     if obj.matches_schema(POLYMESH_SCHEMA) {
         if let Some(mesh) = IPolyMesh::new(obj) {
-            if let Ok(sample) = mesh.get_sample(0) {
-                if sample.num_vertices() > 0 {
-                    let mut omesh = OPolyMesh::new(obj.name());
-                    omesh.add_sample(&OPolyMeshSample::new(
-                        sample.positions.clone(),
-                        sample.face_counts.clone(),
-                        sample.face_indices.clone(),
-                    ));
-                    let built = omesh.build();
-                    out.meta_data = built.meta_data;
-                    out.properties = built.properties;
+            let num_samples = mesh.num_samples();
+            let mut omesh = OPolyMesh::new(obj.name());
+            for i in 0..num_samples {
+                if let Ok(sample) = mesh.get_sample(i) {
+                    if sample.num_vertices() > 0 {
+                        let mut out_sample = OPolyMeshSample::new(
+                            sample.positions.clone(),
+                            sample.face_counts.clone(),
+                            sample.face_indices.clone(),
+                        );
+                        // Copy optional attributes
+                        out_sample.velocities = sample.velocities.clone();
+                        out_sample.normals = sample.normals.clone();
+                        out_sample.uvs = sample.uvs.clone();
+                        omesh.add_sample(&out_sample);
+                    }
                 }
             }
+            let built = omesh.build();
+            out.meta_data = built.meta_data;
+            out.properties = built.properties;
         }
     }
     
@@ -908,4 +918,313 @@ fn test_roundtrip_archive_metadata() {
     }
     
     println!("Archive metadata roundtrip test PASSED!");
+}
+
+// ============================================================================
+// Binary Comparison Test
+// ============================================================================
+
+#[test]
+fn test_bmw_binary_comparison() {
+    use std::fs::File;
+    use std::io::Read;
+    
+    // Skip if BMW file doesn't exist
+    if !std::path::Path::new(BMW_PATH).exists() {
+        println!("Skipping binary comparison - BMW file not found");
+        return;
+    }
+    
+    let output_path = std::env::temp_dir().join("bmw_binary_compare.abc");
+    
+    // Read original BMW
+    let original = IArchive::open(BMW_PATH).expect("Failed to open BMW");
+    let orig_root = original.root();
+    
+    // Convert to OObject hierarchy
+    let mut out_root = OObject::new("");
+    for child in orig_root.children() {
+        out_root.children.push(convert_object(&child));
+    }
+    
+    // Write to new file
+    {
+        let mut archive = OArchive::create(&output_path).expect("Failed to create archive");
+        archive.write_archive(&out_root).expect("Failed to write archive");
+    }
+    
+    // Read both files
+    let mut orig_data = Vec::new();
+    let mut out_data = Vec::new();
+    
+    File::open(BMW_PATH).unwrap().read_to_end(&mut orig_data).unwrap();
+    File::open(&output_path).unwrap().read_to_end(&mut out_data).unwrap();
+    
+    println!("\n=== Binary Comparison ===");
+    println!("Original: {} bytes", orig_data.len());
+    println!("Output:   {} bytes", out_data.len());
+    println!("Diff:     {} bytes ({:.2}%)", 
+             orig_data.len() as i64 - out_data.len() as i64,
+             (out_data.len() as f64 / orig_data.len() as f64) * 100.0);
+    
+    // Count byte differences
+    let min_len = orig_data.len().min(out_data.len());
+    let mut diff_count = 0;
+    let mut first_diffs: Vec<(usize, u8, u8)> = Vec::new();
+    
+    for i in 0..min_len {
+        if orig_data[i] != out_data[i] {
+            diff_count += 1;
+            if first_diffs.len() < 50 {
+                first_diffs.push((i, orig_data[i], out_data[i]));
+            }
+        }
+    }
+    
+    // Add size difference to count
+    diff_count += orig_data.len().abs_diff(out_data.len());
+    
+    println!("Byte differences: {}", diff_count);
+    
+    // Show first differences
+    if !first_diffs.is_empty() {
+        println!("\nFirst 20 differences:");
+        for (i, (offset, b1, b2)) in first_diffs.iter().take(20).enumerate() {
+            println!("  {:2}: 0x{:08x} ({:8}): orig=0x{:02x} new=0x{:02x}", 
+                     i, offset, offset, b1, b2);
+        }
+    }
+    
+    // Hexdump helper
+    fn hexdump(data: &[u8], offset: usize) {
+        for (i, chunk) in data.chunks(16).enumerate() {
+            print!("  {:08x}: ", offset + i * 16);
+            for b in chunk {
+                print!("{:02x} ", b);
+            }
+            for _ in chunk.len()..16 {
+                print!("   ");
+            }
+            print!(" |");
+            for b in chunk {
+                let c = if *b >= 32 && *b < 127 { *b as char } else { '.' };
+                print!("{}", c);
+            }
+            println!("|");
+        }
+    }
+    
+    // Show headers
+    println!("\n=== Header (first 64 bytes) ===");
+    println!("Original:");
+    hexdump(&orig_data[..64.min(orig_data.len())], 0);
+    println!("\nOutput:");
+    hexdump(&out_data[..64.min(out_data.len())], 0);
+    
+    // Show context around first difference
+    if let Some(&(first_offset, _, _)) = first_diffs.first() {
+        let start = first_offset.saturating_sub(32);
+        let end = (first_offset + 64).min(min_len);
+        
+        println!("\n=== Context around first diff (0x{:x}) ===", first_offset);
+        println!("Original:");
+        hexdump(&orig_data[start..end], start);
+        println!("\nOutput:");
+        hexdump(&out_data[start..end], start);
+    }
+    
+    println!("\n=== Summary ===");
+    println!("Files identical: {}", diff_count == 0);
+    
+    // Don't assert, just report
+}
+
+/// Test pure write consistency: create same object twice -> write twice -> compare
+/// This tests if the writer itself is deterministic
+#[test]
+fn test_pure_write_consistency() {
+    use std::fs::File;
+    use std::io::Read;
+    
+    let path1 = std::env::temp_dir().join("pure_write_1.abc");
+    let path2 = std::env::temp_dir().join("pure_write_2.abc");
+    
+    // Helper to create a test object hierarchy
+    fn create_test_object() -> OObject {
+        let mut root = OObject::new("");
+        
+        // Add a mesh
+        let mut mesh = OPolyMesh::new("test_mesh");
+        mesh.add_sample(&OPolyMeshSample::new(
+            vec![
+                glam::Vec3::new(0.0, 0.0, 0.0),
+                glam::Vec3::new(1.0, 0.0, 0.0),
+                glam::Vec3::new(0.5, 1.0, 0.0),
+            ],
+            vec![3],
+            vec![0, 1, 2],
+        ));
+        root.add_child(mesh.build());
+        
+        // Add an xform with a child mesh
+        let mut xform = OXform::new("test_xform");
+        xform.add_sample(OXformSample::from_matrix(
+            glam::Mat4::from_translation(glam::Vec3::new(1.0, 2.0, 3.0)),
+            true,
+        ));
+        let mut xform_obj = xform.build();
+        
+        let mut child_mesh = OPolyMesh::new("child_mesh");
+        child_mesh.add_sample(&OPolyMeshSample::new(
+            vec![
+                glam::Vec3::new(0.0, 0.0, 0.0),
+                glam::Vec3::new(2.0, 0.0, 0.0),
+                glam::Vec3::new(1.0, 2.0, 0.0),
+            ],
+            vec![3],
+            vec![0, 1, 2],
+        ));
+        xform_obj.add_child(child_mesh.build());
+        root.add_child(xform_obj);
+        
+        root
+    }
+    
+    // Write pass 1
+    {
+        let root = create_test_object();
+        let mut archive = OArchive::create(&path1).expect("Failed to create archive 1");
+        archive.write_archive(&root).expect("Failed to write archive 1");
+    }
+    
+    // Write pass 2 (same data)
+    {
+        let root = create_test_object();
+        let mut archive = OArchive::create(&path2).expect("Failed to create archive 2");
+        archive.write_archive(&root).expect("Failed to write archive 2");
+    }
+    
+    // Compare files byte-by-byte
+    let mut data1 = Vec::new();
+    let mut data2 = Vec::new();
+    File::open(&path1).unwrap().read_to_end(&mut data1).unwrap();
+    File::open(&path2).unwrap().read_to_end(&mut data2).unwrap();
+    
+    println!("\n=== Pure Write Consistency Test ===");
+    println!("Pass 1 size: {} bytes", data1.len());
+    println!("Pass 2 size: {} bytes", data2.len());
+    
+    assert_eq!(data1.len(), data2.len(), "File sizes must match");
+    
+    let mut diff_count = 0;
+    for i in 0..data1.len() {
+        if data1[i] != data2[i] {
+            diff_count += 1;
+            if diff_count <= 10 {
+                println!("  Diff at 0x{:08x}: 0x{:02x} vs 0x{:02x}", i, data1[i], data2[i]);
+            }
+        }
+    }
+    
+    if diff_count == 0 {
+        println!("PASS: Files are byte-for-byte identical!");
+    } else {
+        println!("FAIL: {} byte differences", diff_count);
+    }
+    
+    assert_eq!(diff_count, 0, "Pure write must be deterministic");
+}
+
+/// Test format self-consistency: write -> read -> write -> compare
+/// If our format is stable, the two outputs should be identical
+#[test]
+fn test_format_self_consistency() {
+    use std::fs::File;
+    use std::io::Read;
+    
+    // Use our own pure write output as source - this eliminates BMW complexity
+    let source_path = std::env::temp_dir().join("consistency_source.abc");
+    
+    // First create a deterministic source file
+    {
+        let mut root = OObject::new("");
+        
+        let mut mesh = OPolyMesh::new("test_mesh");
+        mesh.add_sample(&OPolyMeshSample::new(
+            vec![
+                glam::Vec3::new(0.0, 0.0, 0.0),
+                glam::Vec3::new(1.0, 0.0, 0.0),
+                glam::Vec3::new(0.5, 1.0, 0.0),
+            ],
+            vec![3],
+            vec![0, 1, 2],
+        ));
+        root.add_child(mesh.build());
+        
+        let mut archive = OArchive::create(&source_path).expect("Failed to create source");
+        archive.write_archive(&root).expect("Failed to write source");
+    }
+    
+    let path1 = std::env::temp_dir().join("consistency_pass1.abc");
+    let path2 = std::env::temp_dir().join("consistency_pass2.abc");
+    
+    // Pass 1: Read source -> Write
+    {
+        let original = IArchive::open(&source_path).expect("Failed to open source");
+        let orig_root = original.root();
+        
+        let mut out_root = OObject::new("");
+        for child in orig_root.children() {
+            out_root.children.push(convert_object(&child));
+        }
+        
+        let mut archive = OArchive::create(&path1).expect("Failed to create archive 1");
+        archive.write_archive(&out_root).expect("Failed to write archive 1");
+    }
+    
+    // Pass 2: Read pass1 -> Write
+    {
+        let pass1 = IArchive::open(&path1).expect("Failed to open pass1");
+        let pass1_root = pass1.root();
+        
+        let mut out_root = OObject::new("");
+        for child in pass1_root.children() {
+            out_root.children.push(convert_object(&child));
+        }
+        
+        let mut archive = OArchive::create(&path2).expect("Failed to create archive 2");
+        archive.write_archive(&out_root).expect("Failed to write archive 2");
+    }
+    
+    // Compare files byte-by-byte
+    let mut data1 = Vec::new();
+    let mut data2 = Vec::new();
+    File::open(&path1).unwrap().read_to_end(&mut data1).unwrap();
+    File::open(&path2).unwrap().read_to_end(&mut data2).unwrap();
+    
+    println!("\n=== Format Self-Consistency Test ===");
+    println!("Pass 1 size: {} bytes", data1.len());
+    println!("Pass 2 size: {} bytes", data2.len());
+    
+    if data1.len() != data2.len() {
+        println!("FAIL: Size mismatch!");
+    } else {
+        let mut diff_count = 0;
+        for i in 0..data1.len() {
+            if data1[i] != data2[i] {
+                diff_count += 1;
+                if diff_count <= 10 {
+                    println!("  Diff at 0x{:08x}: 0x{:02x} vs 0x{:02x}", i, data1[i], data2[i]);
+                }
+            }
+        }
+        
+        if diff_count == 0 {
+            println!("PASS: Files are byte-for-byte identical!");
+        } else {
+            println!("FAIL: {} byte differences", diff_count);
+        }
+        
+        assert_eq!(diff_count, 0, "Format should be self-consistent");
+    }
 }

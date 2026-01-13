@@ -112,8 +112,8 @@ impl IStreams {
         // Read frozen flag
         let frozen = data[FROZEN_OFFSET] == FROZEN_FLAG;
 
-        // Read version (little-endian u16)
-        let version = u16::from_le_bytes([data[VERSION_OFFSET], data[VERSION_OFFSET + 1]]);
+        // Read version (big-endian u16, matching C++ Alembic format: {0, 1} = version 1)
+        let version = u16::from_be_bytes([data[VERSION_OFFSET], data[VERSION_OFFSET + 1]]);
 
         Ok((version, frozen))
     }
@@ -547,8 +547,9 @@ mod tests {
         let mut header = [0u8; 16];
         header[0..5].copy_from_slice(OGAWA_MAGIC);
         header[FROZEN_OFFSET] = FROZEN_FLAG;
-        header[VERSION_OFFSET] = 1;
-        header[VERSION_OFFSET + 1] = 0;
+        // Big-endian: {0, 1} = version 1
+        header[VERSION_OFFSET] = 0;
+        header[VERSION_OFFSET + 1] = 1;
 
         let (version, frozen) = IStreams::parse_header(&header).unwrap();
         assert_eq!(version, 1);

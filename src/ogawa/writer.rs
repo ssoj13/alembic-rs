@@ -10,8 +10,9 @@ use std::path::Path;
 use byteorder::{LittleEndian, WriteBytesExt};
 
 use super::format::*;
-use crate::core::{MetaData, TimeSampling, TimeSamplingType, ArraySampleContentKey, compute_digest};
+use crate::core::{MetaData, TimeSampling, TimeSamplingType, ArraySampleContentKey};
 use crate::util::{DataType, PlainOldDataType, Error, Result};
+use spooky_hash::SpookyHash;
 
 /// Output stream for writing Ogawa data.
 pub struct OStream {
@@ -155,7 +156,8 @@ impl OArchive {
         // Write header with placeholder for root position
         stream.write_bytes(OGAWA_MAGIC)?;
         stream.write_u8(NOT_FROZEN_FLAG)?;
-        stream.write_u16(CURRENT_VERSION)?;
+        // Version as big-endian (matching C++ Alembic format: {0, 1} = version 1)
+        stream.write_bytes(&CURRENT_VERSION.to_be_bytes())?;
         stream.write_u64(0)?; // Root position placeholder
 
         // Default identity time sampling at index 0
@@ -448,27 +450,25 @@ impl OArchive {
         if self.frozen {
             return Err(Error::Frozen);
         }
-        
+
+        // Write version data first (as per official implementation)
+        let version_pos = self.write_data(&OGAWA_FILE_VERSION.to_le_bytes())?;
+
+        // Write library version data second (as per official implementation)
+        let file_version_pos = self.write_data(&ALEMBIC_LIBRARY_VERSION.to_le_bytes())?;
+
         // Write all objects recursively, collect positions
-        let root_obj_pos = self.write_object(root, "/")?;
-        
-        // Serialize time samplings
-        let ts_data = self.serialize_time_samplings();
-        let ts_pos = self.write_data(&ts_data)?;
-        
-        // Serialize indexed metadata
-        let idx_meta_data = self.serialize_indexed_metadata();
-        let idx_meta_pos = if idx_meta_data.is_empty() {
-            0
-        } else {
-            self.write_data(&idx_meta_data)?
-        };
-        
+        let (root_obj_pos, _, _) = self.write_object(root, "/")?;
+
         // Write archive metadata
         // Include application_writer if not already set via set_app_name
         let mut archive_meta = self.archive_metadata.clone();
         if archive_meta.get("_ai_Application").is_none() && !self.application_writer.is_empty() {
             archive_meta.set("_ai_Application", &self.application_writer);
+        }
+        // Also set the Alembic version as in the reference implementation
+        if archive_meta.get("_ai_AlembicVersion").is_none() {
+            archive_meta.set("_ai_AlembicVersion", "1.7.9"); // Using the same version as the library
         }
         let archive_meta_str = archive_meta.serialize();
         let archive_meta_pos = if archive_meta_str.is_empty() {
@@ -476,13 +476,19 @@ impl OArchive {
         } else {
             self.write_data(archive_meta_str.as_bytes())?
         };
-        
-        // Write version data
-        let version_pos = self.write_data(&OGAWA_FILE_VERSION.to_le_bytes())?;
-        
-        // Write file version data
-        let file_version_pos = self.write_data(&ALEMBIC_LIBRARY_VERSION.to_le_bytes())?;
-        
+
+        // Serialize time samplings
+        let ts_data = self.serialize_time_samplings();
+        let ts_pos = self.write_data(&ts_data)?;
+
+        // Serialize indexed metadata
+        let idx_meta_data = self.serialize_indexed_metadata();
+        let idx_meta_pos = if idx_meta_data.is_empty() {
+            0
+        } else {
+            self.write_data(&idx_meta_data)?
+        };
+
         // Build root group:
         // Child 0: version (data)
         // Child 1: file version (data)
@@ -498,44 +504,69 @@ impl OArchive {
             make_data_offset(ts_pos),
             make_data_offset(idx_meta_pos),
         ];
-        
+
         let root_pos = self.write_group(&root_children)?;
-        
+
         // Finalize
         self.frozen = true;
-        
+
         // Update header
         self.stream.seek(FROZEN_OFFSET as u64)?;
         self.stream.write_u8(FROZEN_FLAG)?;
         self.stream.seek(ROOT_POS_OFFSET as u64)?;
         self.stream.write_u64(root_pos)?;
-        
+
         self.stream.seek_end()?;
         self.stream.flush()?;
-        
+
         Ok(())
     }
     
-    /// Write an object and return its group position.
-    fn write_object(&mut self, obj: &OObject, parent_path: &str) -> Result<u64> {
+    /// Write an object and return (position, hash1, hash2).
+    /// The hashes are SpookyHash of property data and child object hashes.
+    fn write_object(&mut self, obj: &OObject, parent_path: &str) -> Result<(u64, u64, u64)> {
         let full_path = if parent_path == "/" {
             format!("/{}", obj.name)
         } else {
             format!("{}/{}", parent_path, obj.name)
         };
         
-        // Write properties compound
-        let props_pos = self.write_properties(&obj.properties)?;
+        // Write properties compound and get property data for hashing
+        let (props_pos, props_data) = self.write_properties_with_data(&obj.properties)?;
         
-        // Write child objects
+        // Write child objects and collect their hashes
         let mut child_positions = Vec::new();
+        let mut child_hashes: Vec<u64> = Vec::new(); // pairs of (hash1, hash2)
         for child in &obj.children {
-            let child_pos = self.write_object(child, &full_path)?;
+            let (child_pos, h1, h2) = self.write_object(child, &full_path)?;
             child_positions.push(child_pos);
+            child_hashes.push(h1);
+            child_hashes.push(h2);
         }
         
-        // Write object headers (for children)
-        let headers_data = self.serialize_object_headers(&obj.children, &full_path);
+        // Compute property data hash (dataHash)
+        let (data_hash1, data_hash2) = if props_data.is_empty() {
+            SpookyHash::hash128(&[], 0, 0)
+        } else {
+            SpookyHash::hash128(&props_data, 0, 0)
+        };
+        
+        // Compute child objects hash (ioHash)
+        let (child_hash1, child_hash2) = if child_hashes.is_empty() {
+            (0u64, 0u64)
+        } else {
+            let child_hash_bytes: Vec<u8> = child_hashes.iter()
+                .flat_map(|h| h.to_le_bytes())
+                .collect();
+            SpookyHash::hash128(&child_hash_bytes, 0, 0)
+        };
+        
+        // Write object headers (for children) with 32-byte hash suffix
+        let headers_data = self.serialize_object_headers_with_hash(
+            &obj.children,
+            data_hash1, data_hash2,
+            child_hash1, child_hash2,
+        );
         let headers_pos = if headers_data.is_empty() {
             0
         } else {
@@ -555,25 +586,53 @@ impl OArchive {
             children.push(make_data_offset(headers_pos));
         }
         
-        self.write_group(&children)
+        let pos = self.write_group(&children)?;
+        
+        // Combine dataHash with childHash for parent's ioHash
+        // (SpookyHash allows updating after Final)
+        let mut combined_hash = SpookyHash::new(0, 0);
+        if !child_hashes.is_empty() {
+            let child_hash_bytes: Vec<u8> = child_hashes.iter()
+                .flat_map(|h| h.to_le_bytes())
+                .collect();
+            combined_hash.update(&child_hash_bytes);
+        }
+        combined_hash.update(&data_hash1.to_le_bytes());
+        combined_hash.update(&data_hash2.to_le_bytes());
+        let (final_h1, final_h2) = combined_hash.finalize();
+        
+        Ok((pos, final_h1, final_h2))
     }
     
     /// Write properties compound and return its position.
+    #[allow(dead_code)]
     fn write_properties(&mut self, props: &[OProperty]) -> Result<u64> {
+        let (pos, _) = self.write_properties_with_data(props)?;
+        Ok(pos)
+    }
+    
+    /// Write properties compound and return (position, serialized_data_for_hashing).
+    fn write_properties_with_data(&mut self, props: &[OProperty]) -> Result<(u64, Vec<u8>)> {
         if props.is_empty() {
             // Write empty compound
-            return self.write_group(&[]);
+            let pos = self.write_group(&[])?;
+            return Ok((pos, Vec::new()));
         }
+        
+        // Collect all property data for hashing
+        let mut all_prop_data = Vec::new();
         
         // Write each property
         let mut prop_positions = Vec::new();
         for prop in props {
-            let prop_pos = self.write_property(prop)?;
+            let (prop_pos, prop_data) = self.write_property_with_data(prop)?;
             prop_positions.push(prop_pos);
+            all_prop_data.extend_from_slice(&prop_data);
         }
         
         // Write property headers
         let headers_data = self.serialize_property_headers(props);
+        all_prop_data.extend_from_slice(&headers_data);
         let headers_pos = self.write_data(&headers_data)?;
         
         // Build compound group
@@ -583,11 +642,21 @@ impl OArchive {
         }
         children.push(make_data_offset(headers_pos));
         
-        self.write_group(&children)
+        let pos = self.write_group(&children)?;
+        Ok((pos, all_prop_data))
     }
     
     /// Write a single property and return its position.
+    #[allow(dead_code)]
     fn write_property(&mut self, prop: &OProperty) -> Result<u64> {
+        let (pos, _) = self.write_property_with_data(prop)?;
+        Ok(pos)
+    }
+    
+    /// Write a single property and return (position, data_for_hashing).
+    fn write_property_with_data(&mut self, prop: &OProperty) -> Result<(u64, Vec<u8>)> {
+        let mut hash_data = Vec::new();
+        
         match &prop.data {
             OPropertyData::Scalar(samples) => {
                 // Each sample is keyed data
@@ -595,8 +664,10 @@ impl OArchive {
                 for sample in samples {
                     let pos = self.write_keyed_data(sample)?;
                     children.push(make_data_offset(pos));
+                    hash_data.extend_from_slice(sample);
                 }
-                self.write_group(&children)
+                let pos = self.write_group(&children)?;
+                Ok((pos, hash_data))
             }
             OPropertyData::Array(samples) => {
                 // Each sample is (data, dimensions) pair
@@ -609,47 +680,65 @@ impl OArchive {
                     let dims_pos = self.write_data(&dims_data)?;
                     children.push(make_data_offset(data_pos));
                     children.push(make_data_offset(dims_pos));
+                    hash_data.extend_from_slice(data);
+                    hash_data.extend_from_slice(&dims_data);
                 }
-                self.write_group(&children)
+                let pos = self.write_group(&children)?;
+                Ok((pos, hash_data))
             }
             OPropertyData::Compound(sub_props) => {
-                self.write_properties(sub_props)
+                self.write_properties_with_data(sub_props)
             }
         }
     }
     
-    /// Serialize object headers for children.
+    /// Serialize object headers for children (without hash suffix).
+    #[allow(dead_code)]
     fn serialize_object_headers(&mut self, children: &[OObject], _parent_path: &str) -> Vec<u8> {
-        if children.is_empty() {
-            return Vec::new();
-        }
-        
+        self.serialize_object_headers_with_hash(children, 0, 0, 0, 0)
+    }
+    
+    /// Serialize object headers for children with 32-byte SpookyHash suffix.
+    /// 
+    /// Format per C++ reference (OwData.cpp writeHeaders):
+    /// - For each child: name_size + name + metadata_index [+ inline_metadata]
+    /// - 32 bytes of hashes at end: [data_hash1, data_hash2, child_hash1, child_hash2]
+    fn serialize_object_headers_with_hash(
+        &mut self,
+        children: &[OObject],
+        data_hash1: u64,
+        data_hash2: u64,
+        child_hash1: u64,
+        child_hash2: u64,
+    ) -> Vec<u8> {
+        // Even if no children, we need the hash suffix if we have data
         let mut buf = Vec::new();
-        
+
         for child in children {
-            // Name size (u32) + name + metadata index (u8)
+            // Name size (u32 with hint 2) + name
             let name_bytes = child.name.as_bytes();
-            buf.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+            write_with_hint(&mut buf, name_bytes.len() as u32, 2); // Hint 2 for 4 bytes
             buf.extend_from_slice(name_bytes);
-            
+
+            // Metadata index (1 byte)
             let meta_idx = self.add_indexed_metadata(&child.meta_data);
+            write_with_hint(&mut buf, meta_idx as u32, 0); // 1 byte for metadata index
+
+            // If metadata index is 0xff, write inline metadata
             if meta_idx == 0xff {
-                // Inline metadata
-                buf.push(0xff);
                 let meta_str = child.meta_data.serialize();
-                buf.extend_from_slice(&(meta_str.len() as u32).to_le_bytes());
+                write_with_hint(&mut buf, meta_str.len() as u32, 2); // Hint 2 for 4 bytes
                 buf.extend_from_slice(meta_str.as_bytes());
-            } else {
-                buf.push(meta_idx);
             }
         }
-        
-        // Compute hash of the header data (children names + metadata)
-        // 32 bytes total: 16 bytes children hash + 16 bytes reserved
-        let children_hash = compute_digest(&buf);
-        buf.extend_from_slice(&children_hash);
-        buf.extend_from_slice(&[0u8; 16]); // Reserved/properties hash placeholder
-        
+
+        // Append 32 bytes of hashes (4 x u64, little-endian)
+        // Order: data_hash1, data_hash2, child_hash1, child_hash2
+        buf.extend_from_slice(&data_hash1.to_le_bytes());
+        buf.extend_from_slice(&data_hash2.to_le_bytes());
+        buf.extend_from_slice(&child_hash1.to_le_bytes());
+        buf.extend_from_slice(&child_hash2.to_le_bytes());
+
         buf
     }
     
@@ -701,7 +790,26 @@ impl OArchive {
     /// Build property info bitmask.
     fn build_property_info(&mut self, prop: &OProperty) -> u32 {
         let mut info: u32 = 0;
-        
+
+        // Calculate size hint based on max of name size, metadata size, num samples, and time sampling index
+        let name_size = prop.name.len() as u32;
+        let meta_data = prop.meta_data.serialize();
+        let meta_data_size = meta_data.len() as u32;
+        let num_samples = prop.num_samples() as u32;
+        let time_sampling_index = prop.time_sampling_index;
+
+        let max_size = meta_data_size.max(name_size).max(num_samples).max(time_sampling_index);
+        let size_hint = if max_size > 255 && max_size < 65536 {
+            1
+        } else if max_size >= 65536 {
+            2
+        } else {
+            0
+        };
+
+        // Size hint (bits 2-3)
+        info |= (size_hint & 0x03) << 2;
+
         // Property type (bits 0-1)
         match &prop.data {
             OPropertyData::Compound(_) => {
@@ -714,43 +822,38 @@ impl OArchive {
                 info |= 2; // Array
             }
         }
-        
-        // Size hint (bits 2-3) - use 2 (u32) for simplicity
-        info |= 2 << 2;
-        
+
         // For non-compound properties
         if !matches!(prop.data, OPropertyData::Compound(_)) {
             // POD type (bits 4-7)
             let pod = pod_to_u8(prop.data_type.pod) as u32;
             info |= (pod & 0x0f) << 4;
-            
+
             // Extent (bits 12-19)
             info |= (prop.data_type.extent as u32 & 0xff) << 12;
-            
+
             // Is homogenous (bit 10) - always true for now
             info |= 0x400;
-            
+
             // Time sampling index flag (bit 8)
             if prop.time_sampling_index != 0 {
                 info |= 0x0100;
             }
-            
-            // First/last changed flag (bit 9)
+
+            // Whether first/last index exists (bit 9)
             let num_samples = prop.num_samples() as u32;
-            if prop.first_changed_index != 1 || prop.last_changed_index != num_samples.saturating_sub(1) {
-                info |= 0x0200;
-            }
-            
-            // All samples same flag (bit 11)
-            if prop.first_changed_index == 0 && prop.last_changed_index == 0 && num_samples > 1 {
+            if prop.first_changed_index == 0 && prop.last_changed_index == 0 {
+                // All samples same flag (bit 11)
                 info |= 0x800;
+            } else if prop.first_changed_index != 1 || prop.last_changed_index != num_samples.saturating_sub(1) {
+                info |= 0x0200; // Whether first/last index exists
             }
         }
-        
+
         // Metadata index (bits 20-27)
         let meta_idx = self.add_indexed_metadata(&prop.meta_data);
         info |= (meta_idx as u32) << 20;
-        
+
         info
     }
 
@@ -2309,7 +2412,9 @@ mod tests {
 
         assert_eq!(&header[0..5], OGAWA_MAGIC);
         assert_eq!(header[FROZEN_OFFSET], FROZEN_FLAG);
-        assert_eq!(header[VERSION_OFFSET], 1);
+        // Version is big-endian: {0, 1} = version 1
+        assert_eq!(header[VERSION_OFFSET], 0);
+        assert_eq!(header[VERSION_OFFSET + 1], 1);
 
         Ok(())
     }

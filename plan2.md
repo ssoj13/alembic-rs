@@ -6,6 +6,49 @@ During the bug hunt, we identified critical issues in the Ogawa writer implement
 
 ## Issues Found
 
+### 0. CRITICAL: Missing SpookyHash in Object Headers (CONFIRMED)
+**Status**: Fixed - spooky-hash sub-crate created
+
+The C++ implementation uses SpookyHash V2 for hashing object and property headers:
+```cpp
+// From OwData.cpp - writeHeaders()
+Util::SpookyHash dataHash;   // for property data
+Util::SpookyHash ioHash;     // for child objects
+dataHash.Init(0, 0);
+ioHash.Init(0, 0);
+
+// ... accumulate hashes during serialization ...
+
+// CRITICAL: 32 bytes of hash appended at end!
+Util::uint64_t hashes[4];
+dataHash.Final(&hashes[0], &hashes[1]);  // property hash (16 bytes)
+ioHash.Final(&hashes[2], &hashes[3]);    // child objects hash (16 bytes)
+for (size_t i = 0; i < 32; ++i) {
+    data.push_back(hashData[i]);
+}
+m_group->addData(data.size(), &data.front());
+```
+
+**Rust implementation is MISSING these 32 bytes at end of object headers!**
+
+**Fix**: Created `spooky-hash` sub-crate with binary-compatible SpookyV2 port.
+
+### 0b. CRITICAL: WriteDimensions Optimization Missing (CONFIRMED)
+
+C++ implementation has optimization for 1D non-string arrays:
+```cpp
+// From WriteUtil.cpp
+void WriteDimensions(...) {
+    if (iPod != kStringPOD && iPod != kWstringPOD && rank <= 1) {
+        iGroup->addEmptyData();  // Empty data for 1D non-strings!
+        return;
+    }
+    iGroup->addData(rank * sizeof(uint64_t), iDims.rootPtr());
+}
+```
+
+**Rust always writes dimensions even for rank<=1 non-string types.**
+
 ### 1. Archive Structure Issues
 - **Root Group Structure**: Incorrect ordering of children in the root group
 - **Expected order**:
