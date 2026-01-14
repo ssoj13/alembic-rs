@@ -16,6 +16,7 @@ use crate::core::{
     ArchiveReader, ObjectReader, CompoundPropertyReader, PropertyReader,
     ScalarPropertyReader, ArrayPropertyReader,
     ObjectHeader, PropertyHeader, MetaData, TimeSampling,
+    ArraySampleKey, ReadArraySampleCache,
 };
 use crate::util::{Result, Error};
 
@@ -37,6 +38,8 @@ pub struct OgawaArchiveReader {
     indexed_metadata: Arc<Vec<MetaData>>,
     root_data: Arc<ObjectData>,
     root_header: ObjectHeader,
+    /// Array sample cache for read performance.
+    cache: Arc<ReadArraySampleCache>,
 }
 
 impl OgawaArchiveReader {
@@ -50,6 +53,9 @@ impl OgawaArchiveReader {
     }
     
     fn init(name: String, inner: Arc<OgawaIArchive>) -> Result<Self> {
+        // Create cache (64 MB default)
+        let cache = Arc::new(ReadArraySampleCache::default());
+        
         let group = inner.root();
         let num_children = group.num_children();
         
@@ -110,6 +116,7 @@ impl OgawaArchiveReader {
             root_group,
             "",
             indexed_metadata.clone(),
+            cache.clone(),
         )?);
         
         // Create root header
@@ -133,6 +140,7 @@ impl OgawaArchiveReader {
             indexed_metadata,
             root_data,
             root_header,
+            cache,
         })
     }
     
@@ -212,10 +220,12 @@ impl ArchiveReader for OgawaArchiveReader {
             if i < parts.len() - 1 {
                 let group_index = (child_idx + 1) as u64;
                 let child_group = current_data.group.group(group_index).ok()?;
+                let cache = current_data.cache.clone();
                 current_data = Arc::new(ObjectData::new(
                     child_group,
                     &parsed_header.full_name,
                     current_data.indexed_metadata.clone(),
+                    cache,
                 ).ok()?);
             } else {
                 // Last part - create the reader
@@ -225,6 +235,7 @@ impl ArchiveReader for OgawaArchiveReader {
                     child_group,
                     &parsed_header.full_name,
                     current_data.indexed_metadata.clone(),
+                    current_data.cache.clone(),
                 ).ok()?);
                 
                 return Some(Box::new(OgawaObjectReader {
@@ -345,6 +356,7 @@ struct ObjectData {
     children: Vec<ParsedObjectHeader>,
     properties: CompoundData,
     indexed_metadata: Arc<Vec<MetaData>>,
+    cache: Arc<ReadArraySampleCache>,
 }
 
 impl ObjectData {
@@ -352,6 +364,7 @@ impl ObjectData {
         group: IGroup,
         parent_name: &str,
         indexed_metadata: Arc<Vec<MetaData>>,
+        cache: Arc<ReadArraySampleCache>,
     ) -> Result<Self> {
         let num_children = group.num_children();
         
@@ -366,7 +379,7 @@ impl ObjectData {
         // Parse properties from first child if it's a group
         let properties = if num_children > 0 && group.is_child_group(0)? {
             let props_group = group.group(0)?;
-            CompoundData::from_group(props_group, &indexed_metadata)?
+            CompoundData::from_group(props_group, &indexed_metadata, cache.clone())?
         } else {
             CompoundData::empty()
         };
@@ -376,6 +389,7 @@ impl ObjectData {
             children,
             properties,
             indexed_metadata,
+            cache,
         })
     }
     
@@ -412,6 +426,7 @@ impl ObjectData {
             child_group,
             &header.full_name,
             self.indexed_metadata.clone(),
+            self.cache.clone(),
         )?);
         
         let obj_header = ObjectHeader {
@@ -437,6 +452,7 @@ pub struct CompoundData {
     sub_properties: Vec<ParsedPropertyHeader>,
     group: Option<IGroup>,
     indexed_metadata: Arc<Vec<MetaData>>,
+    cache: Arc<ReadArraySampleCache>,
 }
 
 impl CompoundData {
@@ -446,10 +462,11 @@ impl CompoundData {
             sub_properties: Vec::new(),
             group: None,
             indexed_metadata: Arc::new(Vec::new()),
+            cache: Arc::new(ReadArraySampleCache::new(0)), // Empty cache for empty compound
         }
     }
     
-    fn from_group(group: IGroup, indexed_metadata: &[MetaData]) -> Result<Self> {
+    fn from_group(group: IGroup, indexed_metadata: &[MetaData], cache: Arc<ReadArraySampleCache>) -> Result<Self> {
         let num_children = group.num_children();
         
         // Property headers are in the last data child
@@ -465,6 +482,7 @@ impl CompoundData {
             sub_properties,
             group: Some(group),
             indexed_metadata: Arc::new(indexed_metadata.to_vec()),
+            cache,
         })
     }
     
@@ -506,6 +524,7 @@ impl CompoundPropertyReader for CompoundData {
             parsed.clone(),
             prop_group,
             self.indexed_metadata.clone(),
+            self.cache.clone(),
         )))
     }
     
@@ -525,6 +544,8 @@ pub struct OgawaPropertyReader {
     parsed: ParsedPropertyHeader,
     group: Option<IGroup>,
     indexed_metadata: Arc<Vec<MetaData>>,
+    /// Array sample cache for read performance.
+    cache: Arc<ReadArraySampleCache>,
     /// Cached compound data (loaded on demand).
     compound_data: std::sync::OnceLock<Option<CompoundData>>,
 }
@@ -534,6 +555,7 @@ impl OgawaPropertyReader {
         parsed: ParsedPropertyHeader,
         group: Option<IGroup>,
         indexed_metadata: Arc<Vec<MetaData>>,
+        cache: Arc<ReadArraySampleCache>,
     ) -> Self {
         let header = match parsed.property_type {
             PropertyType::Compound => PropertyHeader::compound(&parsed.name),
@@ -552,6 +574,7 @@ impl OgawaPropertyReader {
             parsed, 
             group, 
             indexed_metadata,
+            cache,
             compound_data: std::sync::OnceLock::new(),
         }
     }
@@ -563,7 +586,7 @@ impl OgawaPropertyReader {
                 return None;
             }
             let group = self.group.clone()?;
-            CompoundData::from_group(group, &self.indexed_metadata).ok()
+            CompoundData::from_group(group, &self.indexed_metadata, self.cache.clone()).ok()
         }).as_ref()
     }
     
@@ -641,8 +664,20 @@ impl OgawaPropertyReader {
             return Ok(Vec::new());
         }
         
+        // Check cache first using file position as key
+        let cache_key = ArraySampleKey::new(data.pos(), index);
+        if let Some(cached) = self.cache.get(&cache_key) {
+            return Ok((*cached).clone());
+        }
+        
+        // Cache miss - read from file
         let data_bytes = data.read_all()?;
-        Ok(data_bytes[DATA_KEY_SIZE..].to_vec())
+        let result = data_bytes[DATA_KEY_SIZE..].to_vec();
+        
+        // Store in cache
+        self.cache.insert(cache_key, result.clone());
+        
+        Ok(result)
     }
     
     /// Read array sample key (digest) without reading full data.

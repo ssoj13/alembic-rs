@@ -2,7 +2,39 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Instant;
+
+// Logging levels
+const LOG_NONE: u8 = 0;
+const LOG_INFO: u8 = 1;
+const LOG_DEBUG: u8 = 2;
+const LOG_TRACE: u8 = 3;
+
+static LOG_LEVEL: AtomicU8 = AtomicU8::new(LOG_NONE);
+
+#[inline]
+fn log_level() -> u8 { LOG_LEVEL.load(Ordering::Relaxed) }
+
+pub fn set_log_level(level: u8) { LOG_LEVEL.store(level, Ordering::Relaxed); }
+
+macro_rules! log_info {
+    ($($arg:tt)*) => {
+        if log_level() >= LOG_INFO { eprintln!("[INFO] {}", format!($($arg)*)); }
+    };
+}
+
+macro_rules! log_debug {
+    ($($arg:tt)*) => {
+        if log_level() >= LOG_DEBUG { eprintln!("[DEBUG] {}", format!($($arg)*)); }
+    };
+}
+
+macro_rules! log_trace {
+    ($($arg:tt)*) => {
+        if log_level() >= LOG_TRACE { eprintln!("[TRACE] {}", format!($($arg)*)); }
+    };
+}
 
 use egui::{menu, Color32, RichText, TopBottomPanel, CentralPanel, SidePanel};
 use glam::{Mat4, Vec3};
@@ -61,6 +93,11 @@ pub struct ViewerApp {
     scene_bounds: Option<mesh_converter::Bounds>,
     scene_tree: Vec<SceneNode>,
     selected_object: Option<String>,
+    
+    // Async loading
+    worker: Option<super::worker::WorkerHandle>,
+    pending_frame: Option<usize>,  // Frame we've requested but not yet received
+    epoch: u64,  // Incremented on each request, used to discard stale results
 }
 
 impl ViewerApp {
@@ -91,6 +128,9 @@ impl ViewerApp {
             scene_bounds: None,
             scene_tree: Vec::new(),
             selected_object: None,
+            worker: None,
+            pending_frame: None,
+            epoch: 0,
         }
     }
 
@@ -464,7 +504,7 @@ impl ViewerApp {
             if ui.add_enabled(has_animation, egui::Button::new("⏹")).clicked() {
                 self.playing = false;
                 if self.current_frame != 0 {
-                    self.load_frame(0);
+                    self.request_frame(0);
                 }
             }
             
@@ -502,7 +542,7 @@ impl ViewerApp {
             ).changed() {
                 let new_frame = frame as usize;
                 if new_frame != self.current_frame {
-                    self.load_frame(new_frame);
+                    self.request_frame(new_frame);
                 }
             }
         });
@@ -510,6 +550,12 @@ impl ViewerApp {
     
     fn update_animation(&mut self) {
         if !self.playing || self.num_samples <= 1 {
+            return;
+        }
+        
+        // Wait for previous frame to finish before requesting next
+        // This prevents epoch mismatch during normal playback
+        if self.pending_frame.is_some() {
             return;
         }
 
@@ -523,7 +569,7 @@ impl ViewerApp {
             // Calculate next frame with direction and looping
             let n = self.num_samples as i32;
             let next = (self.current_frame as i32 + self.playback_dir).rem_euclid(n) as usize;
-            self.load_frame(next);
+            self.request_frame(next);
         }
     }
 
@@ -589,13 +635,18 @@ impl ViewerApp {
                 self.selected_object = None;
                 
                 // Store archive for animation playback
-                self.archive = Some(Arc::new(archive));
+                let archive = Arc::new(archive);
+                self.archive = Some(archive.clone());
                 self.num_samples = num_samples;
                 self.current_frame = 0;
                 self.playing = false;
                 
-                // Load frame 0
-                self.load_frame(0);
+                // Spawn background worker for async frame loading
+                self.worker = Some(super::worker::WorkerHandle::spawn(archive));
+                self.pending_frame = None;
+                
+                // Request frame 0
+                self.request_frame(0);
                 
                 self.current_file = Some(path.clone());
                 
@@ -772,64 +823,6 @@ impl ViewerApp {
         false
     }
     
-    /// Load meshes for a specific frame
-    fn load_frame(&mut self, frame: usize) {
-        let archive = match &self.archive {
-            Some(a) => a.clone(),
-            None => return,
-        };
-        
-        let renderer = match &mut self.viewport.renderer {
-            Some(r) => r,
-            None => return,
-        };
-        
-        // Clear existing meshes and curves
-        renderer.clear_meshes();
-        
-        // Collect all geometry at this frame
-        let scene = mesh_converter::collect_scene(&archive, frame);
-        let stats = mesh_converter::compute_stats(&scene.meshes);
-        let bounds = mesh_converter::compute_scene_bounds(&scene.meshes);
-        self.scene_bounds = if bounds.is_valid() { Some(bounds) } else { None };
-        
-        // Add meshes to renderer
-        for mesh in scene.meshes {
-            let material = StandardSurfaceParams::plastic(
-                Vec3::new(0.7, 0.7, 0.75),
-                0.4,
-            );
-            renderer.add_mesh(
-                mesh.name,
-                &mesh.vertices,
-                &mesh.indices,
-                mesh.transform,
-                &material,
-            );
-        }
-        
-        // Add curves to renderer
-        let curves_material = StandardSurfaceParams::plastic(
-            Vec3::new(0.9, 0.7, 0.3), // Golden color for curves
-            0.3,
-        );
-        for curves in scene.curves {
-            renderer.add_curves(
-                curves.name,
-                &curves.vertices,
-                &curves.indices,
-                curves.transform,
-                &curves_material,
-            );
-        }
-        
-        // Update stats
-        self.mesh_count = stats.mesh_count;
-        self.vertex_count = stats.vertex_count;
-        self.face_count = stats.triangle_count;
-        self.current_frame = frame;
-    }
-
     fn load_test_cube(&mut self) {
         let renderer = match &mut self.viewport.renderer {
             Some(r) => r,
@@ -897,6 +890,12 @@ impl ViewerApp {
     }
 
     fn clear_scene(&mut self) {
+        // Stop worker first
+        if let Some(mut worker) = self.worker.take() {
+            worker.stop();
+        }
+        self.pending_frame = None;
+        
         if let Some(renderer) = &mut self.viewport.renderer {
             renderer.clear_meshes();
         }
@@ -909,6 +908,111 @@ impl ViewerApp {
         self.current_frame = 0;
         self.playing = false;
         self.status_message = "Scene cleared".into();
+    }
+    
+    /// Request a frame to be loaded asynchronously.
+    fn request_frame(&mut self, frame: usize) {
+        if let Some(worker) = &self.worker {
+            // Increment epoch on every request - this allows us to discard stale results
+            self.epoch = self.epoch.wrapping_add(1);
+            worker.request_frame(frame, self.epoch);
+            self.pending_frame = Some(frame);
+        }
+    }
+    
+    /// Process any ready results from the worker (non-blocking).
+    fn process_worker_results(&mut self) {
+        let result = match &self.worker {
+            Some(worker) => worker.try_recv(),
+            None => return,
+        };
+        
+        if let Some(result) = result {
+            match result {
+                super::worker::WorkerResult::FrameReady { frame, epoch, scene } => {
+                    // Discard stale results from older requests
+                    if epoch != self.epoch {
+                        return;
+                    }
+                    
+                    self.pending_frame = None;
+                    self.apply_scene(frame, scene);
+                }
+            }
+        }
+    }
+    
+    /// Apply scene data to renderer (called when worker delivers results).
+    fn apply_scene(&mut self, frame: usize, scene: mesh_converter::CollectedScene) {
+        let renderer = match &mut self.viewport.renderer {
+            Some(r) => r,
+            None => return,
+        };
+
+        let stats = mesh_converter::compute_stats(&scene.meshes);
+        let bounds = mesh_converter::compute_scene_bounds(&scene.meshes);
+        self.scene_bounds = if bounds.is_valid() { Some(bounds) } else { None };
+
+        // Collect names of meshes in this frame
+        let new_mesh_names: std::collections::HashSet<_> = 
+            scene.meshes.iter().map(|m| m.name.clone()).collect();
+        let new_curve_names: std::collections::HashSet<_> = 
+            scene.curves.iter().map(|c| c.name.clone()).collect();
+        
+        // Remove meshes that no longer exist in this frame
+        let old_mesh_names: Vec<_> = renderer.meshes.keys().cloned().collect();
+        for name in old_mesh_names {
+            if !new_mesh_names.contains(&name) {
+                renderer.meshes.remove(&name);
+            }
+        }
+        let old_curve_names: Vec<_> = renderer.curves.keys().cloned().collect();
+        for name in old_curve_names {
+            if !new_curve_names.contains(&name) {
+                renderer.curves.remove(&name);
+            }
+        }
+
+        // Update or add meshes
+        for mesh in scene.meshes {
+            if renderer.has_mesh(&mesh.name) {
+                renderer.update_mesh_transform(&mesh.name, mesh.transform);
+                renderer.update_mesh_vertices(&mesh.name, &mesh.vertices, &mesh.indices);
+            } else {
+                let material = StandardSurfaceParams::plastic(
+                    Vec3::new(0.7, 0.7, 0.75),
+                    0.4,
+                );
+                renderer.add_mesh(
+                    mesh.name,
+                    &mesh.vertices,
+                    &mesh.indices,
+                    mesh.transform,
+                    &material,
+                );
+            }
+        }
+
+        // Update or add curves
+        let curves_material = StandardSurfaceParams::plastic(
+            Vec3::new(0.9, 0.7, 0.3),
+            0.3,
+        );
+        for curves in scene.curves {
+            renderer.add_curves(
+                curves.name,
+                &curves.vertices,
+                &curves.indices,
+                curves.transform,
+                &curves_material,
+            );
+        }
+
+        // Update stats
+        self.mesh_count = stats.mesh_count;
+        self.vertex_count = stats.vertex_count;
+        self.face_count = stats.triangle_count;
+        self.current_frame = frame;
     }
     
     /// Find next or previous ABC file in the same directory
@@ -972,6 +1076,11 @@ impl ViewerApp {
 
 impl eframe::App for ViewerApp {
     fn on_exit(&mut self) {
+        // Stop worker to clear message queue
+        if let Some(mut worker) = self.worker.take() {
+            worker.stop();
+        }
+        
         // Save camera state
         self.settings.camera_distance = self.viewport.camera.distance();
         let (yaw, pitch) = self.viewport.camera.angles();
@@ -981,8 +1090,14 @@ impl eframe::App for ViewerApp {
     }
     
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        // Close on Escape
+        // Process any ready frames from background worker (non-blocking)
+        self.process_worker_results();
+        
+        // Close on Escape - stop worker first to clear queue
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            if let Some(mut worker) = self.worker.take() {
+                worker.stop();
+            }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
@@ -1026,18 +1141,18 @@ impl eframe::App for ViewerApp {
             self.playing = false;
             self.playback_dir = -1;
             let prev = if self.current_frame == 0 { self.num_samples - 1 } else { self.current_frame - 1 };
-            self.load_frame(prev);
+            self.request_frame(prev);
         }
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) && self.num_samples > 1 {
             self.playing = false;
             self.playback_dir = 1;
             let next = (self.current_frame + 1) % self.num_samples;
-            self.load_frame(next);
+            self.request_frame(next);
         }
         // Down = go to first frame
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) && self.num_samples > 0 {
             self.playing = false;
-            self.load_frame(0);
+            self.request_frame(0);
         }
 
         self.initialize(ctx);

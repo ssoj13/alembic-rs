@@ -7,11 +7,19 @@ mod mesh_converter;
 mod renderer;
 mod settings;
 mod viewport;
+mod worker;
 
 pub use settings::Settings;
+pub use app::set_log_level;
 
 use std::path::PathBuf;
 use anyhow::Result;
+
+/// Log levels for viewer
+pub const LOG_NONE: u8 = 0;
+pub const LOG_INFO: u8 = 1;
+pub const LOG_DEBUG: u8 = 2;
+pub const LOG_TRACE: u8 = 3;
 
 /// Run the viewer with optional initial file
 pub fn run(initial_file: Option<PathBuf>) -> Result<()> {

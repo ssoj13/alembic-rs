@@ -1,6 +1,7 @@
 //! wgpu renderer with Standard Surface shader
 
 use glam::{Mat4, Vec3};
+use std::collections::HashMap;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
@@ -70,11 +71,11 @@ pub struct Renderer {
     #[allow(dead_code)]
     env_uniform_buffer: wgpu::Buffer,
     
-    // Scene meshes
-    pub meshes: Vec<SceneMesh>,
+    // Scene meshes (name -> mesh for efficient updates)
+    pub meshes: HashMap<String, SceneMesh>,
     
     // Scene curves (rendered as lines)
-    pub curves: Vec<SceneCurves>,
+    pub curves: HashMap<String, SceneCurves>,
     
     // Settings
     pub show_wireframe: bool,
@@ -386,8 +387,8 @@ impl Renderer {
             grid_step: 0.0, // will be set on first render
             env_map,
             env_uniform_buffer,
-            meshes: Vec::new(),
-            curves: Vec::new(),
+            meshes: HashMap::new(),
+            curves: HashMap::new(),
             show_wireframe: false,
             flat_shading: false,
             show_grid: true,
@@ -592,7 +593,7 @@ impl Renderer {
             }],
         });
 
-        self.meshes.push(SceneMesh {
+        self.meshes.insert(name.clone(), SceneMesh {
             mesh,
             material_bind_group,
             model_bind_group,
@@ -641,7 +642,7 @@ impl Renderer {
             }],
         });
         
-        self.curves.push(SceneCurves {
+        self.curves.insert(name.clone(), SceneCurves {
             mesh,
             material_bind_group,
             model_bind_group,
@@ -655,6 +656,63 @@ impl Renderer {
     pub fn clear_meshes(&mut self) {
         self.meshes.clear();
         self.curves.clear();
+    }
+    
+    /// Update only transform for existing mesh (cheap operation)
+    /// Returns true if mesh was found and updated
+    pub fn update_mesh_transform(&mut self, name: &str, transform: Mat4) -> bool {
+        if let Some(scene_mesh) = self.meshes.get_mut(name) {
+            scene_mesh.transform = transform;
+            let normal_matrix = transform.inverse().transpose();
+            let model_uniform = ModelUniform {
+                model: transform.to_cols_array_2d(),
+                normal_matrix: normal_matrix.to_cols_array_2d(),
+            };
+            self.queue.write_buffer(
+                &scene_mesh.model_buffer,
+                0,
+                bytemuck::bytes_of(&model_uniform),
+            );
+            return true;
+        }
+        false
+    }
+    
+    /// Update vertex data for existing mesh (for deforming animation)
+    /// Returns true if mesh was found and updated
+    pub fn update_mesh_vertices(&mut self, name: &str, vertices: &[Vertex], indices: &[u32]) -> bool {
+        if !self.meshes.contains_key(name) {
+            return false;
+        }
+        // Create new mesh first to avoid borrow issues
+        let new_mesh = self.create_mesh(vertices, indices);
+        if let Some(scene_mesh) = self.meshes.get_mut(name) {
+            scene_mesh.mesh = new_mesh;
+        }
+        true
+    }
+    
+    /// Check if mesh exists
+    pub fn has_mesh(&self, name: &str) -> bool {
+        self.meshes.contains_key(name)
+    }
+    
+    /// Update curves transform
+    pub fn update_curves_transform(&mut self, name: &str, transform: Mat4) -> bool {
+        if let Some(curves) = self.curves.get_mut(name) {
+            let normal_matrix = transform.inverse().transpose();
+            let model_uniform = ModelUniform {
+                model: transform.to_cols_array_2d(),
+                normal_matrix: normal_matrix.to_cols_array_2d(),
+            };
+            self.queue.write_buffer(
+                &curves.model_buffer,
+                0,
+                bytemuck::bytes_of(&model_uniform),
+            );
+            return true;
+        }
+        false
     }
 
     /// Load HDR/EXR environment map
@@ -698,7 +756,7 @@ impl Renderer {
     pub fn update_normals(&self) {
         let flip_scale = if self.flip_normals { -1.0 } else { 1.0 };
         
-        for mesh in &self.meshes {
+        for mesh in self.meshes.values() {
             let normal_matrix = mesh.transform.inverse().transpose() 
                 * Mat4::from_scale(Vec3::splat(flip_scale));
             let model_uniform = ModelUniform {
@@ -744,7 +802,7 @@ impl Renderer {
             shadow_pass.set_bind_group(0, &self.shadow_pass_bind_group, &[]);
 
             // Render scene meshes to shadow map
-            for mesh in &self.meshes {
+            for mesh in self.meshes.values() {
                 shadow_pass.set_bind_group(1, &mesh.model_bind_group, &[]);
                 shadow_pass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
                 shadow_pass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -818,7 +876,7 @@ impl Renderer {
             }
 
             // Draw scene meshes
-            for mesh in &self.meshes {
+            for mesh in self.meshes.values() {
                 render_pass.set_bind_group(1, &mesh.material_bind_group, &[]);
                 render_pass.set_bind_group(2, &mesh.model_bind_group, &[]);
                 render_pass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
@@ -829,7 +887,7 @@ impl Renderer {
             // Draw curves using line pipeline
             if !self.curves.is_empty() {
                 render_pass.set_pipeline(&self.line_pipeline);
-                for curve in &self.curves {
+                for curve in self.curves.values() {
                     render_pass.set_bind_group(1, &curve.material_bind_group, &[]);
                     render_pass.set_bind_group(2, &curve.model_bind_group, &[]);
                     render_pass.set_vertex_buffer(0, curve.mesh.vertex_buffer.slice(..));
