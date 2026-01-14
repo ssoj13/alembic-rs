@@ -1034,6 +1034,11 @@ impl eframe::App for ViewerApp {
             let next = (self.current_frame + 1) % self.num_samples;
             self.load_frame(next);
         }
+        // Down = go to first frame
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) && self.num_samples > 0 {
+            self.playing = false;
+            self.load_frame(0);
+        }
 
         self.initialize(ctx);
 
