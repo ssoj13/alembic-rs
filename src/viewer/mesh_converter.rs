@@ -1,6 +1,6 @@
-//! Convert Alembic PolyMesh to GPU-ready triangulated mesh
+//! Convert Alembic geometry to GPU-ready data
 
-use crate::geom::{IPolyMesh, PolyMeshSample};
+use crate::geom::{IPolyMesh, PolyMeshSample, ICurves, CurvesSample};
 use glam::{Mat4, Vec3};
 use standard_surface::Vertex;
 
@@ -49,6 +49,82 @@ pub struct ConvertedMesh {
     pub indices: Vec<u32>,
     pub transform: Mat4,
     pub bounds: Bounds,
+}
+
+/// Converted curves data ready for GPU (as line strips)
+pub struct ConvertedCurves {
+    pub name: String,
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u32>,
+    pub transform: Mat4,
+}
+
+/// Convert CurvesSample to line strips for GPU
+pub fn convert_curves(sample: &CurvesSample, name: &str, transform: Mat4) -> Option<ConvertedCurves> {
+    if !sample.is_valid() {
+        return None;
+    }
+    
+    let positions = &sample.positions;
+    let num_vertices = &sample.num_vertices;
+    
+    // Default color for curves (white)
+
+    
+    // Build vertices and line indices
+    let mut vertices = Vec::with_capacity(positions.len());
+    let mut indices = Vec::new();
+    let mut vertex_offset = 0u32;
+    
+    for &count in num_vertices {
+        let count = count as usize;
+        if count < 2 {
+            vertex_offset += count as u32;
+            continue;
+        }
+        
+        // Add vertices for this curve
+        for i in 0..count {
+            let pos_idx = vertex_offset as usize + i;
+            if pos_idx >= positions.len() {
+                break;
+            }
+            
+            let pos = positions[pos_idx];
+            
+            // Get width if available (default 0.01)
+            let width = if !sample.widths.is_empty() && pos_idx < sample.widths.len() {
+                sample.widths[pos_idx]
+            } else {
+                0.01
+            };
+            
+            vertices.push(Vertex {
+                position: [pos.x, pos.y, pos.z],
+                normal: [0.0, 1.0, 0.0], // Up vector as default
+                uv: [i as f32 / count as f32, width], // Store width in UV.y
+            });
+        }
+        
+        // Add line strip indices (pairs for LINE_LIST)
+        for i in 0..(count - 1) {
+            indices.push(vertex_offset + i as u32);
+            indices.push(vertex_offset + i as u32 + 1);
+        }
+        
+        vertex_offset += count as u32;
+    }
+    
+    if vertices.is_empty() {
+        return None;
+    }
+    
+    Some(ConvertedCurves {
+        name: name.to_string(),
+        vertices,
+        indices,
+        transform,
+    })
 }
 
 /// Convert PolyMeshSample to triangulated GPU mesh
@@ -188,19 +264,27 @@ pub fn convert_polymesh(sample: &PolyMeshSample, name: &str, transform: Mat4) ->
     })
 }
 
-/// Recursively collect all PolyMeshes from an archive
-pub fn collect_meshes(archive: &crate::abc::IArchive, sample_index: usize) -> Vec<ConvertedMesh> {
-    let mut meshes = Vec::new();
-    let root = archive.root();
-    collect_meshes_recursive(&root, Mat4::IDENTITY, sample_index, &mut meshes);
-    meshes
+/// Collected scene data
+pub struct CollectedScene {
+    pub meshes: Vec<ConvertedMesh>,
+    pub curves: Vec<ConvertedCurves>,
 }
 
-fn collect_meshes_recursive(
+/// Recursively collect all geometry from an archive
+pub fn collect_scene(archive: &crate::abc::IArchive, sample_index: usize) -> CollectedScene {
+    let mut meshes = Vec::new();
+    let mut curves = Vec::new();
+    let root = archive.root();
+    collect_recursive(&root, Mat4::IDENTITY, sample_index, &mut meshes, &mut curves);
+    CollectedScene { meshes, curves }
+}
+
+fn collect_recursive(
     obj: &crate::abc::IObject,
     parent_transform: Mat4,
     sample_index: usize,
     meshes: &mut Vec<ConvertedMesh>,
+    curves: &mut Vec<ConvertedCurves>,
 ) {
     // Check if this object is an Xform
     let (local_transform, inherits) = if let Some(xform) = crate::geom::IXform::new(obj) {
@@ -229,9 +313,18 @@ fn collect_meshes_recursive(
         }
     }
     
+    // Check if this object is Curves
+    if let Some(icurves) = ICurves::new(obj) {
+        if let Ok(sample) = icurves.get_sample(sample_index) {
+            if let Some(converted) = convert_curves(&sample, icurves.name(), world_transform) {
+                curves.push(converted);
+            }
+        }
+    }
+    
     // Recurse into children
     for child in obj.children() {
-        collect_meshes_recursive(&child, world_transform, sample_index, meshes);
+        collect_recursive(&child, world_transform, sample_index, meshes, curves);
     }
 }
 

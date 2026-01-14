@@ -73,6 +73,9 @@ pub struct Renderer {
     // Scene meshes
     pub meshes: Vec<SceneMesh>,
     
+    // Scene curves (rendered as lines)
+    pub curves: Vec<SceneCurves>,
+    
     // Settings
     pub show_wireframe: bool,
     pub flat_shading: bool,
@@ -105,6 +108,19 @@ pub struct SceneMesh {
     pub material_bind_group: wgpu::BindGroup,
     pub model_bind_group: wgpu::BindGroup,
     pub model_buffer: wgpu::Buffer,
+    pub transform: Mat4,
+    #[allow(dead_code)]
+    pub name: String,
+}
+
+/// Scene curves (lines) with transform and material
+pub struct SceneCurves {
+    pub mesh: Mesh, // vertex + index buffers for LINE_LIST
+    pub material_bind_group: wgpu::BindGroup,
+    pub model_bind_group: wgpu::BindGroup,
+    #[allow(dead_code)] // kept for potential animation updates
+    pub model_buffer: wgpu::Buffer,
+    #[allow(dead_code)] // kept for potential animation updates
     pub transform: Mat4,
     #[allow(dead_code)]
     pub name: String,
@@ -371,6 +387,7 @@ impl Renderer {
             env_map,
             env_uniform_buffer,
             meshes: Vec::new(),
+            curves: Vec::new(),
             show_wireframe: false,
             flat_shading: false,
             show_grid: true,
@@ -584,10 +601,60 @@ impl Renderer {
             name,
         });
     }
+    
+    /// Add curves (lines) to the scene
+    pub fn add_curves(
+        &mut self,
+        name: String,
+        vertices: &[Vertex],
+        indices: &[u32],
+        transform: Mat4,
+        params: &StandardSurfaceParams,
+    ) {
+        let mesh = self.create_mesh(vertices, indices);
+        
+        // Material (using same system as meshes)
+        let material_buffer = standard_surface::create_material_buffer(&self.device, params);
+        let material_bind_group = standard_surface::create_material_bind_group(
+            &self.device,
+            &self.layouts.material,
+            &material_buffer,
+        );
+        
+        // Model transform
+        let normal_matrix = transform.inverse().transpose();
+        let model_uniform = ModelUniform {
+            model: transform.to_cols_array_2d(),
+            normal_matrix: normal_matrix.to_cols_array_2d(),
+        };
+        let model_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("curves_model_buffer"),
+            contents: bytemuck::bytes_of(&model_uniform),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let model_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("curves_model_bind_group"),
+            layout: &self.layouts.model,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: model_buffer.as_entire_binding(),
+            }],
+        });
+        
+        self.curves.push(SceneCurves {
+            mesh,
+            material_bind_group,
+            model_bind_group,
+            model_buffer,
+            transform,
+            name,
+        });
+    }
 
     /// Clear all scene meshes
     pub fn clear_meshes(&mut self) {
         self.meshes.clear();
+        self.curves.clear();
     }
 
     /// Load HDR/EXR environment map
@@ -757,6 +824,18 @@ impl Renderer {
                 render_pass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
                 render_pass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.draw_indexed(0..mesh.mesh.index_count, 0, 0..1);
+            }
+            
+            // Draw curves using line pipeline
+            if !self.curves.is_empty() {
+                render_pass.set_pipeline(&self.line_pipeline);
+                for curve in &self.curves {
+                    render_pass.set_bind_group(1, &curve.material_bind_group, &[]);
+                    render_pass.set_bind_group(2, &curve.model_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, curve.mesh.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(curve.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..curve.mesh.index_count, 0, 0..1);
+                }
             }
         }
 

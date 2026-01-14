@@ -625,14 +625,33 @@ impl ViewerApp {
     fn detect_num_samples_recursive(obj: &crate::abc::IObject, max: usize) -> usize {
         let mut current_max = max;
         
-        // Check if PolyMesh
-        if let Some(polymesh) = crate::geom::IPolyMesh::new(obj) {
-            current_max = current_max.max(polymesh.num_samples());
+        // Check ALL geometry schemas
+        if let Some(g) = crate::geom::IPolyMesh::new(obj) {
+            current_max = current_max.max(g.num_samples());
         }
-        
-        // Check if Xform
-        if let Some(xform) = crate::geom::IXform::new(obj) {
-            current_max = current_max.max(xform.num_samples());
+        if let Some(g) = crate::geom::ISubD::new(obj) {
+            current_max = current_max.max(g.num_samples());
+        }
+        if let Some(g) = crate::geom::ICurves::new(obj) {
+            current_max = current_max.max(g.num_samples());
+        }
+        if let Some(g) = crate::geom::IPoints::new(obj) {
+            current_max = current_max.max(g.num_samples());
+        }
+        if let Some(g) = crate::geom::INuPatch::new(obj) {
+            current_max = current_max.max(g.num_samples());
+        }
+        if let Some(g) = crate::geom::IXform::new(obj) {
+            current_max = current_max.max(g.num_samples());
+        }
+        if let Some(g) = crate::geom::ICamera::new(obj) {
+            current_max = current_max.max(g.num_samples());
+        }
+        if let Some(g) = crate::geom::ILight::new(obj) {
+            current_max = current_max.max(g.num_samples());
+        }
+        if let Some(g) = crate::geom::IFaceSet::new(obj) {
+            current_max = current_max.max(g.num_samples());
         }
         
         // Recurse children
@@ -761,17 +780,17 @@ impl ViewerApp {
             None => return,
         };
         
-        // Clear existing meshes
+        // Clear existing meshes and curves
         renderer.clear_meshes();
         
-        // Collect and convert all meshes at this frame
-        let meshes = mesh_converter::collect_meshes(&archive, frame);
-        let stats = mesh_converter::compute_stats(&meshes);
-        let bounds = mesh_converter::compute_scene_bounds(&meshes);
+        // Collect all geometry at this frame
+        let scene = mesh_converter::collect_scene(&archive, frame);
+        let stats = mesh_converter::compute_stats(&scene.meshes);
+        let bounds = mesh_converter::compute_scene_bounds(&scene.meshes);
         self.scene_bounds = if bounds.is_valid() { Some(bounds) } else { None };
         
         // Add meshes to renderer
-        for mesh in meshes {
+        for mesh in scene.meshes {
             let material = StandardSurfaceParams::plastic(
                 Vec3::new(0.7, 0.7, 0.75),
                 0.4,
@@ -782,6 +801,21 @@ impl ViewerApp {
                 &mesh.indices,
                 mesh.transform,
                 &material,
+            );
+        }
+        
+        // Add curves to renderer
+        let curves_material = StandardSurfaceParams::plastic(
+            Vec3::new(0.9, 0.7, 0.3), // Golden color for curves
+            0.3,
+        );
+        for curves in scene.curves {
+            renderer.add_curves(
+                curves.name,
+                &curves.vertices,
+                &curves.indices,
+                curves.transform,
+                &curves_material,
             );
         }
         

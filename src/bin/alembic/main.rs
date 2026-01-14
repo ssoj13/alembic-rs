@@ -340,7 +340,7 @@ fn count_objects(obj: &IObject, counts: &mut ObjectCounts) {
                 counts.total_faces += sample.face_counts.len();
             }
         }
-    } else if schema_str.contains("Curves") {
+    } else if schema_str.contains("Curve") {
         counts.curve += 1;
     } else if schema_str.contains("Points") {
         counts.point += 1;

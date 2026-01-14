@@ -223,13 +223,34 @@ impl<'a> IXform<'a> {
     
     /// Get number of samples.
     pub fn num_samples(&self) -> usize {
-        // Read from .vals property
         let props = self.object.properties();
         let Some(geom_prop) = props.property_by_name(".xform") else { return 1 };
         let Some(geom) = geom_prop.as_compound() else { return 1 };
-        let Some(vals_prop) = geom.property_by_name(".vals") else { return 1 };
-        let Some(array_reader) = vals_prop.as_array() else { return 1 };
-        array_reader.num_samples()
+        
+        // Check both .inherits and .vals - return MAX of both
+        // Animation can be in either property
+        let mut max_samples = 1usize;
+        
+        if let Some(inherits_prop) = geom.property_by_name(".inherits") {
+            if let Some(scalar) = inherits_prop.as_scalar() {
+                max_samples = max_samples.max(scalar.num_samples());
+            }
+        }
+        
+        if let Some(vals_prop) = geom.property_by_name(".vals") {
+            if let Some(array_reader) = vals_prop.as_array() {
+                max_samples = max_samples.max(array_reader.num_samples());
+            }
+        }
+        
+        // Also check .ops - animated ops would indicate animation
+        if let Some(ops_prop) = geom.property_by_name(".ops") {
+            if let Some(array_reader) = ops_prop.as_array() {
+                max_samples = max_samples.max(array_reader.num_samples());
+            }
+        }
+        
+        max_samples
     }
     
     /// Check if this xform is constant (single sample).
