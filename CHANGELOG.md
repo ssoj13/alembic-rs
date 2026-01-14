@@ -1,5 +1,40 @@
 # CHANGELOG
 
+## Session 2026-01-13: Time Sampling & Clippy Fixes
+
+### Time Sampling Index Methods
+Added `time_sampling_index()` to all geometry types, matching C++ Alembic implementation.
+
+| Schema | Property Used |
+|--------|---------------|
+| IPolyMesh | `.geom` -> `P` (positions) |
+| ISubD | `.geom` -> `P` (positions) |
+| ICurves | `.geom` -> `P` (positions) |
+| IPoints | `.geom` -> `P` (positions) |
+| INuPatch | `.geom` -> `P` (positions) |
+| ICamera | `.camera` -> `.core` |
+| IXform | `.xform` -> `.inherits` |
+| ILight | `.geom` -> `.childBnds` (fallback to `.camera/.core`) |
+| IFaceSet | `.geom` -> `.faces` |
+
+### Files Changed
+- `src/geom/polymesh.rs` - Added `time_sampling_index()`
+- `src/geom/subd.rs` - Added `time_sampling_index()`
+- `src/geom/camera.rs` - Added `time_sampling_index()`
+- `src/geom/xform.rs` - Added `time_sampling_index()`
+- `src/geom/faceset.rs` - Fixed to use `.geom` compound and `self.object.as_ref()`
+- `src/geom/light.rs` - Fixed to use `.geom` compound with proper fallback chain
+- `src/python/schemas.rs` - Updated `getTimeSamplingIndex()` to use new methods
+
+### Clippy Warnings Fixed
+- `crates/standard-surface/src/params.rs` - Fixed `field_reassign_with_default` warnings
+- `src/python/write.rs` - Suppressed `too_many_arguments` with comments (5 functions)
+
+### Documentation
+- Created `PLAN3.md` with remaining tasks summary
+
+---
+
 ## Session 2026-01-13: Project Restructuring
 
 ### Changes
