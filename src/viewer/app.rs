@@ -1007,7 +1007,28 @@ impl eframe::App for ViewerApp {
                 self.status_message = "No scene bounds".into();
             }
         }
-        
+
+        // Playback controls (unified)
+        // Space/Up = play/pause toggle
+        let toggle_play = ctx.input(|i| {
+            i.key_pressed(egui::Key::Space) || i.key_pressed(egui::Key::ArrowUp)
+        });
+        if toggle_play && self.num_samples > 1 {
+            self.playing = !self.playing;
+        }
+
+        // Left/Right = frame step (stops playback)
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) && self.num_samples > 1 {
+            self.playing = false;
+            let prev = if self.current_frame == 0 { self.num_samples - 1 } else { self.current_frame - 1 };
+            self.load_frame(prev);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) && self.num_samples > 1 {
+            self.playing = false;
+            let next = (self.current_frame + 1) % self.num_samples;
+            self.load_frame(next);
+        }
+
         self.initialize(ctx);
 
         // Initialize renderer if needed
