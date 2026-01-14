@@ -36,7 +36,7 @@ macro_rules! log_trace {
     };
 }
 
-use egui::{menu, Color32, RichText, TopBottomPanel, CentralPanel, SidePanel};
+use egui::{menu, Color32, RichText, TopBottomPanel, CentralPanel, SidePanel, Window};
 use glam::{Mat4, Vec3};
 
 use standard_surface::{StandardSurfaceParams, Vertex};
@@ -1245,6 +1245,7 @@ impl eframe::App for ViewerApp {
             let render_state = frame.wgpu_render_state();
             self.viewport.show(ui, render_state);
         });
+
 
         // Track window size for saving on exit
         ctx.input(|i| {

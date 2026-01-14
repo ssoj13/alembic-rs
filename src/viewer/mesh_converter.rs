@@ -306,8 +306,18 @@ fn collect_recursive(
     
     // Check if this object is a PolyMesh
     if let Some(polymesh) = IPolyMesh::new(obj) {
-        if let Ok(sample) = polymesh.get_sample(sample_index) {
+        let t0 = std::time::Instant::now();
+        let sample_result = polymesh.get_sample(sample_index);
+        let read_time = t0.elapsed();
+        
+        if let Ok(sample) = sample_result {
+            let t1 = std::time::Instant::now();
             if let Some(converted) = convert_polymesh(&sample, polymesh.name(), world_transform) {
+                let convert_time = t1.elapsed();
+                if read_time.as_millis() > 5 || convert_time.as_millis() > 5 {
+                    eprintln!("[PERF] {} read={:?} convert={:?} verts={}", 
+                        polymesh.name(), read_time, convert_time, converted.vertices.len());
+                }
                 meshes.push(converted);
             }
         }

@@ -25,6 +25,7 @@ pub const LOG_TRACE: u8 = 3;
 pub fn run(initial_file: Option<PathBuf>) -> Result<()> {
     env_logger::init();
     
+
     // Friendly panic handler for GPU errors
     std::panic::set_hook(Box::new(|info| {
         let msg = info.payload()

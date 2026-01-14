@@ -100,7 +100,12 @@ fn worker_loop(
                 let (final_frame, final_epoch) = drain_to_latest(&rx, frame, epoch);
                 
                 // Collect scene data for this frame
+                let t0 = std::time::Instant::now();
                 let scene = mesh_converter::collect_scene(&archive, final_frame);
+                let elapsed = t0.elapsed();
+                if elapsed.as_millis() > 10 {
+                    eprintln!("[PERF] Frame {} loaded in {:?}", final_frame, elapsed);
+                }
                 
                 // Send result back
                 if tx.send(WorkerResult::FrameReady { 

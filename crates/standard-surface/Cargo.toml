@@ -10,6 +10,6 @@ categories = ["rendering", "graphics"]
 readme = "README.md"
 
 [dependencies]
-wgpu = "24"
-bytemuck = { version = "1.21", features = ["derive"] }
-glam = { version = "0.29", features = ["bytemuck"] }
+wgpu = "27"
+bytemuck = { version = "1.24", features = ["derive"] }
+glam = { version = "0.30", features = ["bytemuck"] }
