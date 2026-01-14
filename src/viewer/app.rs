@@ -534,15 +534,18 @@ impl ViewerApp {
             let slider_width = ui.available_width() - 10.0;
             
             ui.spacing_mut().slider_width = slider_width.max(100.0);
-            if ui.add_enabled(
+            let response = ui.add_enabled(
                 has_animation,
                 egui::Slider::new(&mut frame, 0.0..=max_frame.max(1.0))
                     .step_by(1.0)
                     .show_value(false)
-            ).changed() {
+            );
+            // Update immediately during drag for responsive feedback
+            if response.changed() || response.dragged() {
                 let new_frame = frame as usize;
                 if new_frame != self.current_frame {
-                    self.request_frame(new_frame);
+                    self.current_frame = new_frame;  // Instant visual update
+                    self.request_frame(new_frame);   // Async load
                 }
             }
         });
@@ -976,8 +979,16 @@ impl ViewerApp {
         // Update or add meshes
         for mesh in scene.meshes {
             if renderer.has_mesh(&mesh.name) {
+                // Always update transform (cheap uniform write)
                 renderer.update_mesh_transform(&mesh.name, mesh.transform);
-                renderer.update_mesh_vertices(&mesh.name, &mesh.vertices, &mesh.indices);
+                
+                // Only update vertices if they actually changed (expensive buffer recreation)
+                let new_hash = super::renderer::compute_vertex_hash(&mesh.vertices);
+                if let Some(old_hash) = renderer.get_vertex_hash(&mesh.name) {
+                    if new_hash != old_hash {
+                        renderer.update_mesh_vertices(&mesh.name, &mesh.vertices, &mesh.indices);
+                    }
+                }
             } else {
                 let material = StandardSurfaceParams::plastic(
                     Vec3::new(0.7, 0.7, 0.75),
@@ -985,7 +996,7 @@ impl ViewerApp {
                 );
                 renderer.add_mesh(
                     mesh.name,
-                    &mesh.vertices,
+                    &mesh.vertices,  // Arc<Vec> derefs to &[T]
                     &mesh.indices,
                     mesh.transform,
                     &material,

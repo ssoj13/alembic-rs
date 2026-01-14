@@ -110,8 +110,29 @@ pub struct SceneMesh {
     pub model_bind_group: wgpu::BindGroup,
     pub model_buffer: wgpu::Buffer,
     pub transform: Mat4,
+    pub vertex_hash: u64,  // Quick hash for change detection
     #[allow(dead_code)]
     pub name: String,
+}
+
+/// Compute a quick hash for vertex change detection
+/// Uses vertex count + first/last position for speed
+pub fn compute_vertex_hash(vertices: &[standard_surface::Vertex]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    vertices.len().hash(&mut hasher);
+    if let Some(first) = vertices.first() {
+        // Hash first vertex position as bits
+        first.position[0].to_bits().hash(&mut hasher);
+        first.position[1].to_bits().hash(&mut hasher);
+        first.position[2].to_bits().hash(&mut hasher);
+    }
+    if let Some(last) = vertices.last() {
+        last.position[0].to_bits().hash(&mut hasher);
+        last.position[1].to_bits().hash(&mut hasher);
+        last.position[2].to_bits().hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 /// Scene curves (lines) with transform and material
@@ -599,6 +620,7 @@ impl Renderer {
             model_bind_group,
             model_buffer,
             transform,
+            vertex_hash: compute_vertex_hash(vertices),
             name,
         });
     }
@@ -686,8 +708,10 @@ impl Renderer {
         }
         // Create new mesh first to avoid borrow issues
         let new_mesh = self.create_mesh(vertices, indices);
+        let new_hash = compute_vertex_hash(vertices);
         if let Some(scene_mesh) = self.meshes.get_mut(name) {
             scene_mesh.mesh = new_mesh;
+            scene_mesh.vertex_hash = new_hash;
         }
         true
     }
@@ -695,6 +719,11 @@ impl Renderer {
     /// Check if mesh exists
     pub fn has_mesh(&self, name: &str) -> bool {
         self.meshes.contains_key(name)
+    }
+    
+    /// Get vertex hash for change detection
+    pub fn get_vertex_hash(&self, name: &str) -> Option<u64> {
+        self.meshes.get(name).map(|m| m.vertex_hash)
     }
     
     /// Update curves transform

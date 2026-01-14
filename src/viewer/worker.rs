@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use crate::abc::IArchive;
-use super::mesh_converter::{self, CollectedScene};
+use super::mesh_converter::{self, CollectedScene, MeshCache};
 
 /// Commands sent from UI to worker.
 #[derive(Debug)]
@@ -86,6 +86,9 @@ fn worker_loop(
     rx: Receiver<WorkerCommand>,
     tx: Sender<WorkerResult>,
 ) {
+    // Create mesh cache for constant geometry
+    let cache: MeshCache = mesh_converter::new_mesh_cache();
+    
     loop {
         // Wait for command
         let cmd = match rx.recv() {
@@ -99,9 +102,9 @@ fn worker_loop(
                 // This handles rapid scrubbing - only process the latest
                 let (final_frame, final_epoch) = drain_to_latest(&rx, frame, epoch);
                 
-                // Collect scene data for this frame
+                // Collect scene data for this frame (with caching for constant meshes)
                 let t0 = std::time::Instant::now();
-                let scene = mesh_converter::collect_scene(&archive, final_frame);
+                let scene = mesh_converter::collect_scene_cached(&archive, final_frame, Some(&cache));
                 let elapsed = t0.elapsed();
                 if elapsed.as_millis() > 10 {
                     eprintln!("[PERF] Frame {} loaded in {:?}", final_frame, elapsed);
