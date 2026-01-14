@@ -1,6 +1,6 @@
 //! Convert Alembic geometry to GPU-ready data
 
-use crate::geom::{IPolyMesh, PolyMeshSample, ICurves, CurvesSample};
+use crate::geom::{IPolyMesh, PolyMeshSample, ICurves, CurvesSample, ISubD, SubDSample, IPoints, PointsSample, ICamera, CameraSample};
 use glam::{Mat4, Vec3};
 use rayon::prelude::*;
 use standard_surface::Vertex;
@@ -61,6 +61,46 @@ pub struct ConvertedCurves {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub transform: Mat4,
+}
+
+/// Converted points data ready for GPU
+pub struct ConvertedPoints {
+    pub name: String,
+    pub positions: Vec<[f32; 3]>,
+    pub widths: Vec<f32>,  // radius per point
+    pub transform: Mat4,
+    pub bounds: Bounds,
+}
+
+/// Scene camera from Alembic file
+#[derive(Clone, Debug)]
+pub struct SceneCamera {
+    pub name: String,
+    pub transform: Mat4,
+    /// Focal length in mm
+    pub focal_length: f32,
+    /// Horizontal aperture in cm
+    pub h_aperture: f32,
+    /// Vertical aperture in cm
+    pub v_aperture: f32,
+    /// Near clip
+    pub near: f32,
+    /// Far clip
+    pub far: f32,
+}
+
+impl SceneCamera {
+    /// Compute vertical FOV in radians
+    pub fn fov_y(&self) -> f32 {
+        // aperture in cm, focal length in mm -> convert to same units
+        // fov = 2 * atan(aperture / (2 * focal_length))
+        2.0 * (self.v_aperture / (2.0 * self.focal_length / 10.0)).atan() as f32
+    }
+    
+    /// Compute aspect ratio
+    pub fn aspect(&self) -> f32 {
+        self.h_aperture / self.v_aperture
+    }
 }
 
 /// Convert CurvesSample to line strips for GPU
@@ -268,10 +308,63 @@ pub fn convert_polymesh(sample: &PolyMeshSample, name: &str, transform: Mat4) ->
     })
 }
 
+/// Convert SubDSample to mesh (treats as polygon mesh without subdivision)
+pub fn convert_subd(sample: &SubDSample, name: &str, transform: Mat4) -> Option<ConvertedMesh> {
+    if !sample.is_valid() {
+        return None;
+    }
+    // Convert SubD to PolyMesh-like data and reuse convert_polymesh
+    let poly_sample = PolyMeshSample {
+        positions: sample.positions.clone(),
+        face_counts: sample.face_counts.clone(),
+        face_indices: sample.face_indices.clone(),
+        velocities: sample.velocities.clone(),
+        uvs: sample.uvs.clone(),
+        normals: sample.normals.clone(),
+        self_bounds: sample.self_bounds.clone(),
+    };
+    convert_polymesh(&poly_sample, name, transform)
+}
+
+/// Convert PointsSample to GPU points
+pub fn convert_points(sample: &PointsSample, name: &str, transform: Mat4) -> Option<ConvertedPoints> {
+    if !sample.is_valid() {
+        return None;
+    }
+    
+    let positions: Vec<[f32; 3]> = sample.positions.iter()
+        .map(|p| [p.x, p.y, p.z])
+        .collect();
+    
+    // Use widths if available, otherwise default radius
+    let widths = if sample.has_widths() {
+        sample.widths.clone()
+    } else {
+        vec![0.02; sample.positions.len()]  // default 2cm radius
+    };
+    
+    // Compute bounds
+    let mut bounds = Bounds::empty();
+    for pos in &sample.positions {
+        let world_pos = transform.transform_point3(*pos);
+        bounds.expand(world_pos);
+    }
+    
+    Some(ConvertedPoints {
+        name: name.to_string(),
+        positions,
+        widths,
+        transform,
+        bounds,
+    })
+}
+
 /// Collected scene data
 pub struct CollectedScene {
     pub meshes: Vec<ConvertedMesh>,
     pub curves: Vec<ConvertedCurves>,
+    pub points: Vec<ConvertedPoints>,
+    pub cameras: Vec<SceneCamera>,
 }
 
 /// Cached mesh data for constant geometry
@@ -317,16 +410,20 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
     let mut mesh_tasks = Vec::new();
     let mut cached_results = Vec::new();
     let mut curves = Vec::new();
+    let mut points = Vec::new();
+    let mut cameras = Vec::new();
     let root = archive.root();
     
-    // Phase 1: Collect all mesh samples and curves (sequential file reads)
+    // Phase 1: Collect all mesh samples, curves, points, cameras (sequential file reads)
     collect_samples_recursive(
         &root, 
         Mat4::IDENTITY, 
         sample_index, 
         &mut mesh_tasks, 
         &mut cached_results, 
-        &mut curves, 
+        &mut curves,
+        &mut points,
+        &mut cameras,
         cache,
     );
     
@@ -371,7 +468,7 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
     
     meshes.extend(converted);
     
-    CollectedScene { meshes, curves }
+    CollectedScene { meshes, curves, points, cameras }
 }
 
 /// Transform local bounds to world space
@@ -401,6 +498,8 @@ fn collect_samples_recursive(
     mesh_tasks: &mut Vec<MeshTask>,
     cached_results: &mut Vec<CachedResult>,
     curves: &mut Vec<ConvertedCurves>,
+    points: &mut Vec<ConvertedPoints>,
+    cameras: &mut Vec<SceneCamera>,
     cache: Option<&MeshCache>,
 ) {
     // Check if this object is an Xform
@@ -454,6 +553,45 @@ fn collect_samples_recursive(
         }
     }
     
+    // Check if this object is a SubD (treat as polymesh)
+    if let Some(subd) = ISubD::new(obj) {
+        let mesh_name = subd.name().to_string();
+        let is_constant = subd.is_constant();
+        
+        let cached = if is_constant {
+            cache.and_then(|c| c.lock().get(&mesh_name).cloned())
+        } else {
+            None
+        };
+        
+        if let Some(cached_mesh) = cached {
+            cached_results.push(CachedResult {
+                name: mesh_name,
+                vertices: cached_mesh.vertices,
+                indices: cached_mesh.indices,
+                transform: world_transform,
+                local_bounds: cached_mesh.local_bounds,
+            });
+        } else if let Ok(sample) = subd.get_sample(sample_index) {
+            // Convert SubD sample to PolyMesh sample for the task
+            let poly_sample = PolyMeshSample {
+                positions: sample.positions,
+                face_counts: sample.face_counts,
+                face_indices: sample.face_indices,
+                velocities: sample.velocities,
+                uvs: sample.uvs,
+                normals: sample.normals,
+                self_bounds: sample.self_bounds,
+            };
+            mesh_tasks.push(MeshTask {
+                name: mesh_name,
+                sample: poly_sample,
+                transform: world_transform,
+                is_constant,
+            });
+        }
+    }
+    
     // Check if this object is Curves
     if let Some(icurves) = ICurves::new(obj) {
         if let Ok(sample) = icurves.get_sample(sample_index) {
@@ -463,9 +601,33 @@ fn collect_samples_recursive(
         }
     }
     
+    // Check if this object is Points
+    if let Some(ipoints) = IPoints::new(obj) {
+        if let Ok(sample) = ipoints.get_sample(sample_index) {
+            if let Some(converted) = convert_points(&sample, ipoints.name(), world_transform) {
+                points.push(converted);
+            }
+        }
+    }
+    
+    // Check if this object is a Camera
+    if let Some(icamera) = ICamera::new(obj) {
+        if let Ok(sample) = icamera.get_sample(sample_index) {
+            cameras.push(SceneCamera {
+                name: icamera.name().to_string(),
+                transform: world_transform,
+                focal_length: sample.focal_length as f32,
+                h_aperture: sample.horizontal_aperture as f32,
+                v_aperture: sample.vertical_aperture as f32,
+                near: sample.near_clipping_plane as f32,
+                far: sample.far_clipping_plane as f32,
+            });
+        }
+    }
+    
     // Recurse into children
     for child in obj.children() {
-        collect_samples_recursive(&child, world_transform, sample_index, mesh_tasks, cached_results, curves, cache);
+        collect_samples_recursive(&child, world_transform, sample_index, mesh_tasks, cached_results, curves, points, cameras, cache);
     }
 }
 
@@ -484,11 +646,14 @@ pub fn compute_stats(meshes: &[ConvertedMesh]) -> MeshStats {
     }
 }
 
-/// Compute combined bounds of all meshes
-pub fn compute_scene_bounds(meshes: &[ConvertedMesh]) -> Bounds {
+/// Compute combined bounds of all meshes and points
+pub fn compute_scene_bounds(meshes: &[ConvertedMesh], points: &[ConvertedPoints]) -> Bounds {
     let mut bounds = Bounds::empty();
     for mesh in meshes {
         bounds.merge(&mesh.bounds);
+    }
+    for pts in points {
+        bounds.merge(&pts.bounds);
     }
     bounds
 }

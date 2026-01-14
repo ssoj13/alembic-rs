@@ -103,6 +103,10 @@ pub struct ViewerApp {
     scene_tree: Vec<SceneNode>,
     selected_object: Option<String>,
     
+    // Scene cameras
+    scene_cameras: Vec<mesh_converter::SceneCamera>,
+    active_camera: Option<usize>,  // None = orbit camera, Some(i) = scene camera index
+    
     // Async loading
     worker: Option<super::worker::WorkerHandle>,
     pending_frame: Option<usize>,  // Frame we've requested but not yet received
@@ -137,6 +141,8 @@ impl ViewerApp {
             scene_bounds: None,
             scene_tree: Vec::new(),
             selected_object: None,
+            scene_cameras: Vec::new(),
+            active_camera: None,
             worker: None,
             pending_frame: None,
             epoch: 0,
@@ -212,7 +218,30 @@ impl ViewerApp {
                 ui.separator();
                 if ui.button("Reset Camera").clicked() {
                     self.viewport.camera.reset();
+                    self.active_camera = None;
                     ui.close_menu();
+                }
+                
+                // Scene cameras submenu
+                if !self.scene_cameras.is_empty() {
+                    ui.separator();
+                    ui.menu_button("Scene Cameras", |ui| {
+                        // Orbit camera (default)
+                        if ui.selectable_label(self.active_camera.is_none(), "Orbit Camera").clicked() {
+                            self.active_camera = None;
+                            ui.close_menu();
+                        }
+                        ui.separator();
+                        // Scene cameras
+                        for (i, cam) in self.scene_cameras.iter().enumerate() {
+                            let is_active = self.active_camera == Some(i);
+                            let label = format!("{} ({:.0}mm)", cam.name, cam.focal_length);
+                            if ui.selectable_label(is_active, &label).clicked() {
+                                self.active_camera = Some(i);
+                                ui.close_menu();
+                            }
+                        }
+                    });
                 }
             });
 
@@ -976,8 +1005,13 @@ impl ViewerApp {
         };
 
         let stats = mesh_converter::compute_stats(&scene.meshes);
-        let bounds = mesh_converter::compute_scene_bounds(&scene.meshes);
+        let bounds = mesh_converter::compute_scene_bounds(&scene.meshes, &scene.points);
         self.scene_bounds = if bounds.is_valid() { Some(bounds) } else { None };
+        
+        // Update scene cameras (only on first frame or when cameras change)
+        if !scene.cameras.is_empty() && self.scene_cameras.is_empty() {
+            self.scene_cameras = scene.cameras;
+        }
 
         // Collect names using references (no String cloning)
         let new_mesh_names: std::collections::HashSet<&str> = 
@@ -1114,6 +1148,21 @@ impl eframe::App for ViewerApp {
     }
     
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Update scene camera override
+        self.viewport.scene_camera = self.active_camera.and_then(|i| {
+            self.scene_cameras.get(i).map(|cam| {
+                // Build view matrix from camera transform
+                // Camera transform is world-to-local, we need to invert it for view
+                let view = cam.transform.inverse();
+                super::viewport::SceneCameraOverride {
+                    view,
+                    fov_y: cam.fov_y(),
+                    near: cam.near,
+                    far: cam.far,
+                }
+            })
+        });
+        
         // Process any ready frames from background worker (non-blocking)
         self.process_worker_results();
         

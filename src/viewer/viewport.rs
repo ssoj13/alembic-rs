@@ -5,6 +5,15 @@ use egui::{Response, Sense, Ui, Vec2};
 use super::camera::OrbitCamera;
 use super::renderer::Renderer;
 
+/// Scene camera override parameters
+#[derive(Clone)]
+pub struct SceneCameraOverride {
+    pub view: glam::Mat4,
+    pub fov_y: f32,  // radians
+    pub near: f32,
+    pub far: f32,
+}
+
 /// 3D Viewport state
 pub struct Viewport {
     pub camera: OrbitCamera,
@@ -12,6 +21,8 @@ pub struct Viewport {
     texture_id: Option<egui::TextureId>,
     render_texture: Option<RenderTexture>,
     last_size: Vec2,
+    /// Optional scene camera override
+    pub scene_camera: Option<SceneCameraOverride>,
 }
 
 struct RenderTexture {
@@ -29,6 +40,7 @@ impl Viewport {
             texture_id: None,
             render_texture: None,
             last_size: Vec2::ZERO,
+            scene_camera: None,
         }
     }
 
@@ -66,11 +78,20 @@ impl Viewport {
             let height = size.y as u32;
 
             if width > 0 && height > 0 {
-                // Update camera uniforms
+                // Update camera uniforms - use scene camera if set, otherwise orbit camera
                 let aspect = size.x / size.y;
-                let view_proj = self.camera.view_proj_matrix(aspect);
-                let view = self.camera.view_matrix();
-                let position = self.camera.position();
+                let (view_proj, view, position) = if let Some(sc) = &self.scene_camera {
+                    // Use scene camera
+                    let proj = glam::Mat4::perspective_rh(sc.fov_y, aspect, sc.near, sc.far);
+                    let view = sc.view;
+                    // Extract position from inverse view matrix
+                    let inv_view = view.inverse();
+                    let pos = glam::Vec3::new(inv_view.w_axis.x, inv_view.w_axis.y, inv_view.w_axis.z);
+                    (proj * view, view, pos)
+                } else {
+                    // Use orbit camera
+                    (self.camera.view_proj_matrix(aspect), self.camera.view_matrix(), self.camera.position())
+                };
                 
                 if let Some(renderer) = &self.renderer {
                     renderer.update_camera(view_proj, view, position);
