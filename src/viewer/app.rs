@@ -48,6 +48,7 @@ pub struct ViewerApp {
     current_frame: usize,
     playing: bool,
     playback_fps: f32,
+    playback_dir: i32, // 1 = forward, -1 = backward
     last_frame_time: Instant,
     
     // UI state
@@ -81,6 +82,7 @@ impl ViewerApp {
             current_frame: 0,
             playing: false,
             playback_fps: 24.0,
+            playback_dir: 1,
             last_frame_time: Instant::now(),
             status_message: "Ready".into(),
             mesh_count: 0,
@@ -510,16 +512,18 @@ impl ViewerApp {
         if !self.playing || self.num_samples <= 1 {
             return;
         }
-        
+
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_frame_time).as_secs_f32();
         let frame_duration = 1.0 / self.playback_fps;
-        
+
         if elapsed >= frame_duration {
             self.last_frame_time = now;
-            
-            let next_frame = (self.current_frame + 1) % self.num_samples;
-            self.load_frame(next_frame);
+
+            // Calculate next frame with direction and looping
+            let n = self.num_samples as i32;
+            let next = (self.current_frame as i32 + self.playback_dir).rem_euclid(n) as usize;
+            self.load_frame(next);
         }
     }
 
@@ -1017,14 +1021,16 @@ impl eframe::App for ViewerApp {
             self.playing = !self.playing;
         }
 
-        // Left/Right = frame step (stops playback)
+        // Left/Right = frame step + set playback direction
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowLeft)) && self.num_samples > 1 {
             self.playing = false;
+            self.playback_dir = -1;
             let prev = if self.current_frame == 0 { self.num_samples - 1 } else { self.current_frame - 1 };
             self.load_frame(prev);
         }
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowRight)) && self.num_samples > 1 {
             self.playing = false;
+            self.playback_dir = 1;
             let next = (self.current_frame + 1) % self.num_samples;
             self.load_frame(next);
         }
