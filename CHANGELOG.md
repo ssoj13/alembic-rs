@@ -1,5 +1,37 @@
 # CHANGELOG
 
+## Session 2026-01-13: Viewer UI Enhancements
+
+### Flat Shading Mode
+Added flat shading toggle using `dpdx/dpdy` screen-space derivatives for face normals.
+
+**Files Changed:**
+- `crates/standard-surface/src/params.rs` - Added `flat_shading` to CameraUniform
+- `crates/standard-surface/src/shaders/standard_surface.wgsl` - Compute flat normals in fragment shader
+- `src/viewer/settings.rs` - Added `flat_shading` setting
+- `src/viewer/renderer.rs` - Pass flat_shading to shader
+- `src/viewer/app.rs` - UI checkbox
+
+### Object Hierarchy Tree
+Added left panel showing scene hierarchy with collapsible nodes.
+
+**Features:**
+- Icons per object type (▲ PolyMesh, ■ SubD, ↺ Xform, ◎ Camera, ☀ Light, ∿ Curves, • Points)
+- Collapsible tree nodes
+- Object selection
+
+### Properties Panel
+Shows selected object properties in right panel.
+
+**Displays:**
+- Object name and type
+- Sample count
+- PolyMesh: vertex/face counts
+- Xform: position and rotation
+- Camera: focal length, aperture
+
+---
+
 ## Session 2026-01-13: Time Sampling & Clippy Fixes
 
 ### Time Sampling Index Methods

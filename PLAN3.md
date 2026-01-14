@@ -17,19 +17,19 @@
 ## Remaining Tasks
 
 ### Rendering
-- [ ] Flat shading
-- [ ] Smooth shading with normals
-- [ ] Basic lighting (directional + ambient)
+- [x] Flat shading (dpdx/dpdy face normals in shader)
+- [x] Smooth shading with normals (default mode)
+- [x] Basic lighting (3-point rig + IBL already implemented)
 
 ### UI (Phase 2)
-- [ ] Object hierarchy tree
-- [ ] Properties panel
-- [ ] Flat/smooth shading toggle
+- [x] Object hierarchy tree (left panel with collapsible nodes)
+- [x] Properties panel (shows selected object info in right panel)
+- [x] Flat/smooth shading toggle (checkbox in Display settings)
 
 ### Animation (Phase 3)
-- [ ] Timeline slider (scrubbing)
-- [ ] Play/pause/speed controls
-- [ ] Frame interpolation
+- [x] Timeline slider (scrubbing) - already implemented
+- [x] Play/pause/speed controls (FPS: 12/24/30/60) - already implemented
+- [x] Frame interpolation - N/A (Alembic uses discrete samples)
 
 ---
 

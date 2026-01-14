@@ -75,8 +75,10 @@ pub struct Renderer {
     
     // Settings
     pub show_wireframe: bool,
+    pub flat_shading: bool,
     pub show_grid: bool,
     pub show_shadows: bool,
+    pub hdr_visible: bool,
     pub xray_alpha: f32,
     pub double_sided: bool,
     pub flip_normals: bool,
@@ -188,6 +190,10 @@ impl Renderer {
             view: Mat4::IDENTITY.to_cols_array_2d(),
             position: Vec3::new(0.0, 0.0, 5.0),
             xray_alpha: 1.0,
+            flat_shading: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
+            _pad3: 0.0,
         };
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("camera_buffer"),
@@ -366,6 +372,7 @@ impl Renderer {
             env_uniform_buffer,
             meshes: Vec::new(),
             show_wireframe: false,
+            flat_shading: false,
             show_grid: true,
             show_shadows: true,
             xray_alpha: 1.0,
@@ -383,6 +390,10 @@ impl Renderer {
             view: view.to_cols_array_2d(),
             position,
             xray_alpha,
+            flat_shading: if self.flat_shading { 1.0 } else { 0.0 },
+            _pad1: 0.0,
+            _pad2: 0.0,
+            _pad3: 0.0,
         };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
     }

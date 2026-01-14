@@ -17,12 +17,32 @@ use anyhow::Result;
 pub fn run(initial_file: Option<PathBuf>) -> Result<()> {
     env_logger::init();
     
+    // Friendly panic handler for GPU errors
+    std::panic::set_hook(Box::new(|info| {
+        let msg = info.payload()
+            .downcast_ref::<String>()
+            .map(|s| s.as_str())
+            .or_else(|| info.payload().downcast_ref::<&str>().copied())
+            .unwrap_or("Unknown error");
+        
+        if msg.contains("wgpu") || msg.contains("Buffer") || msg.contains("shader") {
+            eprintln!("\n[GPU Error] {}", msg);
+            eprintln!("\nThis is likely a shader/buffer mismatch. Try updating or rebuilding.");
+        } else {
+            eprintln!("\n[Error] {}", msg);
+            if let Some(loc) = info.location() {
+                eprintln!("  at {}:{}:{}", loc.file(), loc.line(), loc.column());
+            }
+        }
+    }));
+    
     let settings = Settings::load();
     
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([settings.window_width, settings.window_height])
             .with_title("Alembic Viewer"),
+        multisampling: 4, // 4x MSAA
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {
             wgpu_setup: egui_wgpu::WgpuSetup::CreateNew(egui_wgpu::WgpuSetupCreateNew {

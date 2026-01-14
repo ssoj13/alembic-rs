@@ -22,6 +22,10 @@ struct Camera {
     view: mat4x4<f32>,
     position: vec3<f32>,
     xray_alpha: f32,  // X-Ray mode: 1.0 = normal, 0.5 = transparent
+    flat_shading: f32, // 1.0 = flat (face normals), 0.0 = smooth
+    _pad1: f32,
+    _pad2: f32,
+    _pad3: f32,
 }
 
 struct Light {
@@ -312,7 +316,21 @@ fn compute_light(
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    let N = normalize(in.world_normal);
+    // Normal: use face normal (flat) or interpolated vertex normal (smooth)
+    var N: vec3<f32>;
+    if camera.flat_shading > 0.5 {
+        // Flat shading: compute face normal from screen-space derivatives
+        let dpdx = dpdx(in.world_position);
+        let dpdy = dpdy(in.world_position);
+        N = normalize(cross(dpdx, dpdy));
+        // Flip if facing away from camera
+        let V_temp = normalize(camera.position - in.world_position);
+        if dot(N, V_temp) < 0.0 {
+            N = -N;
+        }
+    } else {
+        N = normalize(in.world_normal);
+    }
     let V = normalize(camera.position - in.world_position);
     let NdotV = max(dot(N, V), EPSILON);
 

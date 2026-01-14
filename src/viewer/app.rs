@@ -13,6 +13,24 @@ use super::mesh_converter;
 use super::settings::Settings;
 use super::viewport::Viewport;
 
+/// Scene hierarchy node
+#[derive(Clone, Debug)]
+pub struct SceneNode {
+    pub name: String,
+    pub node_type: String,
+    pub children: Vec<SceneNode>,
+}
+
+impl SceneNode {
+    pub fn new(name: &str, node_type: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            node_type: node_type.to_string(),
+            children: Vec::new(),
+        }
+    }
+}
+
 /// Main viewer application
 pub struct ViewerApp {
     viewport: Viewport,
@@ -40,6 +58,8 @@ pub struct ViewerApp {
     vertex_count: usize,
     face_count: usize,
     scene_bounds: Option<mesh_converter::Bounds>,
+    scene_tree: Vec<SceneNode>,
+    selected_object: Option<String>,
 }
 
 impl ViewerApp {
@@ -67,6 +87,8 @@ impl ViewerApp {
             vertex_count: 0,
             face_count: 0,
             scene_bounds: None,
+            scene_tree: Vec::new(),
+            selected_object: None,
         }
     }
 
@@ -152,6 +174,60 @@ impl ViewerApp {
         });
     }
 
+    /// Hierarchy panel - object tree
+    fn hierarchy_panel(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Hierarchy");
+        ui.separator();
+        
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            let tree = std::mem::take(&mut self.scene_tree);
+            let mut selected = self.selected_object.clone();
+            for node in &tree {
+                Self::show_tree_node(ui, node, &mut selected);
+            }
+            self.selected_object = selected;
+            self.scene_tree = tree;
+        });
+    }
+    
+    /// Render a tree node recursively
+    fn show_tree_node(ui: &mut egui::Ui, node: &SceneNode, selected: &mut Option<String>) {
+        let id = ui.make_persistent_id(&node.name);
+        let is_selected = selected.as_ref() == Some(&node.name);
+        
+        // Icon based on type
+        let icon = match node.node_type.as_str() {
+            "PolyMesh" => "▲",  // triangle
+            "SubD" => "■",      // square
+            "Xform" => "↺",     // rotation arrow
+            "Camera" => "◎",    // target
+            "Light" => "☀",     // sun
+            "Curves" => "∿",    // curve
+            "Points" => "•",    // bullet
+            _ => "○",           // circle
+        };
+        
+        let label = format!("{} {}", icon, node.name);
+        
+        if node.children.is_empty() {
+            // Leaf node
+            let response = ui.selectable_label(is_selected, &label);
+            if response.clicked() {
+                *selected = Some(node.name.clone());
+            }
+        } else {
+            // Parent node with children
+            egui::CollapsingHeader::new(&label)
+                .id_salt(id)
+                .default_open(true)
+                .show(ui, |ui| {
+                    for child in &node.children {
+                        Self::show_tree_node(ui, child, selected);
+                    }
+                });
+        }
+    }
+    
     fn side_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Scene");
         ui.separator();
@@ -172,6 +248,24 @@ impl ViewerApp {
         ui.label(format!("Faces: {}", self.face_count));
 
         ui.separator();
+        
+        // Selected object properties
+        if let Some(name) = &self.selected_object {
+            ui.label(RichText::new("Selected").strong());
+            ui.label(format!("Name: {}", name));
+            
+            // Find node type
+            if let Some(node) = self.find_node_by_name(name) {
+                ui.label(format!("Type: {}", node.node_type));
+            }
+            
+            // Get object properties from archive
+            if let Some(archive) = &self.archive {
+                self.show_object_properties_by_name(ui, archive, name);
+            }
+            
+            ui.separator();
+        }
 
         // Camera info
         ui.label(RichText::new("Camera").strong());
@@ -192,6 +286,10 @@ impl ViewerApp {
             }
             if ui.checkbox(&mut self.settings.show_wireframe, "Wireframe").changed() {
                 renderer.show_wireframe = self.settings.show_wireframe;
+                changed = true;
+            }
+            if ui.checkbox(&mut self.settings.flat_shading, "Flat Shading").changed() {
+                renderer.flat_shading = self.settings.flat_shading;
                 changed = true;
             }
             if ui.checkbox(&mut self.settings.show_shadows, "Shadows").changed() {
@@ -447,6 +545,10 @@ impl ViewerApp {
                 // Detect animation - find max samples across all meshes
                 let num_samples = Self::detect_num_samples(&archive);
                 
+                // Build scene hierarchy tree
+                self.scene_tree = Self::build_scene_tree(&archive);
+                self.selected_object = None;
+                
                 // Store archive for animation playback
                 self.archive = Some(Arc::new(archive));
                 self.num_samples = num_samples;
@@ -504,6 +606,112 @@ impl ViewerApp {
         }
         
         current_max
+    }
+    
+    /// Build scene hierarchy tree from archive
+    fn build_scene_tree(archive: &crate::abc::IArchive) -> Vec<SceneNode> {
+        let root = archive.root();
+        let mut children = Vec::new();
+        for child in root.children() {
+            children.push(Self::build_scene_node(&child));
+        }
+        children
+    }
+    
+    fn build_scene_node(obj: &crate::abc::IObject) -> SceneNode {
+        let name = obj.name();
+        
+        // Detect object type
+        let node_type = if crate::geom::IPolyMesh::new(obj).is_some() {
+            "PolyMesh"
+        } else if crate::geom::IXform::new(obj).is_some() {
+            "Xform"
+        } else if crate::geom::ICamera::new(obj).is_some() {
+            "Camera"
+        } else if crate::geom::ILight::new(obj).is_some() {
+            "Light"
+        } else if crate::geom::ICurves::new(obj).is_some() {
+            "Curves"
+        } else if crate::geom::IPoints::new(obj).is_some() {
+            "Points"
+        } else if crate::geom::ISubD::new(obj).is_some() {
+            "SubD"
+        } else {
+            "Object"
+        };
+        
+        let mut node = SceneNode::new(name, node_type);
+        
+        for child in obj.children() {
+            node.children.push(Self::build_scene_node(&child));
+        }
+        
+        node
+    }
+    
+    /// Find node by name in scene tree
+    fn find_node_by_name(&self, name: &str) -> Option<SceneNode> {
+        Self::find_node_recursive(&self.scene_tree, name)
+    }
+    
+    fn find_node_recursive(nodes: &[SceneNode], name: &str) -> Option<SceneNode> {
+        for node in nodes {
+            if node.name == name {
+                return Some(node.clone());
+            }
+            if let Some(found) = Self::find_node_recursive(&node.children, name) {
+                return Some(found);
+            }
+        }
+        None
+    }
+    
+    /// Show object properties by searching archive
+    fn show_object_properties_by_name(&self, ui: &mut egui::Ui, archive: &crate::abc::IArchive, name: &str) {
+        let root = archive.root();
+        Self::show_props_recursive(ui, &root, name, self.current_frame);
+    }
+    
+    fn show_props_recursive(ui: &mut egui::Ui, obj: &crate::abc::IObject, name: &str, frame: usize) -> bool {
+        if obj.name() == name {
+            // Found the object - show its properties
+            if let Some(mesh) = crate::geom::IPolyMesh::new(obj) {
+                ui.label(format!("Samples: {}", mesh.num_samples()));
+                if let Ok(sample) = mesh.get_sample(frame) {
+                    ui.label(format!("Vertices: {}", sample.positions.len()));
+                    ui.label(format!("Faces: {}", sample.face_counts.len()));
+                }
+            } else if let Some(xform) = crate::geom::IXform::new(obj) {
+                ui.label(format!("Samples: {}", xform.num_samples()));
+                if let Ok(sample) = xform.get_sample(frame) {
+                    let matrix = sample.matrix();
+                    let (_, rot, trans) = matrix.to_scale_rotation_translation();
+                    ui.label(format!("Pos: ({:.2}, {:.2}, {:.2})", trans.x, trans.y, trans.z));
+                    let euler: (f32, f32, f32) = rot.to_euler(glam::EulerRot::XYZ);
+                    ui.label(format!("Rot: ({:.1}°, {:.1}°, {:.1}°)", 
+                        euler.0.to_degrees(), euler.1.to_degrees(), euler.2.to_degrees()));
+                }
+            } else if let Some(cam) = crate::geom::ICamera::new(obj) {
+                ui.label(format!("Samples: {}", cam.num_samples()));
+                if let Ok(sample) = cam.get_sample(frame) {
+                    ui.label(format!("Focal: {:.1}mm", sample.focal_length));
+                    ui.label(format!("Aperture: {:.1}mm", sample.horizontal_aperture));
+                }
+            } else if let Some(curves) = crate::geom::ICurves::new(obj) {
+                ui.label(format!("Samples: {}", curves.num_samples()));
+            } else if let Some(points) = crate::geom::IPoints::new(obj) {
+                ui.label(format!("Samples: {}", points.num_samples()));
+            }
+            return true;
+        }
+        
+        // Recurse into children
+        for child in obj.children() {
+            if Self::show_props_recursive(ui, &child, name, frame) {
+                return true;
+            }
+        }
+        false
     }
     
     /// Load meshes for a specific frame
@@ -745,6 +953,7 @@ impl eframe::App for ViewerApp {
                 if let Some(renderer) = &mut self.viewport.renderer {
                     renderer.show_grid = self.settings.show_grid;
                     renderer.show_wireframe = self.settings.show_wireframe;
+                    renderer.flat_shading = self.settings.flat_shading;
                     renderer.show_shadows = self.settings.show_shadows;
                     renderer.xray_alpha = self.settings.xray_alpha;
                     renderer.double_sided = self.settings.double_sided;
@@ -799,6 +1008,15 @@ impl eframe::App for ViewerApp {
         TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             self.status_bar(ui);
         });
+
+        // Left panel - object hierarchy
+        if !self.scene_tree.is_empty() {
+            SidePanel::left("hierarchy_panel")
+                .default_width(200.0)
+                .show(ctx, |ui| {
+                    self.hierarchy_panel(ui);
+                });
+        }
 
         // Right side panel
         SidePanel::right("side_panel")

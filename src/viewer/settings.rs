@@ -10,6 +10,7 @@ pub struct Settings {
     // Display
     pub show_grid: bool,
     pub show_wireframe: bool,
+    pub flat_shading: bool,
     pub show_shadows: bool,
     pub xray_alpha: f32,
     pub double_sided: bool,
@@ -33,8 +34,12 @@ pub struct Settings {
     
     // Environment
     pub hdr_enabled: bool,
+    pub hdr_visible: bool,
     pub hdr_exposure: f32,
     pub last_hdr_file: Option<PathBuf>,
+    
+    // Anti-aliasing (requires restart)
+    pub antialiasing: u8,
 }
 
 impl Default for Settings {
@@ -42,6 +47,7 @@ impl Default for Settings {
         Self {
             show_grid: true,
             show_wireframe: false,
+            flat_shading: false,
             show_shadows: true,
             xray_alpha: 1.0,
             double_sided: false,
@@ -55,8 +61,10 @@ impl Default for Settings {
             last_file: None,
             recent_files: Vec::new(),
             hdr_enabled: false,
+            hdr_visible: true,
             hdr_exposure: 1.0,
             last_hdr_file: None,
+            antialiasing: 4,
         }
     }
 }

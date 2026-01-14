@@ -160,6 +160,12 @@ pub struct CameraUniform {
     pub position: Vec3,
     /// X-Ray mode alpha override (1.0 = normal, 0.5 = x-ray)
     pub xray_alpha: f32,
+    /// Flat shading mode (1.0 = flat, 0.0 = smooth)
+    pub flat_shading: f32,
+    /// Padding for alignment
+    pub _pad1: f32,
+    pub _pad2: f32,
+    pub _pad3: f32,
 }
 
 /// Directional light
