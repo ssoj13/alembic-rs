@@ -352,6 +352,8 @@ pub struct PipelineConfig {
     pub cull_mode: Option<wgpu::Face>,
     /// Use wireframe entry point
     pub wireframe: bool,
+    /// Primitive topology (TriangleList, LineList, etc)
+    pub topology: wgpu::PrimitiveTopology,
 }
 
 impl Default for PipelineConfig {
@@ -362,6 +364,7 @@ impl Default for PipelineConfig {
             blend: false,
             cull_mode: Some(wgpu::Face::Back),
             wireframe: false,
+            topology: wgpu::PrimitiveTopology::TriangleList,
         }
     }
 }
@@ -595,10 +598,10 @@ pub fn create_pipeline(
             buffers: &[vertex_buffer_layout()],
         },
         primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
+            topology: config.topology,
             strip_index_format: None,
             front_face: wgpu::FrontFace::Ccw,
-            cull_mode: config.cull_mode,
+            cull_mode: if config.topology == wgpu::PrimitiveTopology::LineList { None } else { config.cull_mode },
             polygon_mode: if config.wireframe { wgpu::PolygonMode::Line } else { wgpu::PolygonMode::Fill },
             unclipped_depth: false,
             conservative: false,

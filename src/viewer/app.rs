@@ -198,7 +198,7 @@ impl ViewerApp {
             }
             ui.horizontal(|ui| {
                 ui.label("Opacity:");
-                if ui.add(egui::Slider::new(&mut self.settings.xray_alpha, 0.1..=1.0).step_by(0.1)).changed() {
+                if ui.add(egui::Slider::new(&mut self.settings.xray_alpha, 0.01..=1.0).step_by(0.01)).changed() {
                     renderer.xray_alpha = self.settings.xray_alpha;
                     changed = true;
                 }
@@ -626,6 +626,66 @@ impl ViewerApp {
         self.playing = false;
         self.status_message = "Scene cleared".into();
     }
+    
+    /// Find next or previous ABC file in the same directory
+    /// direction: -1 for previous, +1 for next
+    fn find_sibling_abc(&self, direction: i32) -> Option<PathBuf> {
+        let current = self.current_file.as_ref()?;
+        let dir = current.parent()?;
+        
+        // Collect all .abc files in directory
+        let mut abc_files: Vec<PathBuf> = std::fs::read_dir(dir)
+            .ok()?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension()
+                    .map(|ext| ext.eq_ignore_ascii_case("abc"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        
+        // Sort alphabetically
+        abc_files.sort();
+        
+        if abc_files.is_empty() {
+            return None;
+        }
+        
+        // Find current file index
+        let current_idx = abc_files.iter().position(|p| p == current)?;
+        
+        // Calculate new index with wrapping
+        let new_idx = if direction > 0 {
+            (current_idx + 1) % abc_files.len()
+        } else {
+            if current_idx == 0 {
+                abc_files.len() - 1
+            } else {
+                current_idx - 1
+            }
+        };
+        
+        // Don't return same file
+        if new_idx == current_idx {
+            return None;
+        }
+        
+        Some(abc_files[new_idx].clone())
+    }
+    
+    /// Navigate to next or previous ABC file in directory
+    fn navigate_sibling(&mut self, direction: i32) {
+        if let Some(path) = self.find_sibling_abc(direction) {
+            let filename = path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.display().to_string());
+            self.status_message = format!("Opening: {}", filename);
+            self.pending_file = Some(path);
+        } else {
+            self.status_message = "No other ABC files in directory".into();
+        }
+    }
 }
 
 impl eframe::App for ViewerApp {
@@ -643,6 +703,27 @@ impl eframe::App for ViewerApp {
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
+        }
+        
+        // Navigate ABC files in directory: PageUp = prev, PageDown = next
+        if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
+            self.navigate_sibling(-1);
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
+            self.navigate_sibling(1);
+        }
+        
+        // H = Home camera (reset to default view)
+        if ctx.input(|i| i.key_pressed(egui::Key::H)) {
+            self.viewport.camera.reset();
+            self.status_message = "Camera reset".into();
+        }
+        
+        // F = Fit view (focus on scene)
+        if ctx.input(|i| i.key_pressed(egui::Key::F)) {
+            // TODO: calculate actual scene bounds
+            self.viewport.camera.focus(glam::Vec3::ZERO, 5.0);
+            self.status_message = "Camera fit to scene".into();
         }
         
         self.initialize(ctx);

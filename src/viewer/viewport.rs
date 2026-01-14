@@ -85,7 +85,7 @@ impl Viewport {
 
                 // Render scene
                 if let (Some(renderer), Some(rt)) = (&mut self.renderer, &self.render_texture) {
-                    renderer.render(&rt.view, width, height);
+                    renderer.render(&rt.view, width, height, self.camera.distance());
                 }
 
                 // Draw the rendered texture

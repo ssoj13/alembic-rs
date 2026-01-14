@@ -24,6 +24,7 @@ pub struct Renderer {
     pipeline_double_sided: wgpu::RenderPipeline,
     wireframe_pipeline: wgpu::RenderPipeline,
     wireframe_pipeline_double_sided: wgpu::RenderPipeline,
+    line_pipeline: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
     skybox_pipeline: wgpu::RenderPipeline,
     layouts: BindGroupLayouts,
@@ -62,6 +63,7 @@ pub struct Renderer {
     grid_model: wgpu::BindGroup,
     #[allow(dead_code)]
     grid_model_buffer: wgpu::Buffer,
+    grid_step: f32, // current grid step for adaptive sizing
     
     // Environment map
     env_map: EnvironmentMap,
@@ -122,6 +124,7 @@ impl Renderer {
             blend: true,  // Enable alpha blending for X-Ray mode
             cull_mode: Some(wgpu::Face::Back),
             wireframe: false,
+            ..Default::default()
         };
         let pipeline = standard_surface::create_pipeline(&device, &layouts, &config);
 
@@ -144,6 +147,14 @@ impl Renderer {
             ..double_sided_config
         };
         let wireframe_pipeline_double_sided = standard_surface::create_pipeline(&device, &layouts, &wireframe_double_sided_config);
+        
+        // Line pipeline for curves, hair, grid
+        let line_config = PipelineConfig {
+            topology: wgpu::PrimitiveTopology::LineList,
+            cull_mode: None,
+            ..double_sided_config
+        };
+        let line_pipeline = standard_surface::create_pipeline(&device, &layouts, &line_config);
         
         // Shadow depth pipeline
         let shadow_pipeline = standard_surface::create_shadow_pipeline(&device, &layouts);
@@ -327,6 +338,7 @@ impl Renderer {
             pipeline_double_sided,
             wireframe_pipeline,
             wireframe_pipeline_double_sided,
+            line_pipeline,
             shadow_pipeline,
             skybox_pipeline,
             layouts,
@@ -349,6 +361,7 @@ impl Renderer {
             grid_material,
             grid_model,
             grid_model_buffer,
+            grid_step: 0.0, // will be set on first render
             env_map,
             env_uniform_buffer,
             meshes: Vec::new(),
@@ -433,43 +446,42 @@ impl Renderer {
         }
     }
 
-    /// Create grid mesh
-    fn ensure_grid(&mut self) {
-        if self.grid_mesh.is_some() {
+    /// Update grid mesh based on camera distance (Lightwave-style adaptive grid)
+    pub fn update_grid(&mut self, camera_distance: f32) {
+        // Calculate grid step as power of 10 based on camera distance
+        // e.g. distance 5 -> step 1, distance 50 -> step 10, distance 0.5 -> step 0.1
+        let log_dist = camera_distance.max(0.01).log10();
+        let step = 10.0_f32.powf(log_dist.floor());
+        
+        // Only rebuild if step changed
+        if (step - self.grid_step).abs() < 0.001 && self.grid_mesh.is_some() {
             return;
         }
-
+        self.grid_step = step;
+        
+        // Grid covers area proportional to camera distance
+        let half_size = step * 10.0; // 10 major divisions visible
+        let divisions = 20; // 20 lines each direction
+        
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
-        let size = 10.0;
-        let divisions = 20;
-        let step = size * 2.0 / divisions as f32;
 
-        // Create grid lines as thin quads
-        let line_width = 0.01;
-
+        // Create grid as LineList - two vertices per line
         for i in 0..=divisions {
-            let pos = -size + i as f32 * step;
-
-            // X-axis lines
+            let t = i as f32 / divisions as f32;
+            let pos = -half_size + t * half_size * 2.0;
             let idx = vertices.len() as u32;
-            vertices.extend_from_slice(&[
-                Vertex { position: [-size, 0.0, pos - line_width], normal: [0.0, 1.0, 0.0], uv: [0.0, 0.0] },
-                Vertex { position: [size, 0.0, pos - line_width], normal: [0.0, 1.0, 0.0], uv: [1.0, 0.0] },
-                Vertex { position: [size, 0.0, pos + line_width], normal: [0.0, 1.0, 0.0], uv: [1.0, 1.0] },
-                Vertex { position: [-size, 0.0, pos + line_width], normal: [0.0, 1.0, 0.0], uv: [0.0, 1.0] },
-            ]);
-            indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
-
-            // Z-axis lines
+            
+            // X-axis line (parallel to X)
+            vertices.push(Vertex { position: [-half_size, 0.0, pos], normal: [0.0, 1.0, 0.0], uv: [0.0, 0.0] });
+            vertices.push(Vertex { position: [half_size, 0.0, pos], normal: [0.0, 1.0, 0.0], uv: [1.0, 0.0] });
+            indices.extend_from_slice(&[idx, idx + 1]);
+            
+            // Z-axis line (parallel to Z)
             let idx = vertices.len() as u32;
-            vertices.extend_from_slice(&[
-                Vertex { position: [pos - line_width, 0.0, -size], normal: [0.0, 1.0, 0.0], uv: [0.0, 0.0] },
-                Vertex { position: [pos + line_width, 0.0, -size], normal: [0.0, 1.0, 0.0], uv: [1.0, 0.0] },
-                Vertex { position: [pos + line_width, 0.0, size], normal: [0.0, 1.0, 0.0], uv: [1.0, 1.0] },
-                Vertex { position: [pos - line_width, 0.0, size], normal: [0.0, 1.0, 0.0], uv: [0.0, 1.0] },
-            ]);
-            indices.extend_from_slice(&[idx, idx + 1, idx + 2, idx, idx + 2, idx + 3]);
+            vertices.push(Vertex { position: [pos, 0.0, -half_size], normal: [0.0, 1.0, 0.0], uv: [0.0, 0.0] });
+            vertices.push(Vertex { position: [pos, 0.0, half_size], normal: [0.0, 1.0, 0.0], uv: [0.0, 1.0] });
+            indices.extend_from_slice(&[idx, idx + 1]);
         }
 
         let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -619,9 +631,9 @@ impl Renderer {
     }
 
     /// Render the scene
-    pub fn render(&mut self, view: &wgpu::TextureView, width: u32, height: u32) {
+    pub fn render(&mut self, view: &wgpu::TextureView, width: u32, height: u32, camera_distance: f32) {
         self.ensure_depth_texture(width, height);
-        self.ensure_grid();
+        self.update_grid(camera_distance);
 
         let depth_view = match &self.depth_texture {
             Some(dt) => &dt.view,
@@ -712,14 +724,17 @@ impl Renderer {
             render_pass.set_bind_group(3, &self.shadow_bind_group, &[]);
             render_pass.set_bind_group(4, &self.env_map.bind_group, &[]);
 
-            // Draw grid
+            // Draw grid using line pipeline
             if self.show_grid {
                 if let Some(grid) = &self.grid_mesh {
+                    render_pass.set_pipeline(&self.line_pipeline);
                     render_pass.set_bind_group(1, &self.grid_material, &[]);
                     render_pass.set_bind_group(2, &self.grid_model, &[]);
                     render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
                     render_pass.set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
+                    // Restore mesh pipeline
+                    render_pass.set_pipeline(pipeline);
                 }
             }
 

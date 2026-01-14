@@ -41,11 +41,14 @@ impl OrbitCamera {
         );
     }
 
-    /// Pan camera (shift+drag)
+    /// Pan camera (shift+drag) - Houdini style: horizontal in view plane, vertical in world Y
     pub fn pan(&mut self, delta_x: f32, delta_y: f32) {
-        // Get values before mutable borrow
-        let right: Vec3 = self.rig.final_transform.right();
-        let up: Vec3 = self.rig.final_transform.up();
+        // Get camera right vector (for horizontal pan)
+        let cam_right: Vec3 = self.rig.final_transform.right();
+        // Project to XZ plane for horizontal movement
+        let right = Vec3::new(cam_right.x, 0.0, cam_right.z).normalize_or_zero();
+        // Use world up for vertical movement
+        let up = Vec3::Y;
         let dist = self.rig.driver::<Arm>().offset.z;
         
         let sensitivity = 0.01 * dist;
