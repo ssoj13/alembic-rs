@@ -1,6 +1,6 @@
 //! Convert Alembic geometry to GPU-ready data
 
-use crate::geom::{IPolyMesh, PolyMeshSample, ICurves, CurvesSample, ISubD, SubDSample, IPoints, PointsSample, ICamera, CameraSample, ILight};
+use crate::geom::{IPolyMesh, PolyMeshSample, ICurves, CurvesSample, ISubD, IPoints, PointsSample, ICamera, ILight};
 use crate::material::{IMaterial, get_material_assignment};
 use glam::{Mat4, Vec3};
 use rayon::prelude::*;
@@ -70,6 +70,7 @@ pub struct ConvertedCurves {
 pub struct ConvertedPoints {
     pub name: String,
     pub positions: Vec<[f32; 3]>,
+    #[allow(dead_code)]
     pub widths: Vec<f32>,  // radius per point
     pub transform: Mat4,
     pub bounds: Bounds,
@@ -83,6 +84,7 @@ pub struct SceneCamera {
     /// Focal length in mm
     pub focal_length: f32,
     /// Horizontal aperture in cm
+    #[allow(dead_code)]
     pub h_aperture: f32,
     /// Vertical aperture in cm
     pub v_aperture: f32,
@@ -97,10 +99,11 @@ impl SceneCamera {
     pub fn fov_y(&self) -> f32 {
         // aperture in cm, focal length in mm -> convert to same units
         // fov = 2 * atan(aperture / (2 * focal_length))
-        2.0 * (self.v_aperture / (2.0 * self.focal_length / 10.0)).atan() as f32
+        2.0 * (self.v_aperture / (2.0 * self.focal_length / 10.0)).atan()
     }
     
     /// Compute aspect ratio
+    #[allow(dead_code)]
     pub fn aspect(&self) -> f32 {
         self.h_aperture / self.v_aperture
     }
@@ -108,6 +111,7 @@ impl SceneCamera {
 
 /// Scene light from Alembic file
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct SceneLight {
     pub name: String,
     pub transform: Mat4,
@@ -141,11 +145,13 @@ impl SceneLight {
 /// Scene material from Alembic file
 #[derive(Clone, Debug)]
 pub struct SceneMaterial {
+    #[allow(dead_code)]
     pub name: String,
     pub path: String,
     /// Base color (extracted from shader params if available)
     pub base_color: Option<Vec3>,
     /// Targets (e.g., "arnold", "renderman")
+    #[allow(dead_code)]
     pub targets: Vec<String>,
 }
 
@@ -363,24 +369,6 @@ pub fn convert_polymesh(sample: &PolyMeshSample, name: &str, transform: Mat4) ->
     })
 }
 
-/// Convert SubDSample to mesh (treats as polygon mesh without subdivision)
-pub fn convert_subd(sample: &SubDSample, name: &str, transform: Mat4) -> Option<ConvertedMesh> {
-    if !sample.is_valid() {
-        return None;
-    }
-    // Convert SubD to PolyMesh-like data and reuse convert_polymesh
-    let poly_sample = PolyMeshSample {
-        positions: sample.positions.clone(),
-        face_counts: sample.face_counts.clone(),
-        face_indices: sample.face_indices.clone(),
-        velocities: sample.velocities.clone(),
-        uvs: sample.uvs.clone(),
-        normals: sample.normals.clone(),
-        self_bounds: sample.self_bounds.clone(),
-    };
-    convert_polymesh(&poly_sample, name, transform)
-}
-
 /// Convert PointsSample to GPU points
 pub fn convert_points(sample: &PointsSample, name: &str, transform: Mat4) -> Option<ConvertedPoints> {
     if !sample.is_valid() {
@@ -421,7 +409,9 @@ pub struct CollectedScene {
     pub points: Vec<ConvertedPoints>,
     pub cameras: Vec<SceneCamera>,
     pub lights: Vec<SceneLight>,
+    #[allow(dead_code)]  // used internally for color resolution
     pub materials: Vec<SceneMaterial>,
+    #[allow(dead_code)]  // used internally for color resolution
     pub material_assignments: Vec<MaterialAssignment>,
 }
 
@@ -441,10 +431,6 @@ pub fn new_mesh_cache() -> MeshCache {
     Arc::new(Mutex::new(HashMap::new()))
 }
 
-/// Recursively collect all geometry from an archive (without caching)
-pub fn collect_scene(archive: &crate::abc::IArchive, sample_index: usize) -> CollectedScene {
-    collect_scene_cached(archive, sample_index, None)
-}
 
 /// Pending mesh conversion task
 struct MeshTask {
@@ -497,7 +483,10 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
     let converted: Vec<ConvertedMesh> = mesh_tasks
         .into_par_iter()
         .filter_map(|task| {
-            convert_polymesh(&task.sample, &task.name, task.transform).map(|converted| {
+            convert_polymesh(&task.sample, &task.name, task.transform).map(|mut converted| {
+                // Set path from task
+                converted.path = task.path.clone();
+                
                 // Cache constant meshes
                 if task.is_constant {
                     if let Some(cache) = cache {
@@ -525,14 +514,36 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
         let bounds = transform_bounds(&cached.local_bounds, cached.transform);
         meshes.push(ConvertedMesh {
             name: cached.name,
+            path: cached.path,
             vertices: cached.vertices,
             indices: cached.indices,
             transform: cached.transform,
             bounds,
+            base_color: None,  // will be resolved in apply_scene
         });
     }
     
     meshes.extend(converted);
+    
+    // Resolve base_color from material assignments
+    // Build lookup: material_path -> base_color
+    let mat_colors: std::collections::HashMap<&str, Vec3> = materials.iter()
+        .filter_map(|m| m.base_color.map(|c| (m.path.as_str(), c)))
+        .collect();
+    
+    // Build lookup: object_path -> material_path
+    let obj_to_mat: std::collections::HashMap<&str, &str> = material_assignments.iter()
+        .map(|a| (a.object_path.as_str(), a.material_path.as_str()))
+        .collect();
+    
+    // Apply base_color to meshes
+    for mesh in &mut meshes {
+        if let Some(&mat_path) = obj_to_mat.get(mesh.path.as_str()) {
+            if let Some(&color) = mat_colors.get(mat_path) {
+                mesh.base_color = Some(color);
+            }
+        }
+    }
 
     CollectedScene { meshes, curves, points, cameras, lights, materials, material_assignments }
 }
@@ -557,6 +568,7 @@ fn transform_bounds(local: &Bounds, transform: Mat4) -> Bounds {
 }
 
 /// Phase 1: Collect all mesh samples (sequential reads from file)
+#[allow(clippy::too_many_arguments)]
 fn collect_samples_recursive(
     obj: &crate::abc::IObject,
     parent_transform: Mat4,
@@ -591,6 +603,7 @@ fn collect_samples_recursive(
     // Check if this object is a PolyMesh
     if let Some(polymesh) = IPolyMesh::new(obj) {
         let mesh_name = polymesh.name().to_string();
+        let mesh_path = polymesh.full_name().to_string();
         let is_constant = polymesh.is_constant();
         
         // Try cache first for constant meshes
@@ -604,6 +617,7 @@ fn collect_samples_recursive(
             // Cache hit - just store for later bounds transform
             cached_results.push(CachedResult {
                 name: mesh_name,
+                path: mesh_path,
                 vertices: cached_mesh.vertices,
                 indices: cached_mesh.indices,
                 transform: world_transform,
@@ -614,6 +628,7 @@ fn collect_samples_recursive(
             if let Ok(sample) = polymesh.get_sample(sample_index) {
                 mesh_tasks.push(MeshTask {
                     name: mesh_name,
+                    path: mesh_path,
                     sample,
                     transform: world_transform,
                     is_constant,
@@ -625,6 +640,7 @@ fn collect_samples_recursive(
     // Check if this object is a SubD (treat as polymesh)
     if let Some(subd) = ISubD::new(obj) {
         let mesh_name = subd.name().to_string();
+        let mesh_path = subd.full_name().to_string();
         let is_constant = subd.is_constant();
         
         let cached = if is_constant {
@@ -636,6 +652,7 @@ fn collect_samples_recursive(
         if let Some(cached_mesh) = cached {
             cached_results.push(CachedResult {
                 name: mesh_name,
+                path: mesh_path,
                 vertices: cached_mesh.vertices,
                 indices: cached_mesh.indices,
                 transform: world_transform,
@@ -654,6 +671,7 @@ fn collect_samples_recursive(
             };
             mesh_tasks.push(MeshTask {
                 name: mesh_name,
+                path: mesh_path,
                 sample: poly_sample,
                 transform: world_transform,
                 is_constant,

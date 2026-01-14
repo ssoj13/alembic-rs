@@ -767,6 +767,7 @@ impl Renderer {
     }
 
     /// Check if points exist
+    #[allow(dead_code)]
     pub fn has_points(&self, name: &str) -> bool {
         self.points.contains_key(name)
     }
@@ -825,6 +826,7 @@ impl Renderer {
     }
     
     /// Update curves transform
+    #[allow(dead_code)]
     pub fn update_curves_transform(&mut self, name: &str, transform: Mat4) -> bool {
         if let Some(curves) = self.curves.get_mut(name) {
             let normal_matrix = transform.inverse().transpose();

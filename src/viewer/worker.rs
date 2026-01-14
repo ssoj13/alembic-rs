@@ -89,13 +89,7 @@ fn worker_loop(
     // Create mesh cache for constant geometry
     let cache: MeshCache = mesh_converter::new_mesh_cache();
     
-    loop {
-        // Wait for command
-        let cmd = match rx.recv() {
-            Ok(cmd) => cmd,
-            Err(_) => break, // Channel closed
-        };
-
+    while let Ok(cmd) = rx.recv() {
         match cmd {
             WorkerCommand::LoadFrame { frame, epoch } => {
                 // Before doing work, drain any newer requests

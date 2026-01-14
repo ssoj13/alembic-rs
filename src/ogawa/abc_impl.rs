@@ -39,6 +39,7 @@ pub struct OgawaArchiveReader {
     root_data: Arc<ObjectData>,
     root_header: ObjectHeader,
     /// Array sample cache for read performance.
+    #[allow(dead_code)]
     cache: Arc<ReadArraySampleCache>,
 }
 

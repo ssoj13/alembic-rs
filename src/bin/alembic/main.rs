@@ -74,14 +74,6 @@ fn main() {
         "view" | "v" => {
             #[cfg(feature = "viewer")]
             {
-                // Pass log level to viewer
-                let viewer_log = match log_level() {
-                    LOG_DEBUG => alembic::viewer::LOG_DEBUG,
-                    LOG_TRACE => alembic::viewer::LOG_TRACE,
-                    _ => alembic::viewer::LOG_NONE,
-                };
-                alembic::viewer::set_log_level(viewer_log);
-
                 let file = filtered_args.get(1).map(|s| std::path::PathBuf::from(*s));
                 if let Err(e) = alembic::viewer::run(file) {
                     eprintln!("Viewer error: {}", e);

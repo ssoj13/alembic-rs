@@ -2,21 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Instant;
-
-// Logging levels
-const LOG_NONE: u8 = 0;
-const LOG_INFO: u8 = 1;
-const LOG_DEBUG: u8 = 2;
-const LOG_TRACE: u8 = 3;
-
-static LOG_LEVEL: AtomicU8 = AtomicU8::new(LOG_NONE);
-
-#[inline]
-fn log_level() -> u8 { LOG_LEVEL.load(Ordering::Relaxed) }
-
-pub fn set_log_level(level: u8) { LOG_LEVEL.store(level, Ordering::Relaxed); }
 
 /// Format FPS for display (hide decimals for whole numbers)
 fn format_fps(fps: f32) -> String {
@@ -27,25 +13,7 @@ fn format_fps(fps: f32) -> String {
     }
 }
 
-macro_rules! log_info {
-    ($($arg:tt)*) => {
-        if log_level() >= LOG_INFO { eprintln!("[INFO] {}", format!($($arg)*)); }
-    };
-}
-
-macro_rules! log_debug {
-    ($($arg:tt)*) => {
-        if log_level() >= LOG_DEBUG { eprintln!("[DEBUG] {}", format!($($arg)*)); }
-    };
-}
-
-macro_rules! log_trace {
-    ($($arg:tt)*) => {
-        if log_level() >= LOG_TRACE { eprintln!("[TRACE] {}", format!($($arg)*)); }
-    };
-}
-
-use egui::{menu, Color32, RichText, TopBottomPanel, CentralPanel, SidePanel, Window};
+use egui::{Color32, RichText, TopBottomPanel, CentralPanel, SidePanel};
 use glam::{Mat4, Vec3};
 
 use standard_surface::{StandardSurfaceParams, Vertex};
@@ -174,11 +142,11 @@ impl ViewerApp {
         // Collect recent files to avoid borrow issues
         let recent: Vec<PathBuf> = self.settings.recent_files().into_iter().cloned().collect();
         
-        menu::bar(ui, |ui| {
+        egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 if ui.button("Open...").clicked() {
                     self.open_file_dialog();
-                    ui.close_menu();
+                    ui.close();
                 }
                 
                 // Recent files submenu
@@ -190,14 +158,14 @@ impl ViewerApp {
                                 .unwrap_or_else(|| path.display().to_string());
                             if ui.button(&name).clicked() {
                                 self.pending_file = Some(path.clone());
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                         ui.separator();
                         if ui.button("Clear Recent").clicked() {
                             self.settings.recent_files.clear();
                             self.settings.save();
-                            ui.close_menu();
+                            ui.close();
                         }
                     });
                 }
@@ -223,7 +191,7 @@ impl ViewerApp {
                 if ui.button("Reset Camera").clicked() {
                     self.viewport.camera.reset();
                     self.active_camera = None;
-                    ui.close_menu();
+                    ui.close();
                 }
                 
                 // Scene cameras submenu
@@ -233,7 +201,7 @@ impl ViewerApp {
                         // Orbit camera (default)
                         if ui.selectable_label(self.active_camera.is_none(), "Orbit Camera").clicked() {
                             self.active_camera = None;
-                            ui.close_menu();
+                            ui.close();
                         }
                         ui.separator();
                         // Scene cameras
@@ -242,7 +210,7 @@ impl ViewerApp {
                             let label = format!("{} ({:.0}mm)", cam.name, cam.focal_length);
                             if ui.selectable_label(is_active, &label).clicked() {
                                 self.active_camera = Some(i);
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                     });
@@ -252,7 +220,7 @@ impl ViewerApp {
             ui.menu_button("Help", |ui| {
                 if ui.button("About").clicked() {
                     self.status_message = "Alembic Viewer v0.1.0".into();
-                    ui.close_menu();
+                    ui.close();
                 }
             });
         });
@@ -488,13 +456,11 @@ impl ViewerApp {
         });
         
         // HDR visibility (show background sphere but keep reflections)
-        if has_env {
-            if ui.checkbox(&mut self.settings.hdr_visible, "Show Background").changed() {
-                if let Some(renderer) = &mut self.viewport.renderer {
-                    renderer.hdr_visible = self.settings.hdr_visible;
-                }
-                self.settings.save();
+        if has_env && ui.checkbox(&mut self.settings.hdr_visible, "Show Background").changed() {
+            if let Some(renderer) = &mut self.viewport.renderer {
+                renderer.hdr_visible = self.settings.hdr_visible;
             }
+            self.settings.save();
         }
         
         if ui.button("Load HDR/EXR...").clicked() {
@@ -558,7 +524,7 @@ impl ViewerApp {
                 ui.separator();
                 ui.label("FPS:");
                 egui::ComboBox::from_id_salt("fps_select")
-                    .selected_text(format!("{}", format_fps(self.playback_fps)))
+                    .selected_text(format_fps(self.playback_fps))
                     .width(70.0)
                     .show_ui(ui, |ui| {
                         // Film/Cinema
@@ -1046,10 +1012,9 @@ impl ViewerApp {
                     }
                 }
             } else {
-                let material = StandardSurfaceParams::plastic(
-                    Vec3::new(0.7, 0.7, 0.75),
-                    0.4,
-                );
+                // Use material base_color if available, otherwise default gray
+                let base_color = mesh.base_color.unwrap_or(Vec3::new(0.7, 0.7, 0.75));
+                let material = StandardSurfaceParams::plastic(base_color, 0.4);
                 renderer.add_mesh(
                     mesh.name,
                     &mesh.vertices,  // Arc<Vec> derefs to &[T]
