@@ -171,6 +171,24 @@ impl<'a> IFaceSet<'a> {
         self.num_samples() <= 1
     }
     
+    /// Get time sampling index from faces property.
+    pub fn time_sampling_index(&self) -> u32 {
+        let props = self.object.as_ref().properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
+        let Some(geom) = geom_prop.as_compound() else { return 0 };
+        let Some(faces_prop) = geom.property_by_name(".faces") else { return 0 };
+        faces_prop.header().time_sampling_index
+    }
+    
+    /// Get the time sampling index for child bounds property.
+    pub fn child_bounds_time_sampling_index(&self) -> u32 {
+        let props = self.object.as_ref().properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
+        let Some(geom) = geom_prop.as_compound() else { return 0 };
+        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
+        bnds_prop.header().time_sampling_index
+    }
+    
     /// Read a sample at the given index.
     pub fn get_sample(&self, index: usize) -> Result<FaceSetSample> {
         let mut sample = FaceSetSample::new();

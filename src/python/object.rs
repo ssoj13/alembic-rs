@@ -172,39 +172,39 @@ impl PyIObject {
     // Type checks
     // ========================================================================
     
-    fn isPolyMesh(&self) -> bool {
+    pub fn isPolyMesh(&self) -> bool {
         self.with_object(|obj| Some(IPolyMesh::new(obj).is_some())).unwrap_or(false)
     }
     
-    fn isSubD(&self) -> bool {
+    pub fn isSubD(&self) -> bool {
         self.with_object(|obj| Some(ISubD::new(obj).is_some())).unwrap_or(false)
     }
     
-    fn isCurves(&self) -> bool {
+    pub fn isCurves(&self) -> bool {
         self.with_object(|obj| Some(ICurves::new(obj).is_some())).unwrap_or(false)
     }
     
-    fn isPoints(&self) -> bool {
+    pub fn isPoints(&self) -> bool {
         self.with_object(|obj| Some(IPoints::new(obj).is_some())).unwrap_or(false)
     }
     
-    fn isCamera(&self) -> bool {
+    pub fn isCamera(&self) -> bool {
         self.with_object(|obj| Some(ICamera::new(obj).is_some())).unwrap_or(false)
     }
     
-    fn isLight(&self) -> bool {
+    pub fn isLight(&self) -> bool {
         self.with_object(|obj| Some(ILight::new(obj).is_some())).unwrap_or(false)
     }
     
-    fn isXform(&self) -> bool {
+    pub fn isXform(&self) -> bool {
         self.with_object(|obj| Some(IXform::new(obj).is_some())).unwrap_or(false)
     }
     
-    fn isNuPatch(&self) -> bool {
+    pub fn isNuPatch(&self) -> bool {
         self.with_object(|obj| Some(INuPatch::new(obj).is_some())).unwrap_or(false)
     }
     
-    fn isFaceSet(&self) -> bool {
+    pub fn isFaceSet(&self) -> bool {
         self.with_object(|obj| Some(IFaceSet::new(obj).is_some())).unwrap_or(false)
     }
     

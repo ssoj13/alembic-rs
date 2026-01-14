@@ -495,6 +495,15 @@ impl<'a> ICamera<'a> {
         scalar.num_samples()
     }
     
+    /// Get time sampling index from core properties.
+    pub fn time_sampling_index(&self) -> u32 {
+        let props = self.object.properties();
+        let Some(cam_prop) = props.property_by_name(".camera") else { return 0 };
+        let Some(cam) = cam_prop.as_compound() else { return 0 };
+        let Some(core_prop) = cam.property_by_name(".core") else { return 0 };
+        core_prop.header().time_sampling_index
+    }
+    
     /// Get the time sampling index for child bounds property.
     pub fn child_bounds_time_sampling_index(&self) -> u32 {
         let props = self.object.properties();

@@ -95,6 +95,42 @@ impl<'a> ILight<'a> {
         self.num_samples() <= 1
     }
     
+    /// Get time sampling index (from child bounds or camera schema).
+    /// Follows original Alembic: checks childBounds first, then camera schema.
+    pub fn time_sampling_index(&self) -> u32 {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
+        let Some(geom) = geom_prop.as_compound() else { return 0 };
+        
+        // Try child bounds first
+        if let Some(bnds_prop) = geom.property_by_name(".childBnds") {
+            let ts = bnds_prop.header().time_sampling_index;
+            if ts > 0 {
+                return ts;
+            }
+        }
+        
+        // Fall back to camera schema core property
+        if let Some(cam_prop) = geom.property_by_name(".camera") {
+            if let Some(cam) = cam_prop.as_compound() {
+                if let Some(core_prop) = cam.property_by_name(".core") {
+                    return core_prop.header().time_sampling_index;
+                }
+            }
+        }
+        
+        0
+    }
+    
+    /// Get the time sampling index for child bounds property.
+    pub fn child_bounds_time_sampling_index(&self) -> u32 {
+        let props = self.object.properties();
+        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
+        let Some(geom) = geom_prop.as_compound() else { return 0 };
+        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
+        bnds_prop.header().time_sampling_index
+    }
+    
     /// Get available property names.
     pub fn property_names(&self) -> Vec<String> {
         self.object.properties().property_names()

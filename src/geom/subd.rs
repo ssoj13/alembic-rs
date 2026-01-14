@@ -181,6 +181,11 @@ impl<'a> ISubD<'a> {
         self.num_samples() <= 1
     }
     
+    /// Get time sampling index from positions property.
+    pub fn time_sampling_index(&self) -> u32 {
+        geom_util::positions_time_sampling_index(self.object)
+    }
+    
     /// Get the topology variance for this subdivision surface.
     /// 
     /// Returns:

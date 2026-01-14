@@ -39,6 +39,7 @@ pub struct ViewerApp {
     mesh_count: usize,
     vertex_count: usize,
     face_count: usize,
+    scene_bounds: Option<mesh_converter::Bounds>,
 }
 
 impl ViewerApp {
@@ -65,6 +66,7 @@ impl ViewerApp {
             mesh_count: 0,
             vertex_count: 0,
             face_count: 0,
+            scene_bounds: None,
         }
     }
 
@@ -523,6 +525,8 @@ impl ViewerApp {
         // Collect and convert all meshes at this frame
         let meshes = mesh_converter::collect_meshes(&archive, frame);
         let stats = mesh_converter::compute_stats(&meshes);
+        let bounds = mesh_converter::compute_scene_bounds(&meshes);
+        self.scene_bounds = if bounds.is_valid() { Some(bounds) } else { None };
         
         // Add meshes to renderer
         for mesh in meshes {
@@ -719,11 +723,15 @@ impl eframe::App for ViewerApp {
             self.status_message = "Camera reset".into();
         }
         
-        // F = Fit view (focus on scene)
+        // F = Fit view (focus on scene bounds)
         if ctx.input(|i| i.key_pressed(egui::Key::F)) {
-            // TODO: calculate actual scene bounds
-            self.viewport.camera.focus(glam::Vec3::ZERO, 5.0);
-            self.status_message = "Camera fit to scene".into();
+            if let Some(bounds) = &self.scene_bounds {
+                self.viewport.camera.focus(bounds.center(), bounds.radius().max(0.1));
+                self.status_message = format!("Fit to scene (radius: {:.2})", bounds.radius());
+            } else {
+                self.viewport.camera.focus(glam::Vec3::ZERO, 5.0);
+                self.status_message = "No scene bounds".into();
+            }
         }
         
         self.initialize(ctx);

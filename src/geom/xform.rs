@@ -385,6 +385,15 @@ impl<'a> IXform<'a> {
         scalar.num_samples()
     }
     
+    /// Get time sampling index from inherits property.
+    pub fn time_sampling_index(&self) -> u32 {
+        let props = self.object.properties();
+        let Some(xform_prop) = props.property_by_name(".xform") else { return 0 };
+        let Some(xform) = xform_prop.as_compound() else { return 0 };
+        let Some(inherits_prop) = xform.property_by_name(".inherits") else { return 0 };
+        inherits_prop.header().time_sampling_index
+    }
+    
     /// Get the time sampling index for child bounds property.
     pub fn child_bounds_time_sampling_index(&self) -> u32 {
         let props = self.object.properties();

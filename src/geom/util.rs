@@ -131,6 +131,34 @@ pub fn child_bounds_time_sampling_index(object: &IObject<'_>) -> u32 {
     bnds_prop.header().time_sampling_index
 }
 
+/// Get time sampling index from positions property (P).
+/// Used for curves, points, polymesh, etc.
+pub fn positions_time_sampling_index(object: &IObject<'_>) -> u32 {
+    let props = object.properties();
+    let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
+    let Some(geom) = geom_prop.as_compound() else { return 0 };
+    let Some(p_prop) = geom.property_by_name("P") else { return 0 };
+    p_prop.header().time_sampling_index
+}
+
+/// Get time sampling index from a named property in .geom compound.
+pub fn property_time_sampling_index(object: &IObject<'_>, prop_name: &str) -> u32 {
+    let props = object.properties();
+    let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
+    let Some(geom) = geom_prop.as_compound() else { return 0 };
+    let Some(prop) = geom.property_by_name(prop_name) else { return 0 };
+    prop.header().time_sampling_index
+}
+
+/// Get time sampling index from a schema-specific compound (e.g. .xform, .camera, .light).
+pub fn schema_property_time_sampling_index(object: &IObject<'_>, schema_name: &str, prop_name: &str) -> u32 {
+    let props = object.properties();
+    let Some(schema_prop) = props.property_by_name(schema_name) else { return 0 };
+    let Some(schema) = schema_prop.as_compound() else { return 0 };
+    let Some(prop) = schema.property_by_name(prop_name) else { return 0 };
+    prop.header().time_sampling_index
+}
+
 // ============================================================================
 // Property Access Helpers
 // ============================================================================

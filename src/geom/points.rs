@@ -113,6 +113,16 @@ impl<'a> IPoints<'a> {
         self.num_samples() <= 1
     }
     
+    /// Get time sampling index from positions property.
+    pub fn time_sampling_index(&self) -> u32 {
+        geom_util::positions_time_sampling_index(self.object)
+    }
+    
+    /// Get the time sampling index for child bounds property.
+    pub fn child_bounds_time_sampling_index(&self) -> u32 {
+        geom_util::child_bounds_time_sampling_index(self.object)
+    }
+    
     /// Check if points have arbitrary geometry parameters.
     pub fn has_arb_geom_params(&self) -> bool {
         geom_util::has_arb_geom_params(self.object)

@@ -4,12 +4,51 @@ use crate::geom::{IPolyMesh, PolyMeshSample};
 use glam::{Mat4, Vec3};
 use standard_surface::Vertex;
 
+/// Axis-aligned bounding box
+#[derive(Clone, Copy, Debug)]
+pub struct Bounds {
+    pub min: Vec3,
+    pub max: Vec3,
+}
+
+impl Bounds {
+    pub fn empty() -> Self {
+        Self {
+            min: Vec3::splat(f32::MAX),
+            max: Vec3::splat(f32::MIN),
+        }
+    }
+    
+    pub fn expand(&mut self, point: Vec3) {
+        self.min = self.min.min(point);
+        self.max = self.max.max(point);
+    }
+    
+    pub fn merge(&mut self, other: &Bounds) {
+        self.min = self.min.min(other.min);
+        self.max = self.max.max(other.max);
+    }
+    
+    pub fn center(&self) -> Vec3 {
+        (self.min + self.max) * 0.5
+    }
+    
+    pub fn radius(&self) -> f32 {
+        (self.max - self.min).length() * 0.5
+    }
+    
+    pub fn is_valid(&self) -> bool {
+        self.min.x <= self.max.x && self.min.y <= self.max.y && self.min.z <= self.max.z
+    }
+}
+
 /// Converted mesh data ready for GPU
 pub struct ConvertedMesh {
     pub name: String,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub transform: Mat4,
+    pub bounds: Bounds,
 }
 
 /// Convert PolyMeshSample to triangulated GPU mesh
@@ -133,11 +172,19 @@ pub fn convert_polymesh(sample: &PolyMeshSample, name: &str, transform: Mat4) ->
         face_idx += 1;
     }
     
+    // Compute world-space bounds
+    let mut bounds = Bounds::empty();
+    for pos in positions {
+        let world_pos = transform.transform_point3(*pos);
+        bounds.expand(world_pos);
+    }
+    
     Some(ConvertedMesh {
         name: name.to_string(),
         vertices,
         indices,
         transform,
+        bounds,
     })
 }
 
@@ -201,4 +248,13 @@ pub fn compute_stats(meshes: &[ConvertedMesh]) -> MeshStats {
         vertex_count: meshes.iter().map(|m| m.vertices.len()).sum(),
         triangle_count: meshes.iter().map(|m| m.indices.len() / 3).sum(),
     }
+}
+
+/// Compute combined bounds of all meshes
+pub fn compute_scene_bounds(meshes: &[ConvertedMesh]) -> Bounds {
+    let mut bounds = Bounds::empty();
+    for mesh in meshes {
+        bounds.merge(&mesh.bounds);
+    }
+    bounds
 }

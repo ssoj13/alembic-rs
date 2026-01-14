@@ -940,7 +940,7 @@ impl PyOCamera {
         shutter_close: f64,
         near_clipping_plane: f64,
         far_clipping_plane: f64,
-    ) {
+    ) -> PyResult<()> {
         let sample = CameraSample {
             focal_length,
             horizontal_aperture,
@@ -1129,7 +1129,7 @@ impl PyOLight {
         shutter_close: f64,
         near_clipping_plane: f64,
         far_clipping_plane: f64,
-    ) {
+    ) -> PyResult<()> {
         let sample = CameraSample {
             focal_length,
             horizontal_aperture,
@@ -1528,23 +1528,19 @@ impl PyOArrayProperty {
     
     /// Add Vec2f array sample.
     fn addSampleVec2fs(&mut self, values: Vec<[f32; 2]>) {
-        // Flatten Vec<[f32; 2]> to Vec<f32>
-        let flat: Vec<f32> = values.iter().flat_map(|v| v.iter().copied()).collect();
-        let data = bytemuck::try_cast_slice(&flat);
+        let data: &[u8] = bytemuck::cast_slice(&values);
         self.inner.add_array_sample(data, &[values.len()]);
     }
     
     /// Add Vec3f array sample.
     fn addSampleVec3fs(&mut self, values: Vec<[f32; 3]>) {
-        let flat: Vec<f32> = values.iter().flat_map(|v| v.iter().copied()).collect();
-        let data = bytemuck::try_cast_slice(&flat);
+        let data: &[u8] = bytemuck::cast_slice(&values);
         self.inner.add_array_sample(data, &[values.len()]);
     }
     
     /// Add Vec4f array sample.
     fn addSampleVec4fs(&mut self, values: Vec<[f32; 4]>) {
-        let flat: Vec<f32> = values.iter().flat_map(|v| v.iter().copied()).collect();
-        let data = bytemuck::try_cast_slice(&flat);
+        let data: &[u8] = bytemuck::cast_slice(&values);
         self.inner.add_array_sample(data, &[values.len()]);
     }
     
