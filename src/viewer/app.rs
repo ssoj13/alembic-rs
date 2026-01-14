@@ -448,33 +448,53 @@ impl ViewerApp {
     }
     
     fn timeline_panel(&mut self, ui: &mut egui::Ui) {
-        // Only show if we have animation
-        if self.num_samples <= 1 {
-            return;
-        }
+        let has_animation = self.num_samples > 1;
         
         ui.horizontal(|ui| {
-            // Play/Pause button
-            let icon = if self.playing { "\u{23F8}" } else { "\u{25B6}" }; // ⏸ or ▶
-            if ui.button(icon).clicked() {
+            // Play/Pause button (disabled for static files)
+            let icon = if self.playing { "⏸" } else { "▶" };
+            if ui.add_enabled(has_animation, egui::Button::new(icon)).clicked() {
                 self.playing = !self.playing;
                 self.last_frame_time = Instant::now();
             }
             
             // Stop/reset button
-            if ui.button("\u{23F9}").clicked() { // ⏹
+            if ui.add_enabled(has_animation, egui::Button::new("⏹")).clicked() {
                 self.playing = false;
                 if self.current_frame != 0 {
                     self.load_frame(0);
                 }
             }
             
-            // Frame slider
-            let mut frame = self.current_frame as f32;
-            let max_frame = (self.num_samples - 1) as f32;
+            // Frame counter (left side)
+            ui.label(format!("{} / {}", self.current_frame + 1, self.num_samples.max(1)));
             
-            if ui.add(
-                egui::Slider::new(&mut frame, 0.0..=max_frame)
+            // FPS selector
+            if has_animation {
+                ui.separator();
+                ui.label("FPS:");
+                egui::ComboBox::from_id_salt("fps_select")
+                    .selected_text(format!("{:.0}", self.playback_fps))
+                    .width(50.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.playback_fps, 12.0, "12");
+                        ui.selectable_value(&mut self.playback_fps, 24.0, "24");
+                        ui.selectable_value(&mut self.playback_fps, 30.0, "30");
+                        ui.selectable_value(&mut self.playback_fps, 60.0, "60");
+                    });
+            }
+            
+            ui.separator();
+            
+            // Frame slider - fill remaining width
+            let mut frame = self.current_frame as f32;
+            let max_frame = (self.num_samples.max(1) - 1) as f32;
+            let slider_width = ui.available_width() - 10.0;
+            
+            ui.spacing_mut().slider_width = slider_width.max(100.0);
+            if ui.add_enabled(
+                has_animation,
+                egui::Slider::new(&mut frame, 0.0..=max_frame.max(1.0))
                     .step_by(1.0)
                     .show_value(false)
             ).changed() {
@@ -483,23 +503,6 @@ impl ViewerApp {
                     self.load_frame(new_frame);
                 }
             }
-            
-            // Frame counter
-            ui.label(format!("{} / {}", self.current_frame + 1, self.num_samples));
-            
-            ui.separator();
-            
-            // FPS selector
-            ui.label("FPS:");
-            egui::ComboBox::from_id_salt("fps_select")
-                .selected_text(format!("{:.0}", self.playback_fps))
-                .width(50.0)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.playback_fps, 12.0, "12");
-                    ui.selectable_value(&mut self.playback_fps, 24.0, "24");
-                    ui.selectable_value(&mut self.playback_fps, 30.0, "30");
-                    ui.selectable_value(&mut self.playback_fps, 60.0, "60");
-                });
         });
     }
     
@@ -1028,14 +1031,12 @@ impl eframe::App for ViewerApp {
             self.menu_bar(ui);
         });
 
-        // Timeline (above status bar)
-        if self.num_samples > 1 {
-            TopBottomPanel::bottom("timeline")
-                .resizable(false)
-                .show(ctx, |ui| {
-                    self.timeline_panel(ui);
-                });
-        }
+        // Timeline (above status bar) - always visible
+        TopBottomPanel::bottom("timeline")
+            .resizable(false)
+            .show(ctx, |ui| {
+                self.timeline_panel(ui);
+            });
         
         // Bottom status bar
         TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
