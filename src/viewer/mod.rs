@@ -42,7 +42,7 @@ pub fn run(initial_file: Option<PathBuf>) -> Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([settings.window_width, settings.window_height])
             .with_title("Alembic Viewer"),
-        multisampling: 4, // 4x MSAA
+        multisampling: settings.antialiasing as u16, // MSAA (0, 2, 4, 8)
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {
             wgpu_setup: egui_wgpu::WgpuSetup::CreateNew(egui_wgpu::WgpuSetupCreateNew {

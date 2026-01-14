@@ -313,6 +313,28 @@ impl ViewerApp {
                 changed = true;
             }
             
+            // Anti-aliasing (requires restart to take effect)
+            ui.horizontal(|ui| {
+                ui.label("AA:");
+                let aa_changed = egui::ComboBox::from_id_salt("aa_combo")
+                    .width(50.0)
+                    .selected_text(format!("{}x", self.settings.antialiasing))
+                    .show_ui(ui, |ui| {
+                        let mut changed = false;
+                        for val in [0u8, 2, 4, 8] {
+                            let label = if val == 0 { "Off".to_string() } else { format!("{}x", val) };
+                            if ui.selectable_value(&mut self.settings.antialiasing, val, label).changed() {
+                                changed = true;
+                            }
+                        }
+                        changed
+                    }).inner.unwrap_or(false);
+                if aa_changed {
+                    self.settings.save();
+                }
+                ui.label("(restart)").on_hover_text("Requires restart to apply");
+            });
+            
             ui.horizontal(|ui| {
                 ui.label("Background:");
                 let mut color = Color32::from_rgba_unmultiplied(
@@ -380,6 +402,16 @@ impl ViewerApp {
                 }
             }
         });
+        
+        // HDR visibility (show background sphere but keep reflections)
+        if has_env {
+            if ui.checkbox(&mut self.settings.hdr_visible, "Show Background").changed() {
+                if let Some(renderer) = &mut self.viewport.renderer {
+                    renderer.hdr_visible = self.settings.hdr_visible;
+                }
+                self.settings.save();
+            }
+        }
         
         if ui.button("Load HDR/EXR...").clicked() {
             self.load_environment_dialog();
@@ -955,6 +987,7 @@ impl eframe::App for ViewerApp {
                     renderer.show_wireframe = self.settings.show_wireframe;
                     renderer.flat_shading = self.settings.flat_shading;
                     renderer.show_shadows = self.settings.show_shadows;
+                    renderer.hdr_visible = self.settings.hdr_visible;
                     renderer.xray_alpha = self.settings.xray_alpha;
                     renderer.double_sided = self.settings.double_sided;
                     renderer.flip_normals = self.settings.flip_normals;

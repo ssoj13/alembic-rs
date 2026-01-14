@@ -375,6 +375,7 @@ impl Renderer {
             flat_shading: false,
             show_grid: true,
             show_shadows: true,
+            hdr_visible: true,
             xray_alpha: 1.0,
             double_sided: false,
             flip_normals: false,
@@ -713,8 +714,8 @@ impl Renderer {
                 occlusion_query_set: None,
             });
 
-            // Draw skybox if environment is loaded
-            if self.has_environment() {
+            // Draw skybox if environment is loaded and visible
+            if self.has_environment() && self.hdr_visible {
                 render_pass.set_pipeline(&self.skybox_pipeline);
                 render_pass.set_bind_group(0, &self.skybox_camera_bind_group, &[]);
                 render_pass.set_bind_group(1, &self.env_map.bind_group, &[]);
