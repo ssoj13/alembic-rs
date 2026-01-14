@@ -617,6 +617,7 @@ impl PyOCurves {
     /// curve_type: "linear", "cubic", "bezier", "bspline", "catmullrom", "hermite"
     /// wrap: "nonperiodic", "periodic"
     /// basis: "nobasis", "bezier", "bspline", "catmullrom", "hermite", "power"
+    #[allow(clippy::too_many_arguments)] // Python API requires many params for full sample data
     #[pyo3(signature = (
         positions, num_vertices, 
         curve_type="linear", wrap="nonperiodic", basis="nobasis",
@@ -816,6 +817,7 @@ impl PyOSubD {
     
     /// Add a sample.
     /// scheme: "catmullClark", "loop", "bilinear"
+    #[allow(clippy::too_many_arguments)] // Python API requires many params for full SubD sample
     #[pyo3(signature = (
         positions, face_counts, face_indices, scheme="catmullClark",
         velocities=None, crease_indices=None, crease_lengths=None, crease_sharpnesses=None,
@@ -915,6 +917,7 @@ impl PyOCamera {
     }
     
     /// Add a sample with camera parameters.
+    #[allow(clippy::too_many_arguments)] // Camera has 16 standard params per Alembic spec
     #[pyo3(signature = (
         focal_length=35.0, horizontal_aperture=36.0, vertical_aperture=24.0,
         horizontal_film_offset=0.0, vertical_film_offset=0.0, lens_squeeze_ratio=1.0,
@@ -1010,6 +1013,7 @@ impl PyONuPatch {
     }
     
     /// Add a sample.
+    #[allow(clippy::too_many_arguments)] // NuPatch requires many params per Alembic spec
     #[pyo3(signature = (
         positions, num_u, num_v, u_order, v_order, u_knot, v_knot,
         position_weights=None, velocities=None, uvs=None, normals=None
@@ -1104,6 +1108,7 @@ impl PyOLight {
     }
     
     /// Add a camera sample (light uses camera schema for parameters).
+    #[allow(clippy::too_many_arguments)] // Camera has 16 standard params per Alembic spec
     #[pyo3(signature = (
         focal_length=35.0, horizontal_aperture=36.0, vertical_aperture=24.0,
         horizontal_film_offset=0.0, vertical_film_offset=0.0, lens_squeeze_ratio=1.0,
@@ -1291,7 +1296,7 @@ impl PyOMaterial {
     
     /// Finalize and set sample on the material before building.
     fn finalize(&mut self) -> PyResult<()> {
-        let sample = std::mem::replace(&mut self.sample, OMaterialSample::new());
+        let sample = std::mem::take(&mut self.sample);
         self.inner_mut()?.set_sample(sample);
         Ok(())
     }

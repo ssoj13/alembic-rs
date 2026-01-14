@@ -175,7 +175,7 @@ impl PyICompoundProperty {
                 let scalar = prop.as_scalar()?;
                 let hdr = scalar.header();
                 
-                read_scalar_as_python(py, &*scalar, index, hdr.data_type)
+                read_scalar_as_python(py, scalar, index, hdr.data_type)
             })
             .ok_or_else(|| PyValueError::new_err(format!("Failed to read scalar '{}'", name)))
         })

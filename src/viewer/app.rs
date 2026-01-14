@@ -287,15 +287,14 @@ impl ViewerApp {
             self.load_environment_dialog();
         }
         
-        if has_env {
-            if ui.button("Clear Environment").clicked() {
+        if has_env
+            && ui.button("Clear Environment").clicked() {
                 if let Some(renderer) = &mut self.viewport.renderer {
                     renderer.clear_environment();
                 }
                 self.settings.hdr_enabled = false;
                 self.settings.save();
             }
-        }
 
         ui.separator();
 
@@ -662,12 +661,10 @@ impl ViewerApp {
         // Calculate new index with wrapping
         let new_idx = if direction > 0 {
             (current_idx + 1) % abc_files.len()
+        } else if current_idx == 0 {
+            abc_files.len() - 1
         } else {
-            if current_idx == 0 {
-                abc_files.len() - 1
-            } else {
-                current_idx - 1
-            }
+            current_idx - 1
         };
         
         // Don't return same file

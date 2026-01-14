@@ -58,24 +58,29 @@ impl Default for StandardSurfaceParams {
 impl StandardSurfaceParams {
     /// Create a simple diffuse material
     pub fn diffuse(color: Vec3) -> Self {
-        let mut p = Self::default();
-        p.base_color_weight = color.extend(1.0);
-        p.specular_color_weight.w = 0.0; // disable specular
-        p
+        Self {
+            base_color_weight: color.extend(1.0),
+            specular_color_weight: Vec4::new(1.0, 1.0, 1.0, 0.0), // disable specular
+            ..Self::default()
+        }
     }
 
     /// Create a plastic-like material
     pub fn plastic(color: Vec3, roughness: f32) -> Self {
-        let mut p = Self::default();
-        p.base_color_weight = color.extend(1.0);
+        let mut p = Self {
+            base_color_weight: color.extend(1.0),
+            ..Self::default()
+        };
         p.params1.z = roughness; // specular_roughness
         p
     }
 
     /// Create a metallic material
     pub fn metal(color: Vec3, roughness: f32) -> Self {
-        let mut p = Self::default();
-        p.base_color_weight = color.extend(1.0);
+        let mut p = Self {
+            base_color_weight: color.extend(1.0),
+            ..Self::default()
+        };
         p.params1.y = 1.0; // metalness
         p.params1.z = roughness; // specular_roughness
         p

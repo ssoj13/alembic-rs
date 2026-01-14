@@ -128,7 +128,7 @@ fn main() {
             if json_mode {
                 set_log_level(LOG_QUIET);
             }
-            let pattern = filtered_args.get(2).filter(|&&s| s != "--json" && s != "-j").map(|s| *s);
+            let pattern = filtered_args.get(2).filter(|&&s| s != "--json" && s != "-j").copied();
             cmd_dump(filtered_args[1], pattern, json_mode);
         }
         
