@@ -1,6 +1,7 @@
 //! Convert Alembic geometry to GPU-ready data
 
-use crate::geom::{IPolyMesh, PolyMeshSample, ICurves, CurvesSample, ISubD, SubDSample, IPoints, PointsSample, ICamera, CameraSample};
+use crate::geom::{IPolyMesh, PolyMeshSample, ICurves, CurvesSample, ISubD, SubDSample, IPoints, PointsSample, ICamera, CameraSample, ILight};
+use crate::material::{IMaterial, get_material_assignment};
 use glam::{Mat4, Vec3};
 use rayon::prelude::*;
 use standard_surface::Vertex;
@@ -49,10 +50,12 @@ impl Bounds {
 /// Converted mesh data ready for GPU
 pub struct ConvertedMesh {
     pub name: String,
+    pub path: String,  // full object path
     pub vertices: Arc<Vec<Vertex>>,  // Arc for cheap cloning from cache
     pub indices: Arc<Vec<u32>>,
     pub transform: Mat4,
     pub bounds: Bounds,
+    pub base_color: Option<Vec3>,  // from material if assigned
 }
 
 /// Converted curves data ready for GPU (as line strips)
@@ -101,6 +104,56 @@ impl SceneCamera {
     pub fn aspect(&self) -> f32 {
         self.h_aperture / self.v_aperture
     }
+}
+
+/// Scene light from Alembic file
+#[derive(Clone, Debug)]
+pub struct SceneLight {
+    pub name: String,
+    pub transform: Mat4,
+    /// Position in world space (extracted from transform)
+    pub position: Vec3,
+    /// Direction (Z-axis of transform, normalized)
+    pub direction: Vec3,
+    /// Color (default white, could be read from user properties)
+    pub color: Vec3,
+    /// Intensity (derived from camera params or default)
+    pub intensity: f32,
+}
+
+impl SceneLight {
+    /// Create from transform matrix
+    pub fn from_transform(name: String, transform: Mat4) -> Self {
+        let position = Vec3::new(transform.w_axis.x, transform.w_axis.y, transform.w_axis.z);
+        // Light direction is negative Z (looking down -Z in local space)
+        let dir = transform.transform_vector3(-Vec3::Z).normalize_or_zero();
+        Self {
+            name,
+            transform,
+            position,
+            direction: dir,
+            color: Vec3::ONE,
+            intensity: 1.0,
+        }
+    }
+}
+
+/// Scene material from Alembic file
+#[derive(Clone, Debug)]
+pub struct SceneMaterial {
+    pub name: String,
+    pub path: String,
+    /// Base color (extracted from shader params if available)
+    pub base_color: Option<Vec3>,
+    /// Targets (e.g., "arnold", "renderman")
+    pub targets: Vec<String>,
+}
+
+/// Material assignment on geometry
+#[derive(Clone, Debug)]
+pub struct MaterialAssignment {
+    pub object_path: String,
+    pub material_path: String,
 }
 
 /// Convert CurvesSample to line strips for GPU
@@ -301,10 +354,12 @@ pub fn convert_polymesh(sample: &PolyMeshSample, name: &str, transform: Mat4) ->
     
     Some(ConvertedMesh {
         name: name.to_string(),
+        path: String::new(),  // set by caller
         vertices: Arc::new(vertices),
         indices: Arc::new(indices),
         transform,
         bounds,
+        base_color: None,  // set by caller
     })
 }
 
@@ -365,6 +420,9 @@ pub struct CollectedScene {
     pub curves: Vec<ConvertedCurves>,
     pub points: Vec<ConvertedPoints>,
     pub cameras: Vec<SceneCamera>,
+    pub lights: Vec<SceneLight>,
+    pub materials: Vec<SceneMaterial>,
+    pub material_assignments: Vec<MaterialAssignment>,
 }
 
 /// Cached mesh data for constant geometry
@@ -391,6 +449,7 @@ pub fn collect_scene(archive: &crate::abc::IArchive, sample_index: usize) -> Col
 /// Pending mesh conversion task
 struct MeshTask {
     name: String,
+    path: String,
     sample: PolyMeshSample,
     transform: Mat4,
     is_constant: bool,
@@ -399,6 +458,7 @@ struct MeshTask {
 /// Cached mesh result (from cache hit)
 struct CachedResult {
     name: String,
+    path: String,
     vertices: Arc<Vec<Vertex>>,
     indices: Arc<Vec<u32>>,
     transform: Mat4,
@@ -412,18 +472,24 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
     let mut curves = Vec::new();
     let mut points = Vec::new();
     let mut cameras = Vec::new();
+    let mut lights = Vec::new();
+    let mut materials = Vec::new();
+    let mut material_assignments = Vec::new();
     let root = archive.root();
-    
-    // Phase 1: Collect all mesh samples, curves, points, cameras (sequential file reads)
+
+    // Phase 1: Collect all mesh samples, curves, points, cameras, lights, materials (sequential file reads)
     collect_samples_recursive(
-        &root, 
-        Mat4::IDENTITY, 
-        sample_index, 
-        &mut mesh_tasks, 
-        &mut cached_results, 
+        &root,
+        Mat4::IDENTITY,
+        sample_index,
+        &mut mesh_tasks,
+        &mut cached_results,
         &mut curves,
         &mut points,
         &mut cameras,
+        &mut lights,
+        &mut materials,
+        &mut material_assignments,
         cache,
     );
     
@@ -467,8 +533,8 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
     }
     
     meshes.extend(converted);
-    
-    CollectedScene { meshes, curves, points, cameras }
+
+    CollectedScene { meshes, curves, points, cameras, lights, materials, material_assignments }
 }
 
 /// Transform local bounds to world space
@@ -500,6 +566,9 @@ fn collect_samples_recursive(
     curves: &mut Vec<ConvertedCurves>,
     points: &mut Vec<ConvertedPoints>,
     cameras: &mut Vec<SceneCamera>,
+    lights: &mut Vec<SceneLight>,
+    materials: &mut Vec<SceneMaterial>,
+    material_assignments: &mut Vec<MaterialAssignment>,
     cache: Option<&MeshCache>,
 ) {
     // Check if this object is an Xform
@@ -624,10 +693,49 @@ fn collect_samples_recursive(
             });
         }
     }
-    
+
+    // Check if this object is a Light
+    if let Some(ilight) = ILight::new(obj) {
+        // Lights use transform for position/direction
+        lights.push(SceneLight::from_transform(
+            ilight.name().to_string(),
+            world_transform,
+        ));
+    }
+
+    // Check if this object is a Material
+    if let Some(imat) = IMaterial::new(obj) {
+        let targets = imat.target_names();
+        let flattened = imat.flatten();
+        // Try to extract base color from surface shader
+        let base_color = targets.iter().find_map(|target| {
+            let network = flattened.networks.get(target)?;
+            let surface = network.surface_shader()?;
+            // Look for base_color or diffuse_color parameter
+            surface.param("base_color")
+                .or_else(|| surface.param("diffuse_color"))
+                .or_else(|| surface.param("color"))
+                .and_then(|p| p.as_vec3())
+        });
+        materials.push(SceneMaterial {
+            name: imat.name().to_string(),
+            path: imat.full_name().to_string(),
+            base_color,
+            targets,
+        });
+    }
+
+    // Check for material assignment on this object
+    if let Some(mat_path) = get_material_assignment(obj) {
+        material_assignments.push(MaterialAssignment {
+            object_path: obj.full_name().to_string(),
+            material_path: mat_path,
+        });
+    }
+
     // Recurse into children
     for child in obj.children() {
-        collect_samples_recursive(&child, world_transform, sample_index, mesh_tasks, cached_results, curves, points, cameras, cache);
+        collect_samples_recursive(&child, world_transform, sample_index, mesh_tasks, cached_results, curves, points, cameras, lights, materials, material_assignments, cache);
     }
 }
 

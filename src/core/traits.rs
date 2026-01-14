@@ -324,6 +324,48 @@ pub trait ArrayPropertyReader: PropertyReader {
         let slice: &[T] = bytemuck::try_cast_slice(&data).map_err(|_| crate::util::Error::invalid("cast error"))?;
         Ok(slice.to_vec())
     }
+    
+    /// Read sample as f32 array.
+    fn read_f32_array(&self, index: usize) -> Result<Vec<f32>> {
+        let data = self.read_sample_vec(index)?;
+        let slice: &[f32] = bytemuck::try_cast_slice(&data)
+            .map_err(|_| crate::util::Error::invalid("cannot cast to f32"))?;
+        Ok(slice.to_vec())
+    }
+    
+    /// Read sample as i32 array.
+    fn read_i32_array(&self, index: usize) -> Result<Vec<i32>> {
+        let data = self.read_sample_vec(index)?;
+        let slice: &[i32] = bytemuck::try_cast_slice(&data)
+            .map_err(|_| crate::util::Error::invalid("cannot cast to i32"))?;
+        Ok(slice.to_vec())
+    }
+    
+    /// Read sample as string array (null-terminated concatenated strings).
+    fn read_string_array(&self, index: usize) -> Result<Vec<String>> {
+        let data = self.read_sample_vec(index)?;
+        let mut strings = Vec::new();
+        let mut start = 0;
+        for (i, &byte) in data.iter().enumerate() {
+            if byte == 0 {
+                if i > start {
+                    if let Ok(s) = String::from_utf8(data[start..i].to_vec()) {
+                        strings.push(s);
+                    }
+                }
+                start = i + 1;
+            }
+        }
+        // Handle last string if no trailing null
+        if start < data.len() {
+            if let Ok(s) = String::from_utf8(data[start..].to_vec()) {
+                if !s.is_empty() {
+                    strings.push(s);
+                }
+            }
+        }
+        Ok(strings)
+    }
 }
 
 /// Reader for compound properties (container of sub-properties).

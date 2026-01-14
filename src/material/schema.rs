@@ -363,18 +363,47 @@ impl MaterialSample {
 }
 
 /// Input material schema reader.
+/// 
+/// Reads material definitions from Alembic files following the AbcMaterial spec.
+/// Materials contain shader definitions per target (arnold, renderman, etc.)
+/// with parameters stored in compound properties.
 pub struct IMaterial<'a> {
     object: &'a IObject<'a>,
+    /// Cached shader names from .shaderNames array: "target.shaderType" -> "shaderName"
+    shader_names: HashMap<String, String>,
 }
 
 impl<'a> IMaterial<'a> {
     /// Wrap an IObject as IMaterial.
     /// Returns None if the object doesn't have the Material schema.
     pub fn new(object: &'a IObject<'a>) -> Option<Self> {
-        if object.matches_schema(MATERIAL_SCHEMA) {
-            Some(Self { object })
-        } else {
-            None
+        if !object.matches_schema(MATERIAL_SCHEMA) {
+            return None;
+        }
+        
+        let mut mat = Self { 
+            object, 
+            shader_names: HashMap::new(),
+        };
+        mat.parse_shader_names();
+        Some(mat)
+    }
+    
+    /// Parse .shaderNames array into shader_names map.
+    fn parse_shader_names(&mut self) {
+        let props = self.object.properties();
+        let Some(mat_prop) = props.property_by_name(".material") else { return };
+        let Some(mat) = mat_prop.as_compound() else { return };
+        let Some(names_prop) = mat.property_by_name(".shaderNames") else { return };
+        let Some(arr) = names_prop.as_array() else { return };
+        
+        // Read string array - pairs of ["target.shaderType", "shaderName", ...]
+        if let Ok(strings) = arr.read_string_array(0) {
+            for chunk in strings.chunks(2) {
+                if chunk.len() == 2 {
+                    self.shader_names.insert(chunk[0].clone(), chunk[1].clone());
+                }
+            }
         }
     }
     
@@ -395,57 +424,161 @@ impl<'a> IMaterial<'a> {
     
     /// Get target names (renderer targets like "arnold", "renderman").
     pub fn target_names(&self) -> Vec<String> {
-        let props = self.object.properties();
-        let Some(mat_prop) = props.property_by_name(".material") else {
-            return Vec::new();
-        };
-        let Some(mat) = mat_prop.as_compound() else {
-            return Vec::new();
-        };
-        
-        // Filter property names that look like targets (not starting with '.')
-        mat.property_names()
-            .into_iter()
-            .filter(|n| !n.starts_with('.'))
-            .collect()
+        let mut targets = std::collections::HashSet::new();
+        for key in self.shader_names.keys() {
+            // key is "target.shaderType", extract target
+            if let Some(dot_pos) = key.find('.') {
+                targets.insert(key[..dot_pos].to_string());
+            }
+        }
+        targets.into_iter().collect()
     }
     
-    /// Get shader type names for a target.
+    /// Get shader type names for a target (e.g., "surface", "displacement").
     pub fn shader_type_names(&self, target: &str) -> Vec<String> {
-        let props = self.object.properties();
-        let Some(mat_prop) = props.property_by_name(".material") else {
-            return Vec::new();
-        };
-        let Some(mat) = mat_prop.as_compound() else {
-            return Vec::new();
-        };
-        let Some(target_prop) = mat.property_by_name(target) else {
-            return Vec::new();
-        };
-        let Some(target_compound) = target_prop.as_compound() else {
-            return Vec::new();
-        };
-        
-        target_compound.property_names()
+        let prefix = format!("{}.", target);
+        self.shader_names.keys()
+            .filter_map(|key| {
+                if key.starts_with(&prefix) {
+                    Some(key[prefix.len()..].to_string())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
     
     /// Get shader name for a target and shader type.
     pub fn shader(&self, target: &str, shader_type: &str) -> Option<String> {
+        let key = format!("{}.{}", target, shader_type);
+        self.shader_names.get(&key).cloned()
+    }
+    
+    /// Read all parameters for a shader into ShaderParam list.
+    pub fn read_shader_params(&self, target: &str, shader_type: &str) -> Vec<ShaderParam> {
         let props = self.object.properties();
-        let mat_prop = props.property_by_name(".material")?;
-        let mat = mat_prop.as_compound()?;
-        let target_prop = mat.property_by_name(target)?;
-        let target_compound = target_prop.as_compound()?;
-        let shader_prop = target_compound.property_by_name(shader_type)?;
-        let scalar = shader_prop.as_scalar()?;
+        let Some(mat_prop) = props.property_by_name(".material") else {
+            return Vec::new();
+        };
+        let Some(mat) = mat_prop.as_compound() else {
+            return Vec::new();
+        };
         
-        // Read shader name as string
-        let mut buf = [0u8; 256];
-        scalar.read_sample(0, &mut buf).ok()?;
+        // Property name is "target.shaderType.params"
+        let prop_name = format!("{}.{}.params", target, shader_type);
+        let Some(params_prop) = mat.property_by_name(&prop_name) else {
+            return Vec::new();
+        };
+        let Some(params) = params_prop.as_compound() else {
+            return Vec::new();
+        };
         
-        // Find null terminator
-        let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-        String::from_utf8(buf[..len].to_vec()).ok()
+        let mut result = Vec::new();
+        for name in params.property_names() {
+            if let Some(value) = Self::read_param_value(&params, &name) {
+                result.push(ShaderParam::new(&name, value));
+            }
+        }
+        result
+    }
+    
+    /// Read a single parameter value from a compound.
+    fn read_param_value(params: &crate::abc::ICompoundProperty<'_>, name: &str) -> Option<ShaderParamValue> {
+        let prop = params.property_by_name(name)?;
+        
+        // Try scalar first
+        if let Some(scalar) = prop.as_scalar() {
+            let header = scalar.header();
+            let dtype = header.data_type;
+            
+            return match dtype.pod {
+                crate::util::PlainOldDataType::Float32 => {
+                    let extent = dtype.extent as usize;
+                    match extent {
+                        1 => {
+                            let mut buf = [0u8; 4];
+                            scalar.read_sample(0, &mut buf).ok()?;
+                            Some(ShaderParamValue::Float(f32::from_le_bytes(buf)))
+                        }
+                        2 => {
+                            let mut buf = [0u8; 8];
+                            scalar.read_sample(0, &mut buf).ok()?;
+                            let x = f32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                            let y = f32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+                            Some(ShaderParamValue::Vec2(glam::vec2(x, y)))
+                        }
+                        3 => {
+                            let mut buf = [0u8; 12];
+                            scalar.read_sample(0, &mut buf).ok()?;
+                            let x = f32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                            let y = f32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+                            let z = f32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
+                            // Check if it's a color (C3f) or vector (V3f)
+                            if header.meta_data.get("interpretation") == Some("rgb") {
+                                Some(ShaderParamValue::Color3(glam::vec3(x, y, z)))
+                            } else {
+                                Some(ShaderParamValue::Vec3(glam::vec3(x, y, z)))
+                            }
+                        }
+                        4 => {
+                            let mut buf = [0u8; 16];
+                            scalar.read_sample(0, &mut buf).ok()?;
+                            let vals: [f32; 4] = bytemuck::cast(buf);
+                            if header.meta_data.get("interpretation") == Some("rgba") {
+                                Some(ShaderParamValue::Color4(glam::vec4(vals[0], vals[1], vals[2], vals[3])))
+                            } else {
+                                Some(ShaderParamValue::Vec4(glam::vec4(vals[0], vals[1], vals[2], vals[3])))
+                            }
+                        }
+                        _ => None
+                    }
+                }
+                crate::util::PlainOldDataType::Float64 => {
+                    let mut buf = [0u8; 8];
+                    scalar.read_sample(0, &mut buf).ok()?;
+                    Some(ShaderParamValue::Double(f64::from_le_bytes(buf)))
+                }
+                crate::util::PlainOldDataType::Int32 => {
+                    let mut buf = [0u8; 4];
+                    scalar.read_sample(0, &mut buf).ok()?;
+                    Some(ShaderParamValue::Int(i32::from_le_bytes(buf)))
+                }
+                crate::util::PlainOldDataType::Boolean => {
+                    let mut buf = [0u8; 1];
+                    scalar.read_sample(0, &mut buf).ok()?;
+                    Some(ShaderParamValue::Bool(buf[0] != 0))
+                }
+                crate::util::PlainOldDataType::String => {
+                    let mut buf = [0u8; 256];
+                    scalar.read_sample(0, &mut buf).ok()?;
+                    let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+                    String::from_utf8(buf[..len].to_vec()).ok()
+                        .map(ShaderParamValue::String)
+                }
+                _ => None
+            };
+        }
+        
+        // Try array
+        if let Some(arr) = prop.as_array() {
+            let header = arr.header();
+            let dtype = header.data_type;
+            
+            return match dtype.pod {
+                crate::util::PlainOldDataType::Float32 => {
+                    arr.read_f32_array(0).ok().map(ShaderParamValue::FloatArray)
+                }
+                crate::util::PlainOldDataType::Int32 => {
+                    arr.read_i32_array(0).ok().map(ShaderParamValue::IntArray)
+                }
+                crate::util::PlainOldDataType::String => {
+                    arr.read_string_array(0).ok().map(ShaderParamValue::StringArray)
+                }
+                _ => None
+            };
+        }
+        
+        None
     }
     
     /// Check if this material is valid.
@@ -571,7 +704,15 @@ impl IMaterial<'_> {
             
             for shader_type in self.shader_type_names(&target) {
                 if let Some(shader_name) = self.shader(&target, &shader_type) {
-                    let node = ShaderNode::new(&shader_type, &shader_name, &target);
+                    // Create node with shader name
+                    let mut node = ShaderNode::new(&shader_type, &shader_name, &target);
+                    
+                    // Read and add all parameters for this shader
+                    let params = self.read_shader_params(&target, &shader_type);
+                    for param in params {
+                        node.add_param(param);
+                    }
+                    
                     network.add_node(node);
                     network.set_terminal(&shader_type, &shader_type);
                 }

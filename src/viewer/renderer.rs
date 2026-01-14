@@ -26,6 +26,7 @@ pub struct Renderer {
     wireframe_pipeline: wgpu::RenderPipeline,
     wireframe_pipeline_double_sided: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
+    point_pipeline: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
     skybox_pipeline: wgpu::RenderPipeline,
     layouts: BindGroupLayouts,
@@ -76,7 +77,10 @@ pub struct Renderer {
     
     // Scene curves (rendered as lines)
     pub curves: HashMap<String, SceneCurves>,
-    
+
+    // Scene points (rendered as point sprites)
+    pub points: HashMap<String, ScenePoints>,
+
     // Settings
     pub show_wireframe: bool,
     pub flat_shading: bool,
@@ -148,6 +152,20 @@ pub struct SceneCurves {
     pub name: String,
 }
 
+/// Scene points with transform and material
+pub struct ScenePoints {
+    pub vertex_buffer: wgpu::Buffer,
+    pub vertex_count: u32,
+    pub material_bind_group: wgpu::BindGroup,
+    pub model_bind_group: wgpu::BindGroup,
+    #[allow(dead_code)]
+    pub model_buffer: wgpu::Buffer,
+    #[allow(dead_code)]
+    pub transform: Mat4,
+    #[allow(dead_code)]
+    pub name: String,
+}
+
 impl Renderer {
     pub fn new(
         device: Arc<wgpu::Device>,
@@ -195,7 +213,15 @@ impl Renderer {
             ..double_sided_config
         };
         let line_pipeline = standard_surface::create_pipeline(&device, &layouts, &line_config);
-        
+
+        // Point pipeline for point clouds
+        let point_config = PipelineConfig {
+            topology: wgpu::PrimitiveTopology::PointList,
+            cull_mode: None,
+            ..double_sided_config
+        };
+        let point_pipeline = standard_surface::create_pipeline(&device, &layouts, &point_config);
+
         // Shadow depth pipeline
         let shadow_pipeline = standard_surface::create_shadow_pipeline(&device, &layouts);
         
@@ -383,6 +409,7 @@ impl Renderer {
             wireframe_pipeline,
             wireframe_pipeline_double_sided,
             line_pipeline,
+            point_pipeline,
             shadow_pipeline,
             skybox_pipeline,
             layouts,
@@ -410,6 +437,7 @@ impl Renderer {
             env_uniform_buffer,
             meshes: HashMap::new(),
             curves: HashMap::new(),
+            points: HashMap::new(),
             show_wireframe: false,
             flat_shading: false,
             show_grid: true,
@@ -674,10 +702,80 @@ impl Renderer {
         });
     }
 
+    /// Add points to scene
+    pub fn add_points(
+        &mut self,
+        name: String,
+        positions: &[[f32; 3]],
+        transform: Mat4,
+        params: &StandardSurfaceParams,
+    ) {
+        if positions.is_empty() {
+            return;
+        }
+
+        // Create vertices from positions (using dummy normals/uvs for point rendering)
+        let vertices: Vec<Vertex> = positions.iter().map(|pos| Vertex {
+            position: *pos,
+            normal: [0.0, 1.0, 0.0],
+            uv: [0.0, 0.0],
+        }).collect();
+
+        let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("points_vertex_buffer"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+
+        // Material
+        let material_buffer = standard_surface::create_material_buffer(&self.device, params);
+        let material_bind_group = standard_surface::create_material_bind_group(
+            &self.device,
+            &self.layouts.material,
+            &material_buffer,
+        );
+
+        // Model transform
+        let normal_matrix = transform.inverse().transpose();
+        let model_uniform = ModelUniform {
+            model: transform.to_cols_array_2d(),
+            normal_matrix: normal_matrix.to_cols_array_2d(),
+        };
+        let model_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("points_model_buffer"),
+            contents: bytemuck::bytes_of(&model_uniform),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let model_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("points_model_bind_group"),
+            layout: &self.layouts.model,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: model_buffer.as_entire_binding(),
+            }],
+        });
+
+        self.points.insert(name.clone(), ScenePoints {
+            vertex_buffer,
+            vertex_count: positions.len() as u32,
+            material_bind_group,
+            model_bind_group,
+            model_buffer,
+            transform,
+            name,
+        });
+    }
+
+    /// Check if points exist
+    pub fn has_points(&self, name: &str) -> bool {
+        self.points.contains_key(name)
+    }
+
     /// Clear all scene meshes
     pub fn clear_meshes(&mut self) {
         self.meshes.clear();
         self.curves.clear();
+        self.points.clear();
     }
     
     /// Update only transform for existing mesh (cheap operation)
@@ -923,6 +1021,17 @@ impl Renderer {
                     render_pass.set_vertex_buffer(0, curve.mesh.vertex_buffer.slice(..));
                     render_pass.set_index_buffer(curve.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..curve.mesh.index_count, 0, 0..1);
+                }
+            }
+
+            // Draw points using point pipeline
+            if !self.points.is_empty() {
+                render_pass.set_pipeline(&self.point_pipeline);
+                for pts in self.points.values() {
+                    render_pass.set_bind_group(1, &pts.material_bind_group, &[]);
+                    render_pass.set_bind_group(2, &pts.model_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, pts.vertex_buffer.slice(..));
+                    render_pass.draw(0..pts.vertex_count, 0..1);
                 }
             }
         }

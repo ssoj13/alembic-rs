@@ -1064,6 +1064,51 @@ impl<'a> IArrayProperty<'a> {
     pub fn valid(&self) -> bool {
         true
     }
+    
+    /// Read sample as f32 array.
+    pub fn read_f32_array(&self, index: usize) -> Result<Vec<f32>> {
+        let data = self.reader.read_sample_vec(index)?;
+        let slice: &[f32] = bytemuck::try_cast_slice(&data)
+            .map_err(|_| crate::util::Error::invalid("cannot cast to f32"))?;
+        Ok(slice.to_vec())
+    }
+    
+    /// Read sample as i32 array.
+    pub fn read_i32_array(&self, index: usize) -> Result<Vec<i32>> {
+        let data = self.reader.read_sample_vec(index)?;
+        let slice: &[i32] = bytemuck::try_cast_slice(&data)
+            .map_err(|_| crate::util::Error::invalid("cannot cast to i32"))?;
+        Ok(slice.to_vec())
+    }
+    
+    /// Read sample as string array.
+    /// 
+    /// Alembic stores string arrays as null-terminated strings concatenated together.
+    pub fn read_string_array(&self, index: usize) -> Result<Vec<String>> {
+        let data = self.reader.read_sample_vec(index)?;
+        let mut strings = Vec::new();
+        let mut start = 0;
+        
+        for (i, &byte) in data.iter().enumerate() {
+            if byte == 0 {
+                if i > start {
+                    if let Ok(s) = String::from_utf8(data[start..i].to_vec()) {
+                        strings.push(s);
+                    }
+                }
+                start = i + 1;
+            }
+        }
+        
+        // Handle last string if no trailing null
+        if start < data.len() {
+            if let Ok(s) = String::from_utf8(data[start..].to_vec()) {
+                strings.push(s);
+            }
+        }
+        
+        Ok(strings)
+    }
 }
 
 /// Output array property.

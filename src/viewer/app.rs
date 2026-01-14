@@ -106,7 +106,10 @@ pub struct ViewerApp {
     // Scene cameras
     scene_cameras: Vec<mesh_converter::SceneCamera>,
     active_camera: Option<usize>,  // None = orbit camera, Some(i) = scene camera index
-    
+
+    // Scene lights (for potential lighting override)
+    scene_lights: Vec<mesh_converter::SceneLight>,
+
     // Async loading
     worker: Option<super::worker::WorkerHandle>,
     pending_frame: Option<usize>,  // Frame we've requested but not yet received
@@ -143,6 +146,7 @@ impl ViewerApp {
             selected_object: None,
             scene_cameras: Vec::new(),
             active_camera: None,
+            scene_lights: Vec::new(),
             worker: None,
             pending_frame: None,
             epoch: 0,
@@ -1013,6 +1017,11 @@ impl ViewerApp {
             self.scene_cameras = scene.cameras;
         }
 
+        // Update scene lights
+        if !scene.lights.is_empty() && self.scene_lights.is_empty() {
+            self.scene_lights = scene.lights;
+        }
+
         // Collect names using references (no String cloning)
         let new_mesh_names: std::collections::HashSet<&str> = 
             scene.meshes.iter().map(|m| m.name.as_str()).collect();
@@ -1063,6 +1072,20 @@ impl ViewerApp {
                 &curves.indices,
                 curves.transform,
                 &curves_material,
+            );
+        }
+
+        // Update or add points
+        let points_material = StandardSurfaceParams::plastic(
+            Vec3::new(0.3, 0.8, 0.9),  // cyan-ish color for points
+            0.5,
+        );
+        for pts in scene.points {
+            renderer.add_points(
+                pts.name,
+                &pts.positions,
+                pts.transform,
+                &points_material,
             );
         }
 
