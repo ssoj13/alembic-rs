@@ -132,8 +132,9 @@ impl XformSample {
                     )
                 }
             };
-            // Alembic uses left-multiply: ret = m * ret (see XformSample.cpp:518)
-            result = m * result;
+            // Alembic uses left-multiply for row-vectors: ret = m * ret
+            // For glam column-vectors, equivalent is right-multiply: result = result * m
+            result = result * m;
         }
         
         result

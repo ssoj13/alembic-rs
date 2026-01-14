@@ -1,8 +1,8 @@
 //! Alembic CLI - Tool for inspecting and manipulating Alembic files.
 
-use alembic_core::prelude::{IObject, IPolyMesh, ISubD, ICurves, IPoints, ICamera, IXform};
-use alembic_core::abc::IArchive as AbcIArchive;
-use alembic_core::ogawa::writer::{OArchive, OObject, OPolyMesh, OPolyMeshSample, OXform, OXformSample};
+use alembic::prelude::{IObject, IPolyMesh, ISubD, ICurves, IPoints, ICamera, IXform};
+use alembic::abc::IArchive as AbcIArchive;
+use alembic::ogawa::writer::{OArchive, OObject, OPolyMesh, OPolyMeshSample, OXform, OXformSample};
 use std::env;
 use std::path::Path;
 
@@ -75,7 +75,7 @@ fn main() {
             #[cfg(feature = "viewer")]
             {
                 let file = filtered_args.get(1).map(|s| std::path::PathBuf::from(*s));
-                if let Err(e) = alembic_core::viewer::run(file) {
+                if let Err(e) = alembic::viewer::run(file) {
                     eprintln!("Viewer error: {}", e);
                     std::process::exit(1);
                 }

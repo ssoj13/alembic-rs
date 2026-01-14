@@ -41,6 +41,21 @@ pub use write::*;
 pub use materials::*;
 pub use schemas::*;
 
+/// Open ABC file in 3D viewer.
+///
+/// # Example
+/// ```python
+/// import alembic_rs
+/// alembic_rs.view("model.abc")
+/// ```
+#[cfg(feature = "viewer")]
+#[pyfunction]
+fn view(path: &str) -> PyResult<()> {
+    let file = std::path::PathBuf::from(path);
+    crate::viewer::run(Some(file))
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("Viewer error: {}", e)))
+}
+
 /// Alembic Python module.
 #[pymodule]
 fn alembic_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -114,6 +129,10 @@ fn alembic_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     abc.add_class::<materials::PyCollection>()?;
     abc.add_class::<materials::PyICollections>()?;
     abc.add_class::<materials::PyIMaterial>()?;
+    
+    // Viewer function
+    #[cfg(feature = "viewer")]
+    m.add_function(wrap_pyfunction!(view, m)?)?;
     
     // Also register at top level for convenience
     m.add_class::<archive::PyIArchive>()?;

@@ -14,46 +14,21 @@ authors = ["Alex Khalyavin <joss13@gmail.com>"]
 repository = "https://github.com/ssoj13/alembic-rs"
 
 [dependencies]
-# Half-precision floats (f16)
 half = { version = "2.4", features = ["bytemuck"] }
-
-# Memory-mapped file I/O
 memmap2 = "0.9"
-
-# 3D math library
 glam = { version = "0.29", features = ["bytemuck", "mint"] }
-
-# Binary I/O with endianness
 byteorder = "1.5"
-
-# Error handling
 thiserror = "2.0"
-
-# Fast synchronization primitives
 parking_lot = "0.12"
-
-# Small vector optimization
 smallvec = "1.13"
-
-# Zero-copy casting
 bytemuck = { version = "1.21", features = ["derive"] }
-
-# Compression (zlib)
 flate2 = "1.0"
-
-# JSON serialization (for CLI dump)
 serde_json = "1.0"
-
-# MurmurHash3 for array sample content keys (matches C++ Alembic)
 murmur3 = { path = "crates/murmur3" }
-
-# SpookyHash V2 for object/property header hashing
 spooky-hash = { path = "crates/spooky-hash" }
 
-# Python bindings (optional)
+# Optional
 pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
-
-# Viewer dependencies (optional)
 standard-surface = { path = "crates/standard-surface", optional = true }
 eframe = { version = "0.31", default-features = false, features = ["default_fonts", "wgpu"], optional = true }
 egui = { version = "0.31", optional = true }
@@ -70,31 +45,17 @@ dirs = { version = "6.0", optional = true }
 image = { version = "0.25", default-features = false, features = ["hdr", "exr"], optional = true }
 
 [dev-dependencies]
-# Temporary files for tests
 tempfile = "3"
 
-[lib]
-name = "alembic_core"
-crate-type = ["lib", "cdylib"]
-
+[[bin]]
+name = "alembic-cli"
+path = "src/bin/alembic/main.rs"
 
 [features]
 default = ["mmap", "viewer"]
 mmap = []
 python = ["pyo3"]
 viewer = [
-    "standard-surface",
-    "eframe",
-    "egui",
-    "egui-wgpu",
-    "wgpu",
-    "dolly",
-    "mint",
-    "log",
-    "env_logger",
-    "anyhow",
-    "rfd",
-    "serde",
-    "dirs",
-    "image",
+    "standard-surface", "eframe", "egui", "egui-wgpu", "wgpu",
+    "dolly", "mint", "log", "env_logger", "anyhow", "rfd", "serde", "dirs", "image",
 ]
