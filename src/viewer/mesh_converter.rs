@@ -2,6 +2,7 @@
 
 use crate::geom::{IPolyMesh, PolyMeshSample, ICurves, CurvesSample};
 use glam::{Mat4, Vec3};
+use rayon::prelude::*;
 use standard_surface::Vertex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -294,20 +295,111 @@ pub fn collect_scene(archive: &crate::abc::IArchive, sample_index: usize) -> Col
     collect_scene_cached(archive, sample_index, None)
 }
 
+/// Pending mesh conversion task
+struct MeshTask {
+    name: String,
+    sample: PolyMeshSample,
+    transform: Mat4,
+    is_constant: bool,
+}
+
+/// Cached mesh result (from cache hit)
+struct CachedResult {
+    name: String,
+    vertices: Arc<Vec<Vertex>>,
+    indices: Arc<Vec<u32>>,
+    transform: Mat4,
+    local_bounds: Bounds,
+}
+
 /// Recursively collect all geometry with optional caching for constant meshes
 pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize, cache: Option<&MeshCache>) -> CollectedScene {
-    let mut meshes = Vec::new();
+    let mut mesh_tasks = Vec::new();
+    let mut cached_results = Vec::new();
     let mut curves = Vec::new();
     let root = archive.root();
-    collect_recursive(&root, Mat4::IDENTITY, sample_index, &mut meshes, &mut curves, cache);
+    
+    // Phase 1: Collect all mesh samples and curves (sequential file reads)
+    collect_samples_recursive(
+        &root, 
+        Mat4::IDENTITY, 
+        sample_index, 
+        &mut mesh_tasks, 
+        &mut cached_results, 
+        &mut curves, 
+        cache,
+    );
+    
+    // Phase 2: Convert meshes in parallel (CPU-bound)
+    let converted: Vec<ConvertedMesh> = mesh_tasks
+        .into_par_iter()
+        .filter_map(|task| {
+            convert_polymesh(&task.sample, &task.name, task.transform).map(|converted| {
+                // Cache constant meshes
+                if task.is_constant {
+                    if let Some(cache) = cache {
+                        let mut local_bounds = Bounds::empty();
+                        for pos in &task.sample.positions {
+                            local_bounds.expand(*pos);
+                        }
+                        cache.lock().insert(task.name.clone(), CachedMesh {
+                            vertices: Arc::clone(&converted.vertices),
+                            indices: Arc::clone(&converted.indices),
+                            local_bounds,
+                        });
+                    }
+                }
+                converted
+            })
+        })
+        .collect();
+    
+    // Phase 3: Combine results - cached meshes + converted meshes
+    let mut meshes = Vec::with_capacity(cached_results.len() + converted.len());
+    
+    // Add cached results (just need to transform bounds)
+    for cached in cached_results {
+        let bounds = transform_bounds(&cached.local_bounds, cached.transform);
+        meshes.push(ConvertedMesh {
+            name: cached.name,
+            vertices: cached.vertices,
+            indices: cached.indices,
+            transform: cached.transform,
+            bounds,
+        });
+    }
+    
+    meshes.extend(converted);
+    
     CollectedScene { meshes, curves }
 }
 
-fn collect_recursive(
+/// Transform local bounds to world space
+fn transform_bounds(local: &Bounds, transform: Mat4) -> Bounds {
+    let corners = [
+        Vec3::new(local.min.x, local.min.y, local.min.z),
+        Vec3::new(local.max.x, local.min.y, local.min.z),
+        Vec3::new(local.min.x, local.max.y, local.min.z),
+        Vec3::new(local.max.x, local.max.y, local.min.z),
+        Vec3::new(local.min.x, local.min.y, local.max.z),
+        Vec3::new(local.max.x, local.min.y, local.max.z),
+        Vec3::new(local.min.x, local.max.y, local.max.z),
+        Vec3::new(local.max.x, local.max.y, local.max.z),
+    ];
+    let mut bounds = Bounds::empty();
+    for corner in corners {
+        bounds.expand(transform.transform_point3(corner));
+    }
+    bounds
+}
+
+/// Phase 1: Collect all mesh samples (sequential reads from file)
+fn collect_samples_recursive(
     obj: &crate::abc::IObject,
     parent_transform: Mat4,
     sample_index: usize,
-    meshes: &mut Vec<ConvertedMesh>,
+    mesh_tasks: &mut Vec<MeshTask>,
+    cached_results: &mut Vec<CachedResult>,
     curves: &mut Vec<ConvertedCurves>,
     cache: Option<&MeshCache>,
 ) {
@@ -322,7 +414,6 @@ fn collect_recursive(
         (Mat4::IDENTITY, true)
     };
     
-    // If inherits=false, don't multiply by parent transform
     let world_transform = if inherits {
         parent_transform * local_transform
     } else {
@@ -334,7 +425,7 @@ fn collect_recursive(
         let mesh_name = polymesh.name().to_string();
         let is_constant = polymesh.is_constant();
         
-        // Try to use cached data for constant meshes (Arc clone is cheap)
+        // Try cache first for constant meshes
         let cached = if is_constant {
             cache.and_then(|c| c.lock().get(&mesh_name).cloned())
         } else {
@@ -342,64 +433,23 @@ fn collect_recursive(
         };
         
         if let Some(cached_mesh) = cached {
-            // Use cached geometry, only update transform and bounds
-            let mut bounds = Bounds::empty();
-            // Transform cached local bounds to world space
-            let corners = [
-                Vec3::new(cached_mesh.local_bounds.min.x, cached_mesh.local_bounds.min.y, cached_mesh.local_bounds.min.z),
-                Vec3::new(cached_mesh.local_bounds.max.x, cached_mesh.local_bounds.min.y, cached_mesh.local_bounds.min.z),
-                Vec3::new(cached_mesh.local_bounds.min.x, cached_mesh.local_bounds.max.y, cached_mesh.local_bounds.min.z),
-                Vec3::new(cached_mesh.local_bounds.max.x, cached_mesh.local_bounds.max.y, cached_mesh.local_bounds.min.z),
-                Vec3::new(cached_mesh.local_bounds.min.x, cached_mesh.local_bounds.min.y, cached_mesh.local_bounds.max.z),
-                Vec3::new(cached_mesh.local_bounds.max.x, cached_mesh.local_bounds.min.y, cached_mesh.local_bounds.max.z),
-                Vec3::new(cached_mesh.local_bounds.min.x, cached_mesh.local_bounds.max.y, cached_mesh.local_bounds.max.z),
-                Vec3::new(cached_mesh.local_bounds.max.x, cached_mesh.local_bounds.max.y, cached_mesh.local_bounds.max.z),
-            ];
-            for corner in corners {
-                bounds.expand(world_transform.transform_point3(corner));
-            }
-            
-            meshes.push(ConvertedMesh {
+            // Cache hit - just store for later bounds transform
+            cached_results.push(CachedResult {
                 name: mesh_name,
                 vertices: cached_mesh.vertices,
                 indices: cached_mesh.indices,
                 transform: world_transform,
-                bounds,
+                local_bounds: cached_mesh.local_bounds,
             });
         } else {
-            // Read and convert mesh data
-            let t0 = std::time::Instant::now();
-            let sample_result = polymesh.get_sample(sample_index);
-            let read_time = t0.elapsed();
-            
-            if let Ok(sample) = sample_result {
-                let t1 = std::time::Instant::now();
-                if let Some(converted) = convert_polymesh(&sample, &mesh_name, world_transform) {
-                    let convert_time = t1.elapsed();
-                    if read_time.as_millis() > 5 || convert_time.as_millis() > 5 {
-                        eprintln!("[PERF] {} read={:?} convert={:?} verts={}", 
-                            mesh_name, read_time, convert_time, converted.vertices.len());
-                    }
-                    
-                    // Cache constant meshes for future frames (Arc clone is cheap)
-                    if is_constant {
-                        if let Some(cache) = cache {
-                            // Compute local bounds for caching
-                            let mut local_bounds = Bounds::empty();
-                            for pos in &sample.positions {
-                                local_bounds.expand(*pos);
-                            }
-                            
-                            cache.lock().insert(mesh_name.clone(), CachedMesh {
-                                vertices: Arc::clone(&converted.vertices),
-                                indices: Arc::clone(&converted.indices),
-                                local_bounds,
-                            });
-                        }
-                    }
-                    
-                    meshes.push(converted);
-                }
+            // Cache miss - read sample and queue for parallel conversion
+            if let Ok(sample) = polymesh.get_sample(sample_index) {
+                mesh_tasks.push(MeshTask {
+                    name: mesh_name,
+                    sample,
+                    transform: world_transform,
+                    is_constant,
+                });
             }
         }
     }
@@ -415,7 +465,7 @@ fn collect_recursive(
     
     // Recurse into children
     for child in obj.children() {
-        collect_recursive(&child, world_transform, sample_index, meshes, curves, cache);
+        collect_samples_recursive(&child, world_transform, sample_index, mesh_tasks, cached_results, curves, cache);
     }
 }
 

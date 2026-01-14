@@ -20,6 +20,7 @@ glam = { version = "0.30", features = ["bytemuck", "mint"] }
 byteorder = "1.5"
 thiserror = "2.0"
 parking_lot = "0.12"
+rayon = "1.10"
 smallvec = "1.15"
 bytemuck = { version = "1.24", features = ["derive"] }
 flate2 = "1.1"

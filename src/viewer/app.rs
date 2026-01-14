@@ -18,6 +18,15 @@ fn log_level() -> u8 { LOG_LEVEL.load(Ordering::Relaxed) }
 
 pub fn set_log_level(level: u8) { LOG_LEVEL.store(level, Ordering::Relaxed); }
 
+/// Format FPS for display (hide decimals for whole numbers)
+fn format_fps(fps: f32) -> String {
+    if (fps - fps.round()).abs() < 0.001 {
+        format!("{:.0}", fps)
+    } else {
+        format!("{:.3}", fps).trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
 macro_rules! log_info {
     ($($arg:tt)*) => {
         if log_level() >= LOG_INFO { eprintln!("[INFO] {}", format!($($arg)*)); }
@@ -516,13 +525,27 @@ impl ViewerApp {
                 ui.separator();
                 ui.label("FPS:");
                 egui::ComboBox::from_id_salt("fps_select")
-                    .selected_text(format!("{:.0}", self.playback_fps))
-                    .width(50.0)
+                    .selected_text(format!("{}", format_fps(self.playback_fps)))
+                    .width(70.0)
                     .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.playback_fps, 12.0, "12");
-                        ui.selectable_value(&mut self.playback_fps, 24.0, "24");
+                        // Film/Cinema
+                        ui.selectable_value(&mut self.playback_fps, 23.976, "23.976 (Film)");
+                        ui.selectable_value(&mut self.playback_fps, 24.0, "24 (Cinema)");
+                        ui.selectable_value(&mut self.playback_fps, 48.0, "48 (HFR)");
+                        ui.separator();
+                        // TV PAL (Europe)
+                        ui.selectable_value(&mut self.playback_fps, 25.0, "25 (PAL)");
+                        ui.selectable_value(&mut self.playback_fps, 50.0, "50 (PAL HD)");
+                        ui.separator();
+                        // TV NTSC (US/Japan)
+                        ui.selectable_value(&mut self.playback_fps, 29.97, "29.97 (NTSC)");
                         ui.selectable_value(&mut self.playback_fps, 30.0, "30");
+                        ui.selectable_value(&mut self.playback_fps, 59.94, "59.94 (NTSC HD)");
                         ui.selectable_value(&mut self.playback_fps, 60.0, "60");
+                        ui.separator();
+                        // Animation
+                        ui.selectable_value(&mut self.playback_fps, 12.0, "12 (Animation)");
+                        ui.selectable_value(&mut self.playback_fps, 15.0, "15");
                     });
             }
             
@@ -956,25 +979,15 @@ impl ViewerApp {
         let bounds = mesh_converter::compute_scene_bounds(&scene.meshes);
         self.scene_bounds = if bounds.is_valid() { Some(bounds) } else { None };
 
-        // Collect names of meshes in this frame
-        let new_mesh_names: std::collections::HashSet<_> = 
-            scene.meshes.iter().map(|m| m.name.clone()).collect();
-        let new_curve_names: std::collections::HashSet<_> = 
-            scene.curves.iter().map(|c| c.name.clone()).collect();
+        // Collect names using references (no String cloning)
+        let new_mesh_names: std::collections::HashSet<&str> = 
+            scene.meshes.iter().map(|m| m.name.as_str()).collect();
+        let new_curve_names: std::collections::HashSet<&str> = 
+            scene.curves.iter().map(|c| c.name.as_str()).collect();
         
-        // Remove meshes that no longer exist in this frame
-        let old_mesh_names: Vec<_> = renderer.meshes.keys().cloned().collect();
-        for name in old_mesh_names {
-            if !new_mesh_names.contains(&name) {
-                renderer.meshes.remove(&name);
-            }
-        }
-        let old_curve_names: Vec<_> = renderer.curves.keys().cloned().collect();
-        for name in old_curve_names {
-            if !new_curve_names.contains(&name) {
-                renderer.curves.remove(&name);
-            }
-        }
+        // Remove meshes that no longer exist (retain avoids intermediate Vec)
+        renderer.meshes.retain(|name, _| new_mesh_names.contains(name.as_str()));
+        renderer.curves.retain(|name, _| new_curve_names.contains(name.as_str()));
 
         // Update or add meshes
         for mesh in scene.meshes {

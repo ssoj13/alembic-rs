@@ -12,41 +12,26 @@
 //!   buffered I/O instead when working with files that may be modified externally.
 
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
 
-// use byteorder::{LittleEndian, ReadBytesExt};
 use memmap2::Mmap;
-use parking_lot::RwLock;
 
 use super::format::*;
 use crate::util::{Error, Result};
 
-/// Input streams for reading Ogawa data.
-/// Supports both memory-mapped and buffered I/O modes.
+/// Input streams for reading Ogawa data via memory mapping.
+/// Memory mapping provides efficient random access for large Alembic files.
 pub struct IStreams {
-    inner: StreamsInner,
+    mmap: Mmap,
     version: u16,
     frozen: bool,
     size: u64,
 }
 
-enum StreamsInner {
-    /// Memory-mapped file (preferred for large files)
-    Mmap(Mmap),
-    /// Buffered file access (fallback)
-    File(Arc<RwLock<File>>),
-}
-
 impl IStreams {
     /// Open a file for reading with memory mapping.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::open_opts(path, true)
-    }
-
-    /// Open a file with optional memory mapping.
-    pub fn open_opts(path: impl AsRef<Path>, use_mmap: bool) -> Result<Self> {
         let path = path.as_ref();
         let file = File::open(path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -63,39 +48,16 @@ impl IStreams {
             return Err(Error::UnexpectedEof(size));
         }
 
-        let inner = if use_mmap && size > 0 {
-            // SAFETY:
-            // - File is opened read-only, preventing write-through modifications
-            // - memmap2's Mmap is safe for concurrent reads
-            // 
-            // KNOWN LIMITATIONS:
-            // - If another process modifies/truncates the file while mapped,
-            //   reads may return unexpected data or cause SIGBUS on some platforms.
-            // - For production use with untrusted file sources, consider using
-            //   `open_opts(path, false)` to disable mmap and use buffered I/O.
-            // - File locking is NOT implemented; callers should ensure exclusive
-            //   access if file modification during read is a concern.
-            let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
-                Error::MmapFailed(e.to_string())
-            })?;
-            StreamsInner::Mmap(mmap)
-        } else {
-            StreamsInner::File(Arc::new(RwLock::new(file)))
-        };
+        // SAFETY:
+        // - File is opened read-only, preventing write-through modifications
+        // - memmap2's Mmap is safe for concurrent reads
+        let mmap = unsafe { Mmap::map(&file) }.map_err(|e| {
+            Error::MmapFailed(e.to_string())
+        })?;
 
-        // Read and validate header
-        let (version, frozen) = match &inner {
-            StreamsInner::Mmap(mmap) => Self::parse_header(mmap)?,
-            StreamsInner::File(file) => {
-                let mut f = file.write();
-                let mut header = [0u8; HEADER_SIZE];
-                f.seek(SeekFrom::Start(0))?;
-                f.read_exact(&mut header)?;
-                Self::parse_header(&header)?
-            }
-        };
+        let (version, frozen) = Self::parse_header(&mmap)?;
 
-        Ok(Self { inner, version, frozen, size })
+        Ok(Self { mmap, version, frozen, size })
     }
 
     /// Parse and validate the Ogawa header.
@@ -148,59 +110,31 @@ impl IStreams {
     }
 
     /// Read bytes at a specific position.
+    #[inline]
     pub fn read_bytes(&self, pos: u64, len: usize) -> Result<Vec<u8>> {
         if pos + len as u64 > self.size {
             return Err(Error::UnexpectedEof(pos + len as u64));
         }
-
-        match &self.inner {
-            StreamsInner::Mmap(mmap) => {
-                Ok(mmap[pos as usize..(pos as usize + len)].to_vec())
-            }
-            StreamsInner::File(file) => {
-                let mut f = file.write();
-                f.seek(SeekFrom::Start(pos))?;
-                let mut buf = vec![0u8; len];
-                f.read_exact(&mut buf)?;
-                Ok(buf)
-            }
-        }
+        Ok(self.mmap[pos as usize..(pos as usize + len)].to_vec())
     }
 
     /// Read bytes into an existing buffer.
+    #[inline]
     pub fn read_into(&self, pos: u64, buf: &mut [u8]) -> Result<()> {
         if pos + buf.len() as u64 > self.size {
             return Err(Error::UnexpectedEof(pos + buf.len() as u64));
         }
-
-        match &self.inner {
-            StreamsInner::Mmap(mmap) => {
-                buf.copy_from_slice(&mmap[pos as usize..(pos as usize + buf.len())]);
-                Ok(())
-            }
-            StreamsInner::File(file) => {
-                let mut f = file.write();
-                f.seek(SeekFrom::Start(pos))?;
-                f.read_exact(buf)?;
-                Ok(())
-            }
-        }
+        buf.copy_from_slice(&self.mmap[pos as usize..(pos as usize + buf.len())]);
+        Ok(())
     }
 
-    /// Get a slice of the memory-mapped data (only works with mmap).
+    /// Get a slice of the memory-mapped data.
+    #[inline]
     pub fn slice(&self, pos: u64, len: usize) -> Result<&[u8]> {
         if pos + len as u64 > self.size {
             return Err(Error::UnexpectedEof(pos + len as u64));
         }
-
-        match &self.inner {
-            StreamsInner::Mmap(mmap) => {
-                Ok(&mmap[pos as usize..(pos as usize + len)])
-            }
-            StreamsInner::File(_) => {
-                Err(Error::other("slice() requires memory-mapped mode"))
-            }
-        }
+        Ok(&self.mmap[pos as usize..(pos as usize + len)])
     }
 
     /// Read a u64 value at the given position.
