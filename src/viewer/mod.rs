@@ -42,9 +42,15 @@ pub fn run(initial_file: Option<PathBuf>) -> Result<()> {
     let settings = Settings::load();
     
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([settings.window_width, settings.window_height])
-            .with_title("Alembic Viewer"),
+        viewport: {
+            let mut vp = egui::ViewportBuilder::default()
+                .with_inner_size([settings.window_width, settings.window_height])
+                .with_title("Alembic Viewer");
+            if let (Some(x), Some(y)) = (settings.window_x, settings.window_y) {
+                vp = vp.with_position([x, y]);
+            }
+            vp
+        },
         multisampling: settings.antialiasing as u16, // MSAA (0, 2, 4, 8)
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: egui_wgpu::WgpuConfiguration {

@@ -23,6 +23,8 @@ pub struct Settings {
     // Window
     pub window_width: f32,
     pub window_height: f32,
+    pub window_x: Option<f32>,
+    pub window_y: Option<f32>,
     
     // Camera
     pub camera_distance: f32,
@@ -71,6 +73,8 @@ impl Default for Settings {
             background_color: [0.1, 0.1, 0.12, 1.0],
             window_width: 1280.0,
             window_height: 720.0,
+            window_x: None,
+            window_y: None,
             camera_distance: 5.0,
             camera_yaw: 0.0,
             camera_pitch: 0.0,

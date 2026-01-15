@@ -1741,11 +1741,15 @@ impl eframe::App for ViewerApp {
         });
 
 
-        // Track window size for saving on exit
+        // Track window size and position for saving on exit
         ctx.input(|i| {
             if let Some(rect) = i.viewport().inner_rect {
                 self.settings.window_width = rect.width();
                 self.settings.window_height = rect.height();
+            }
+            if let Some(pos) = i.viewport().outer_rect {
+                self.settings.window_x = Some(pos.min.x);
+                self.settings.window_y = Some(pos.min.y);
             }
         });
         
