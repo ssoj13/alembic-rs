@@ -38,8 +38,12 @@ alembic copy in.abc out.abc # Round-trip copy test
 
 ### Viewer Features
 - Orbit camera (LMB drag, scroll to zoom)
-- PBR rendering with environment lighting
-- Wireframe, X-Ray, shadows toggles
+- PBR rendering with HDR environment lighting (IBL)
+- Load custom HDR panoramas for reflections
+- Fresnel-based specular reflections
+- Wireframe, X-Ray, flat shading, shadows toggles
+- Object hierarchy tree with selection
+- Properties panel for selected objects
 - Animation timeline scrubbing
 - Settings persist between sessions
 

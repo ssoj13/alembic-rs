@@ -1,5 +1,39 @@
 # CHANGELOG
 
+## Session 2026-01-14: IBL (Image-Based Lighting) Fix
+
+### Problem
+HDR environment maps were creating unwanted "texture" patterns on all objects. The diffuse IBL was sampling the HDR directly along surface normals, projecting high-contrast HDR patterns onto geometry.
+
+### Solution
+
+#### Diffuse IBL - Average Environment Color
+Instead of sampling HDR along normal (which creates texture), sample 6 axis directions (+X, -X, +Y, -Y, +Z, -Z) and average them. This gives uniform environment tint without patterns.
+
+```wgsl
+var env_diffuse = sample_env(vec3<f32>(1.0, 0.0, 0.0));
+env_diffuse += sample_env(vec3<f32>(-1.0, 0.0, 0.0));
+env_diffuse += sample_env(vec3<f32>(0.0, 1.0, 0.0));
+env_diffuse += sample_env(vec3<f32>(0.0, -1.0, 0.0));
+env_diffuse += sample_env(vec3<f32>(0.0, 0.0, 1.0));
+env_diffuse += sample_env(vec3<f32>(0.0, 0.0, -1.0));
+env_diffuse = env_diffuse / 6.0;
+```
+
+#### Specular IBL - Proper Fresnel
+Enhanced specular reflections with proper Fresnel effect (brighter at grazing angles):
+
+```wgsl
+let fresnel = F0 + (vec3<f32>(1.0) - F0) * pow5(1.0 - NdotV);
+let spec_atten = 1.0 - specular_roughness * specular_roughness;
+specular_accum += env_specular * fresnel * spec_atten;
+```
+
+### Files Changed
+- `crates/standard-surface/src/shaders/standard_surface.wgsl` - IBL section rewritten
+
+---
+
 ## Session 2026-01-13: Viewer UI Enhancements
 
 ### Flat Shading Mode
