@@ -1243,9 +1243,11 @@ impl ViewerApp {
     
     /// Update scene_bounds from renderer's computed bounds
     fn update_bounds_from_renderer(&mut self) {
-        if let Some(renderer) = &self.viewport.renderer {
+        if let Some(renderer) = &mut self.viewport.renderer {
             if let Some((min, max)) = renderer.compute_scene_bounds() {
-                self.scene_bounds = Some(mesh_converter::Bounds { min, max });
+                let bounds = mesh_converter::Bounds { min, max };
+                renderer.set_scene_bounds(bounds.center(), bounds.radius());
+                self.scene_bounds = Some(bounds);
             } else {
                 self.scene_bounds = None;
             }
@@ -1315,6 +1317,11 @@ impl ViewerApp {
         let stats = mesh_converter::compute_stats(&scene.meshes);
         let bounds = mesh_converter::compute_scene_bounds(&scene.meshes, &scene.points);
         self.scene_bounds = if bounds.is_valid() { Some(bounds) } else { None };
+        
+        // Update shadow bounds
+        if let Some(ref b) = self.scene_bounds {
+            renderer.set_scene_bounds(b.center(), b.radius());
+        }
         
         // Update floor size if enabled (scene_bounds changed)
         if self.settings.show_floor {

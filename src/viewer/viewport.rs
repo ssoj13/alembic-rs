@@ -98,7 +98,7 @@ impl Viewport {
                     // Update shadow map for key light direction
                     // Key light direction from 3-point rig: (-0.5, -0.7, -0.5)
                     let key_light_dir = glam::Vec3::new(-0.5, -0.7, -0.5);
-                    renderer.update_shadow(key_light_dir, glam::Vec3::ZERO, 10.0);
+                    renderer.update_shadow(key_light_dir);
                 }
 
                 // Ensure render texture exists and is correct size

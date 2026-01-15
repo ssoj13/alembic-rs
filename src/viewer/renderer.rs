@@ -95,6 +95,10 @@ pub struct Renderer {
     pub double_sided: bool,
     pub auto_normals: bool,
     pub background_color: [f32; 4],
+    
+    // Scene bounds for shadow calculations
+    scene_center: Vec3,
+    scene_radius: f32,
 }
 
 struct DepthTexture {
@@ -497,6 +501,8 @@ impl Renderer {
             double_sided: false,
             auto_normals: false,
             background_color: [0.1, 0.1, 0.12, 1.0],
+            scene_center: Vec3::ZERO,
+            scene_radius: 10.0,
         }
     }
 
@@ -569,24 +575,31 @@ impl Renderer {
         self.queue.write_buffer(&self.light_buffer, 0, bytemuck::bytes_of(&rig));
     }
 
+    /// Set scene bounds for shadow calculations
+    pub fn set_scene_bounds(&mut self, center: Vec3, radius: f32) {
+        self.scene_center = center;
+        self.scene_radius = radius.max(1.0);
+    }
+
     /// Update shadow map for key light
     /// Creates orthographic projection from light's perspective
-    pub fn update_shadow(&self, light_dir: Vec3, scene_center: Vec3, scene_radius: f32) {
+    pub fn update_shadow(&self, light_dir: Vec3) {
         // Light position far from scene, looking at center
-        let light_pos = scene_center - light_dir.normalize() * scene_radius * 3.0;
+        let light_pos = self.scene_center - light_dir.normalize() * self.scene_radius * 3.0;
         let up = if light_dir.y.abs() > 0.99 {
             Vec3::Z
         } else {
             Vec3::Y
         };
         
-        let light_view = Mat4::look_at_rh(light_pos, scene_center, up);
+        let light_view = Mat4::look_at_rh(light_pos, self.scene_center, up);
         // Orthographic projection covering scene
-        let half_size = scene_radius * 1.5;
+        // Floor is 4x radius, so shadow frustum needs to cover it fully
+        let half_size = self.scene_radius * 4.5;
         let light_proj = Mat4::orthographic_rh(
             -half_size, half_size,
             -half_size, half_size,
-            0.1, scene_radius * 6.0,
+            0.1, self.scene_radius * 6.0,
         );
         
         let light_view_proj = light_proj * light_view;
@@ -1061,18 +1074,18 @@ impl Renderer {
     
     /// Set floor plane based on scene bounds (call when checkbox enabled)
     pub fn set_floor(&mut self, bounds: &Option<super::mesh_converter::Bounds>) {
-        // Get scene size, default to reasonable size if no bounds
-        let (center, size) = if let Some(b) = bounds {
+        // Get scene size and floor Y position
+        let (center, size, y) = if let Some(b) = bounds {
             let c = b.center();
             let r = b.radius().max(1.0);
-            (c, r * 4.0)  // 4x scene radius
+            // Floor at 0.01 below scene's lower bound
+            (c, r * 4.0, b.min.y - 0.01)
         } else {
-            (Vec3::ZERO, 10.0)
+            (Vec3::ZERO, 10.0, 0.0)
         };
         
-        // Create floor quad at Y=0
+        // Create floor quad
         let half = size;
-        let y = 0.0;
         let vertices = vec![
             Vertex { position: [center.x - half, y, center.z - half], normal: [0.0, 1.0, 0.0], uv: [0.0, 0.0] },
             Vertex { position: [center.x + half, y, center.z - half], normal: [0.0, 1.0, 0.0], uv: [1.0, 0.0] },
