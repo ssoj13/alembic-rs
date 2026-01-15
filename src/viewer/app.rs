@@ -1316,6 +1316,11 @@ impl ViewerApp {
         let bounds = mesh_converter::compute_scene_bounds(&scene.meshes, &scene.points);
         self.scene_bounds = if bounds.is_valid() { Some(bounds) } else { None };
         
+        // Add floor if enabled (must be done after scene_bounds is set)
+        if self.settings.show_floor {
+            renderer.add_floor(&self.scene_bounds);
+        }
+        
         // Update scene cameras (always update for animation support)
         if !scene.cameras.is_empty() {
             self.scene_cameras = scene.cameras;

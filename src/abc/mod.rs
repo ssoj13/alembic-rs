@@ -402,6 +402,20 @@ impl<'a> IObject<'a> {
         name.is_empty() || name == "ABC"
     }
     
+    /// Get the parent object.
+    /// 
+    /// Returns None if this is the root object or if parent access is unavailable.
+    /// 
+    /// **Note:** Due to Rust's ownership model, this may return None even for
+    /// non-root objects. Use [`getParentFullName()`](Self::getParentFullName) 
+    /// combined with archive navigation as an alternative.
+    pub fn getParent(&self) -> Option<IObject<'_>> {
+        self.reader.as_ref().parent().map(|p| {
+            // Wrap borrowed parent reader
+            IObject { reader: IObjectReader::Borrowed(p) }
+        })
+    }
+    
     /// Get the full path of the parent object.
     /// 
     /// Returns None if this is the root object.
@@ -531,6 +545,14 @@ impl<'a> IObject<'a> {
     pub fn getChildrenHash(&self) -> Option<[u8; 16]> {
         self.reader.as_ref().children_hash()
     }
+    
+    // Note: getArchive() is not implemented in Rust due to ownership constraints.
+    // In C++ Alembic, IObject stores a pointer back to its archive, but Rust's
+    // borrow checker prevents this pattern. Use the archive reference directly
+    // when you need archive-level operations.
+    //
+    // Workaround: Pass the archive alongside objects when needed, or use
+    // getFullName() to navigate from a known archive reference.
     
     /// Check if this object is valid.
     /// 
