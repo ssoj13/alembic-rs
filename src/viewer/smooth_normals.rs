@@ -1,6 +1,7 @@
 //! Smooth normals calculation with angle threshold
 
 use glam::Vec3;
+use rayon::prelude::*;
 use std::collections::HashMap;
 
 /// Data needed to recalculate smooth normals dynamically
@@ -8,10 +9,8 @@ use std::collections::HashMap;
 pub struct SmoothNormalData {
     /// Position hash -> list of (vertex_index, face_normal)
     pub position_groups: HashMap<u64, Vec<(usize, Vec3)>>,
-    /// Original positions for each vertex
-    pub positions: Vec<Vec3>,
-    /// Face normal for each vertex
-    pub face_normals: Vec<Vec3>,
+    /// Number of vertices
+    pub vertex_count: usize,
 }
 
 impl SmoothNormalData {
@@ -26,36 +25,43 @@ impl SmoothNormalData {
         
         Self {
             position_groups,
-            positions: positions.to_vec(),
-            face_normals: face_normals.to_vec(),
+            vertex_count: positions.len(),
         }
     }
     
-    /// Recalculate smooth normals with given angle threshold (degrees)
+    /// Recalculate smooth normals with given angle threshold (degrees) - parallel
     pub fn calculate(&self, angle_deg: f32) -> Vec<Vec3> {
         let cos_threshold = (angle_deg.to_radians()).cos();
-        let mut normals = vec![Vec3::ZERO; self.positions.len()];
+        let mut normals = vec![Vec3::ZERO; self.vertex_count];
         
-        for group in self.position_groups.values() {
-            // For each vertex in the group, average normals from faces within angle threshold
-            for &(idx, face_n) in group {
-                let mut sum = Vec3::ZERO;
-                let mut count = 0;
-                
-                for &(_, other_n) in group {
-                    let dot = face_n.dot(other_n);
-                    if dot >= cos_threshold {
-                        sum += other_n;
-                        count += 1;
+        // Collect groups for parallel processing
+        let results: Vec<(usize, Vec3)> = self.position_groups
+            .par_iter()
+            .flat_map(|(_, group)| {
+                group.iter().map(|&(idx, face_n)| {
+                    let mut sum = Vec3::ZERO;
+                    let mut count = 0;
+                    
+                    for &(_, other_n) in group {
+                        if face_n.dot(other_n) >= cos_threshold {
+                            sum += other_n;
+                            count += 1;
+                        }
                     }
-                }
-                
-                if count > 0 {
-                    normals[idx] = (sum / count as f32).normalize_or_zero();
-                } else {
-                    normals[idx] = face_n;
-                }
-            }
+                    
+                    let normal = if count > 0 {
+                        (sum / count as f32).normalize_or_zero()
+                    } else {
+                        face_n
+                    };
+                    (idx, normal)
+                }).collect::<Vec<_>>()
+            })
+            .collect();
+        
+        // Apply results
+        for (idx, normal) in results {
+            normals[idx] = normal;
         }
         
         normals
@@ -70,7 +76,6 @@ fn pos_hash(p: Vec3) -> u64 {
     let y = (p.y * scale).round() as i32;
     let z = (p.z * scale).round() as i32;
     
-    // Combine into hash
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     (x, y, z).hash(&mut hasher);
@@ -85,12 +90,10 @@ mod tests {
     fn test_smooth_normals() {
         // Simple cube corner - 3 faces meeting
         let positions = vec![
-            Vec3::ZERO, Vec3::ZERO, Vec3::ZERO,  // 3 verts at same position
+            Vec3::ZERO, Vec3::ZERO, Vec3::ZERO,
         ];
         let face_normals = vec![
-            Vec3::X,  // face pointing +X
-            Vec3::Y,  // face pointing +Y
-            Vec3::Z,  // face pointing +Z
+            Vec3::X, Vec3::Y, Vec3::Z,
         ];
         
         let data = SmoothNormalData::from_vertices(&positions, &face_normals);
