@@ -251,6 +251,12 @@ fn sample_shadow(world_pos: vec3<f32>) -> f32 {
 // Fragment Shader
 // ============================================================================
 
+// Separated diffuse and specular for xray_alpha handling
+struct LightContribution {
+    diffuse: vec3<f32>,
+    specular: vec3<f32>,
+}
+
 // Compute lighting contribution from a single directional light
 fn compute_light(
     light: Light,
@@ -267,10 +273,14 @@ fn compute_light(
     coat_color: vec3<f32>,
     coat_roughness: f32,
     coat_IOR: f32,
-) -> vec3<f32> {
+) -> LightContribution {
+    var result: LightContribution;
+    result.diffuse = vec3<f32>(0.0);
+    result.specular = vec3<f32>(0.0);
+    
     // Skip if light is off
     if light.intensity < EPSILON {
-        return vec3<f32>(0.0);
+        return result;
     }
     
     let L = normalize(-light.direction);
@@ -278,7 +288,7 @@ fn compute_light(
     
     let NdotL = max(dot(N, L), 0.0);
     if NdotL < EPSILON {
-        return vec3<f32>(0.0);
+        return result;
     }
     
     let NdotH = max(dot(N, H), 0.0);
@@ -299,7 +309,7 @@ fn compute_light(
     let kS = F;
     let kD = (vec3<f32>(1.0) - kS) * (1.0 - metalness);
     
-    // Coat layer
+    // Coat layer (counts as specular)
     var coat_contribution = vec3<f32>(0.0);
     if coat > EPSILON {
         let coat_F0 = vec3<f32>(ior_to_f0(coat_IOR));
@@ -311,11 +321,16 @@ fn compute_light(
     }
     
     let radiance = light.color * light.intensity;
-    return (kD * diffuse + specular_brdf * specular + coat_contribution) * radiance * NdotL;
+    result.diffuse = kD * diffuse * radiance * NdotL;
+    result.specular = (specular_brdf * specular + coat_contribution) * radiance * NdotL;
+    return result;
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // View direction (needed for backface detection)
+    let V = normalize(camera.position - in.world_position);
+    
     // Normal: use face normal (flat) or interpolated vertex normal (smooth)
     var N: vec3<f32>;
     if camera.flat_shading > 0.5 {
@@ -323,15 +338,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let dpdx = dpdx(in.world_position);
         let dpdy = dpdy(in.world_position);
         N = normalize(cross(dpdx, dpdy));
-        // Flip if facing away from camera
-        let V_temp = normalize(camera.position - in.world_position);
-        if dot(N, V_temp) < 0.0 {
-            N = -N;
-        }
     } else {
         N = normalize(in.world_normal);
     }
-    let V = normalize(camera.position - in.world_position);
+    
+    // Always flip normal if facing away from camera (handles flipped normals)
+    if dot(N, V) < 0.0 {
+        N = -N;
+    }
     let NdotV = max(dot(N, V), EPSILON);
 
     // Unpack material parameters
@@ -361,57 +375,69 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Sample shadow for key light
     let shadow_factor = sample_shadow(in.world_position);
     
-    // Accumulate lighting from all 3 lights
-    var color = vec3<f32>(0.0);
+    // Accumulate diffuse and specular separately (for xray_alpha handling)
+    var diffuse_accum = vec3<f32>(0.0);
+    var specular_accum = vec3<f32>(0.0);
     
     // Key light (main light) - with shadow
-    color += shadow_factor * compute_light(
+    let key_light = compute_light(
         lights.key, N, V, NdotV,
         effective_base, F0,
         diffuse_roughness, specular_roughness, specular, metalness,
         coat, coat_color, coat_roughness, coat_IOR
     );
+    diffuse_accum += shadow_factor * key_light.diffuse;
+    specular_accum += shadow_factor * key_light.specular;
     
     // Fill light (softer, side light)
-    color += compute_light(
+    let fill_light = compute_light(
         lights.fill, N, V, NdotV,
         effective_base, F0,
         diffuse_roughness, specular_roughness, specular, metalness,
         coat, coat_color, coat_roughness, coat_IOR
     );
+    diffuse_accum += fill_light.diffuse;
+    specular_accum += fill_light.specular;
     
     // Rim light (back/edge light)
-    color += compute_light(
+    let rim_light = compute_light(
         lights.rim, N, V, NdotV,
         effective_base, F0,
         diffuse_roughness, specular_roughness, specular, metalness,
         coat, coat_color, coat_roughness, coat_IOR
     );
+    diffuse_accum += rim_light.diffuse;
+    specular_accum += rim_light.specular;
 
     // Ambient / IBL
     if env.enabled > 0.5 {
         // Diffuse IBL - sample along normal
         let env_diffuse = sample_env(N) * effective_base * (1.0 - metalness);
+        diffuse_accum += env_diffuse * 0.3;
         
         // Specular IBL - sample along reflection
         let R = reflect(-V, N);
         let env_specular = sample_env(R) * F0;
-        
-        // Roughness attenuation for specular (rough surfaces reflect less sharply)
         let spec_atten = 1.0 - specular_roughness;
-        
-        color += env_diffuse * 0.3 + env_specular * spec_atten * 0.5;
+        specular_accum += env_specular * spec_atten * 0.5;
     } else {
-        // Fallback to flat ambient
-        color += lights.ambient * effective_base;
+        // Fallback to flat ambient (counts as diffuse)
+        diffuse_accum += lights.ambient * effective_base;
     }
     
-    // Emission
-    color += emission * emission_color;
+    // Emission (not affected by xray_alpha, like specular)
+    specular_accum += emission * emission_color;
 
-    // Opacity (with X-Ray override)
+    // Apply xray_alpha only to diffuse, keep specular at full intensity
     let base_alpha = (material.opacity.r + material.opacity.g + material.opacity.b) / 3.0;
-    let alpha = base_alpha * camera.xray_alpha;
+    
+    // Final color: diffuse fades with xray_alpha, specular stays bright
+    let color = diffuse_accum * camera.xray_alpha + specular_accum;
+    
+    // Alpha: base opacity * xray, but boosted by specular brightness
+    // This prevents specular from being blended away at low opacity
+    let spec_brightness = max(specular_accum.r, max(specular_accum.g, specular_accum.b));
+    let alpha = max(base_alpha * camera.xray_alpha, min(spec_brightness, 1.0));
 
     return vec4<f32>(color, alpha);
 }

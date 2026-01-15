@@ -203,6 +203,9 @@ pub struct ScenePoints {
     pub bounds: (Vec3, Vec3),
     #[allow(dead_code)]
     pub name: String,
+    /// Per-point widths (radius) for point sprites (not yet used in rendering)
+    #[allow(dead_code)]
+    pub widths: Vec<f32>,
 }
 
 impl Renderer {
@@ -504,6 +507,60 @@ impl Renderer {
         };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
     }
+    
+    /// Reset to default 3-point lighting
+    pub fn set_default_lights(&self) {
+        let rig = LightRig::three_point();
+        self.queue.write_buffer(&self.light_buffer, 0, bytemuck::bytes_of(&rig));
+    }
+    
+    /// Update lights from scene lights
+    /// Takes up to 3 scene lights and maps them to key/fill/rim
+    pub fn set_scene_lights(&self, scene_lights: &[super::mesh_converter::SceneLight]) {
+        use standard_surface::Light;
+        
+        let make_light = |sl: &super::mesh_converter::SceneLight| -> Light {
+            // SceneLight direction points where light goes, shader expects direction toward source
+            Light::new(-sl.direction, sl.color, sl.intensity)
+        };
+        
+        let rig = match scene_lights.len() {
+            0 => LightRig::three_point(), // fallback to default
+            1 => {
+                // Single light as key, dim fill/rim
+                let key = make_light(&scene_lights[0]);
+                LightRig {
+                    key,
+                    fill: Light::new(Vec3::new(0.6, -0.3, -0.6), Vec3::ONE, 0.2),
+                    rim: Light::new(Vec3::new(0.0, -0.5, 0.8), Vec3::ONE, 0.3),
+                    ambient: Vec3::splat(0.05),
+                    _pad: 0.0,
+                }
+            }
+            2 => {
+                // Two lights: key + fill
+                LightRig {
+                    key: make_light(&scene_lights[0]),
+                    fill: make_light(&scene_lights[1]),
+                    rim: Light::new(Vec3::new(0.0, -0.5, 0.8), Vec3::ONE, 0.3),
+                    ambient: Vec3::splat(0.05),
+                    _pad: 0.0,
+                }
+            }
+            _ => {
+                // Three or more: key + fill + rim
+                LightRig {
+                    key: make_light(&scene_lights[0]),
+                    fill: make_light(&scene_lights[1]),
+                    rim: make_light(&scene_lights[2]),
+                    ambient: Vec3::splat(0.03),
+                    _pad: 0.0,
+                }
+            }
+        };
+        
+        self.queue.write_buffer(&self.light_buffer, 0, bytemuck::bytes_of(&rig));
+    }
 
     /// Update shadow map for key light
     /// Creates orthographic projection from light's perspective
@@ -754,6 +811,7 @@ impl Renderer {
         &mut self,
         name: String,
         positions: &[[f32; 3]],
+        widths: &[f32],
         transform: Mat4,
         params: &StandardSurfaceParams,
     ) {
@@ -814,6 +872,7 @@ impl Renderer {
             transform,
             bounds,
             name,
+            widths: widths.to_vec(),
         });
     }
 
@@ -847,7 +906,8 @@ impl Renderer {
             has_any = true;
         }
         
-        if has_any && min.x <= max.x {
+        // Validate bounds: has geometry, properly ordered, and finite
+        if has_any && min.x <= max.x && min.is_finite() && max.is_finite() {
             Some((min, max))
         } else {
             None

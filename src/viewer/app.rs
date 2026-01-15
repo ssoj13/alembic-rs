@@ -558,8 +558,8 @@ impl ViewerApp {
                     .selected_text(format!("{}x", self.settings.antialiasing))
                     .show_ui(ui, |ui| {
                         let mut changed = false;
-                        for val in [0u8, 2, 4, 8] {
-                            let label = if val == 0 { "Off".to_string() } else { format!("{}x", val) };
+                        for val in [1u8, 2, 4, 8] {
+                            let label = format!("{}x", val);
                             if ui.selectable_value(&mut self.settings.antialiasing, val, label).changed() {
                                 changed = true;
                             }
@@ -596,6 +596,32 @@ impl ViewerApp {
                 self.settings.save();
             }
             
+        }
+        
+        // Lighting section
+        ui.separator();
+        ui.label(RichText::new("Lighting").strong());
+        
+        let has_scene_lights = !self.scene_lights.is_empty();
+        ui.add_enabled_ui(has_scene_lights, |ui| {
+            let label = if has_scene_lights {
+                format!("Scene Lights ({})", self.scene_lights.len())
+            } else {
+                "Scene Lights (none)".to_string()
+            };
+            if ui.checkbox(&mut self.settings.use_scene_lights, label).changed() {
+                if let Some(renderer) = &self.viewport.renderer {
+                    if self.settings.use_scene_lights && has_scene_lights {
+                        renderer.set_scene_lights(&self.scene_lights);
+                    } else {
+                        renderer.set_default_lights();
+                    }
+                }
+                self.settings.save();
+            }
+        });
+        if !has_scene_lights {
+            ui.label("(Default 3-point lighting)");
         }
         
         // Environment section (outside renderer borrow)
@@ -758,6 +784,37 @@ impl ViewerApp {
                     self.current_frame = new_frame;  // Instant visual update
                     self.request_frame(new_frame);   // Async load
                 }
+            }
+            
+            // Draw keyframe markers under slider if animated
+            if has_animation && max_frame > 0.0 {
+                let rect = response.rect;
+                let painter = ui.painter();
+                let marker_y = rect.max.y + 2.0;
+                
+                // Draw tick marks for keyframes (every 10 frames, or every frame if < 20)
+                let step = if self.num_samples > 20 { 10 } else { 1 };
+                for i in (0..self.num_samples).step_by(step) {
+                    let t = i as f32 / max_frame;
+                    let x = rect.min.x + t * rect.width();
+                    let color = if i == self.current_frame {
+                        egui::Color32::from_rgb(100, 200, 100)  // Current frame - green
+                    } else {
+                        egui::Color32::from_rgb(100, 100, 100)  // Other frames - gray
+                    };
+                    painter.line_segment(
+                        [egui::pos2(x, marker_y), egui::pos2(x, marker_y + 4.0)],
+                        egui::Stroke::new(1.0, color),
+                    );
+                }
+                
+                // Highlight current frame marker
+                let t = self.current_frame as f32 / max_frame;
+                let x = rect.min.x + t * rect.width();
+                painter.line_segment(
+                    [egui::pos2(x, marker_y), egui::pos2(x, marker_y + 6.0)],
+                    egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 180, 50)),
+                );
             }
         });
     }
@@ -999,6 +1056,7 @@ impl ViewerApp {
         if obj.name() == name {
             // Found the object - show its properties
             if let Some(mesh) = crate::geom::IPolyMesh::new(obj) {
+                ui.label("Type: PolyMesh");
                 ui.label(format!("Samples: {}", mesh.num_samples()));
                 if let Ok(sample) = mesh.get_sample(frame) {
                     ui.label(format!("Vertices: {}", sample.positions.len()));
@@ -1018,6 +1076,7 @@ impl ViewerApp {
                     }
                 }
             } else if let Some(xform) = crate::geom::IXform::new(obj) {
+                ui.label("Type: Xform");
                 ui.label(format!("Samples: {}", xform.num_samples()));
                 if let Ok(sample) = xform.get_sample(frame) {
                     let matrix = sample.matrix();
@@ -1028,15 +1087,50 @@ impl ViewerApp {
                         euler.0.to_degrees(), euler.1.to_degrees(), euler.2.to_degrees()));
                 }
             } else if let Some(cam) = crate::geom::ICamera::new(obj) {
+                ui.label("Type: Camera");
                 ui.label(format!("Samples: {}", cam.num_samples()));
                 if let Ok(sample) = cam.get_sample(frame) {
                     ui.label(format!("Focal: {:.1}mm", sample.focal_length));
                     ui.label(format!("Aperture: {:.1}mm", sample.horizontal_aperture));
                 }
+            } else if let Some(subd) = crate::geom::ISubD::new(obj) {
+                ui.label(format!("Type: SubD"));
+                ui.label(format!("Samples: {}", subd.num_samples()));
+                if let Ok(sample) = subd.get_sample(frame) {
+                    ui.label(format!("Vertices: {}", sample.positions.len()));
+                    ui.label(format!("Faces: {}", sample.face_counts.len()));
+                }
             } else if let Some(curves) = crate::geom::ICurves::new(obj) {
+                ui.label(format!("Type: Curves"));
                 ui.label(format!("Samples: {}", curves.num_samples()));
+                if let Ok(sample) = curves.get_sample(frame) {
+                    ui.label(format!("Points: {}", sample.positions.len()));
+                    ui.label(format!("Curves: {}", sample.num_curves()));
+                }
             } else if let Some(points) = crate::geom::IPoints::new(obj) {
+                ui.label(format!("Type: Points"));
                 ui.label(format!("Samples: {}", points.num_samples()));
+                if let Ok(sample) = points.get_sample(frame) {
+                    ui.label(format!("Point count: {}", sample.positions.len()));
+                    if sample.has_widths() {
+                        ui.label("Has widths: Yes");
+                    }
+                    if sample.has_velocities() {
+                        ui.label("Has velocities: Yes");
+                    }
+                }
+            } else if let Some(light) = crate::geom::ILight::new(obj) {
+                ui.label(format!("Type: Light"));
+                ui.label(format!("Samples: {}", light.num_samples()));
+            } else if let Some(mat) = crate::material::IMaterial::new(obj) {
+                ui.label(format!("Type: Material"));
+                let targets = mat.target_names();
+                ui.label(format!("Targets: {}", targets.join(", ")));
+                if mat.has_inheritance() {
+                    if let Some(parent) = mat.inherits_path() {
+                        ui.label(format!("Inherits: {}", parent));
+                    }
+                }
             }
             return true;
         }
@@ -1195,14 +1289,18 @@ impl ViewerApp {
         let bounds = mesh_converter::compute_scene_bounds(&scene.meshes, &scene.points);
         self.scene_bounds = if bounds.is_valid() { Some(bounds) } else { None };
         
-        // Update scene cameras (only on first frame or when cameras change)
-        if !scene.cameras.is_empty() && self.scene_cameras.is_empty() {
+        // Update scene cameras (always update for animation support)
+        if !scene.cameras.is_empty() {
             self.scene_cameras = scene.cameras;
         }
 
         // Update scene lights
         if !scene.lights.is_empty() && self.scene_lights.is_empty() {
             self.scene_lights = scene.lights;
+            // Apply scene lights if setting enabled
+            if self.settings.use_scene_lights {
+                renderer.set_scene_lights(&self.scene_lights);
+            }
         }
 
         // Collect paths using references (use path for uniqueness, not name)
@@ -1230,9 +1328,18 @@ impl ViewerApp {
                     }
                 }
             } else {
-                // Use material base_color if available, otherwise default gray
+                // Build material from mesh properties
                 let base_color = mesh.base_color.unwrap_or(Vec3::new(0.7, 0.7, 0.75));
-                let material = StandardSurfaceParams::plastic(base_color, 0.4);
+                let roughness = mesh.roughness.unwrap_or(0.4);
+                let metallic = mesh.metallic.unwrap_or(0.0);
+                
+                let mut material = if metallic > 0.5 {
+                    StandardSurfaceParams::metal(base_color, roughness)
+                } else {
+                    StandardSurfaceParams::plastic(base_color, roughness)
+                };
+                material.set_metalness(metallic);
+                
                 renderer.add_mesh(
                     mesh.path,  // Use path for unique key
                     &mesh.vertices,
@@ -1267,6 +1374,7 @@ impl ViewerApp {
             renderer.add_points(
                 pts.path,  // Use path for unique key
                 &pts.positions,
+                &pts.widths,
                 pts.transform,
                 &points_material,
             );

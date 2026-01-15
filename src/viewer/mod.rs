@@ -56,7 +56,13 @@ pub fn run(initial_file: Option<PathBuf>) -> Result<()> {
                     };
                     wgpu::DeviceDescriptor {
                         label: Some("alembic-viewer device"),
-                        required_features: wgpu::Features::POLYGON_MODE_LINE,
+                        required_features: wgpu::Features::POLYGON_MODE_LINE
+                            | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                            | wgpu::Features::FLOAT32_FILTERABLE
+                            | wgpu::Features::DEPTH32FLOAT_STENCIL8
+                            | wgpu::Features::TEXTURE_COMPRESSION_BC
+                            | wgpu::Features::PUSH_CONSTANTS
+                            | wgpu::Features::MULTI_DRAW_INDIRECT,
                         required_limits: wgpu::Limits {
                             max_texture_dimension_2d: 8192,
                             max_bind_groups: 8,

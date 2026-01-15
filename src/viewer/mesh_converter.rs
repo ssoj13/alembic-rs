@@ -35,15 +35,30 @@ impl Bounds {
     }
     
     pub fn center(&self) -> Vec3 {
-        (self.min + self.max) * 0.5
+        if self.is_valid() {
+            (self.min + self.max) * 0.5
+        } else {
+            Vec3::ZERO
+        }
     }
     
     pub fn radius(&self) -> f32 {
-        (self.max - self.min).length() * 0.5
+        if self.is_valid() {
+            (self.max - self.min).length() * 0.5
+        } else {
+            0.0
+        }
     }
     
+    /// Check if bounds are valid (not empty, no NaN/Inf)
     pub fn is_valid(&self) -> bool {
-        self.min.x <= self.max.x && self.min.y <= self.max.y && self.min.z <= self.max.z
+        // Check min <= max for all axes
+        let ordered = self.min.x <= self.max.x && self.min.y <= self.max.y && self.min.z <= self.max.z;
+        // Check no NaN or Inf values
+        let finite = self.min.is_finite() && self.max.is_finite();
+        // Check not empty (initialized from empty())
+        let not_empty = self.min.x < f32::MAX && self.max.x > f32::MIN;
+        ordered && finite && not_empty
     }
 }
 
@@ -54,7 +69,10 @@ pub struct ConvertedMesh {
     pub indices: Arc<Vec<u32>>,
     pub transform: Mat4,
     pub bounds: Bounds,
-    pub base_color: Option<Vec3>,  // from material if assigned
+    // Material properties (from assigned material if any)
+    pub base_color: Option<Vec3>,
+    pub metallic: Option<f32>,
+    pub roughness: Option<f32>,
 }
 
 /// Converted curves data ready for GPU (as line strips)
@@ -149,6 +167,12 @@ pub struct SceneMaterial {
     pub path: String,
     /// Base color (extracted from shader params if available)
     pub base_color: Option<Vec3>,
+    /// Metallic (0.0 = dielectric, 1.0 = metal)
+    pub metallic: Option<f32>,
+    /// Roughness (0.0 = mirror, 1.0 = diffuse)
+    pub roughness: Option<f32>,
+    /// Path to parent material (for inheritance)
+    pub inherits_path: Option<String>,
     /// Targets (e.g., "arnold", "renderman")
     #[allow(dead_code)]
     pub targets: Vec<String>,
@@ -363,7 +387,9 @@ pub fn convert_polymesh(sample: &PolyMeshSample, transform: Mat4) -> Option<Conv
         indices: Arc::new(indices),
         transform,
         bounds,
-        base_color: None,  // set by caller
+        base_color: None,  // set by apply_materials
+        metallic: None,
+        roughness: None,
     })
 }
 
@@ -515,16 +541,17 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
             indices: cached.indices,
             transform: cached.transform,
             bounds,
-            base_color: None,  // will be resolved in apply_scene
+            base_color: None,  // set by apply_materials
+            metallic: None,
+            roughness: None,
         });
     }
     
     meshes.extend(converted);
     
-    // Resolve base_color from material assignments
-    // Build lookup: material_path -> base_color
-    let mat_colors: std::collections::HashMap<&str, Vec3> = materials.iter()
-        .filter_map(|m| m.base_color.map(|c| (m.path.as_str(), c)))
+    // Build lookup: material_path -> material properties
+    let mat_props: std::collections::HashMap<&str, &SceneMaterial> = materials.iter()
+        .map(|m| (m.path.as_str(), m))
         .collect();
     
     // Build lookup: object_path -> material_path
@@ -532,15 +559,20 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
         .map(|a| (a.object_path.as_str(), a.material_path.as_str()))
         .collect();
     
-    // Apply base_color to meshes
+    // Apply material properties to meshes
     for mesh in &mut meshes {
         if let Some(&mat_path) = obj_to_mat.get(mesh.path.as_str()) {
-            if let Some(&color) = mat_colors.get(mat_path) {
-                mesh.base_color = Some(color);
+            if let Some(&mat) = mat_props.get(mat_path) {
+                mesh.base_color = mat.base_color;
+                mesh.metallic = mat.metallic;
+                mesh.roughness = mat.roughness;
             }
         }
     }
 
+    // Resolve material inheritance (copy values from parent materials)
+    resolve_material_inheritance(&mut materials);
+    
     CollectedScene { meshes, curves, points, cameras, lights, materials, material_assignments }
 }
 
@@ -714,20 +746,35 @@ fn collect_samples_recursive(
     if let Some(imat) = IMaterial::new(obj) {
         let targets = imat.target_names();
         let flattened = imat.flatten();
-        // Try to extract base color from surface shader
-        let base_color = targets.iter().find_map(|target| {
-            let network = flattened.networks.get(target)?;
-            let surface = network.surface_shader()?;
-            // Look for base_color or diffuse_color parameter
-            surface.param("base_color")
-                .or_else(|| surface.param("diffuse_color"))
-                .or_else(|| surface.param("color"))
-                .and_then(|p| p.as_vec3())
-        });
+        
+        // Helper to extract param value from any target's surface shader
+        let find_float = |names: &[&str]| -> Option<f32> {
+            targets.iter().find_map(|target| {
+                let network = flattened.networks.get(target)?;
+                let surface = network.surface_shader()?;
+                names.iter().find_map(|name| surface.param(name).and_then(|p| p.as_float()))
+            })
+        };
+        let find_vec3 = |names: &[&str]| -> Option<Vec3> {
+            targets.iter().find_map(|target| {
+                let network = flattened.networks.get(target)?;
+                let surface = network.surface_shader()?;
+                names.iter().find_map(|name| surface.param(name).and_then(|p| p.as_vec3()))
+            })
+        };
+        
+        // Extract material params
+        let base_color = find_vec3(&["base_color", "diffuse_color", "color"]);
+        let metallic = find_float(&["metallic", "metalness", "metal"]);
+        let roughness = find_float(&["roughness", "specular_roughness", "diffuse_roughness"]);
+        
         materials.push(SceneMaterial {
             name: imat.name().to_string(),
             path: imat.full_name().to_string(),
             base_color,
+            metallic,
+            roughness,
+            inherits_path: imat.inherits_path(),
             targets,
         });
     }
@@ -751,6 +798,43 @@ pub struct MeshStats {
     pub mesh_count: usize,
     pub vertex_count: usize,
     pub triangle_count: usize,
+}
+
+/// Resolve material inheritance - fill in missing values from parent materials
+pub fn resolve_material_inheritance(materials: &mut [SceneMaterial]) {
+    // Resolve in multiple passes (for chains)
+    for _ in 0..10 {  // Max 10 levels of inheritance
+        // Build lookup each pass (properties may have changed)
+        let parent_data: HashMap<String, (Option<Vec3>, Option<f32>, Option<f32>)> = materials.iter()
+            .map(|m| (m.path.clone(), (m.base_color, m.metallic, m.roughness)))
+            .collect();
+        
+        let mut changes = false;
+        
+        for mat in materials.iter_mut() {
+            if let Some(parent_path) = &mat.inherits_path {
+                if let Some(&(parent_color, parent_metallic, parent_roughness)) = parent_data.get(parent_path) {
+                    // Copy missing values from parent
+                    if mat.base_color.is_none() && parent_color.is_some() {
+                        mat.base_color = parent_color;
+                        changes = true;
+                    }
+                    if mat.metallic.is_none() && parent_metallic.is_some() {
+                        mat.metallic = parent_metallic;
+                        changes = true;
+                    }
+                    if mat.roughness.is_none() && parent_roughness.is_some() {
+                        mat.roughness = parent_roughness;
+                        changes = true;
+                    }
+                }
+            }
+        }
+        
+        if !changes {
+            break;
+        }
+    }
 }
 
 pub fn compute_stats(meshes: &[ConvertedMesh]) -> MeshStats {

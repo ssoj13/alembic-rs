@@ -47,6 +47,9 @@ pub struct Settings {
     
     // Playback
     pub playback_fps: f32,
+    
+    // Lighting
+    pub use_scene_lights: bool,
 }
 
 impl Default for Settings {
@@ -75,6 +78,7 @@ impl Default for Settings {
             hierarchy_panel_width: 200.0,
             side_panel_width: 200.0,
             playback_fps: 24.0,
+            use_scene_lights: false,
         }
     }
 }
@@ -94,10 +98,17 @@ impl Settings {
 
     /// Load settings from file
     pub fn load() -> Self {
-        Self::path()
+        let mut settings: Self = Self::path()
             .and_then(|p| std::fs::read_to_string(&p).ok())
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        
+        // Validate antialiasing - with TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES we support 1,2,4,8
+        if !matches!(settings.antialiasing, 1 | 2 | 4 | 8) {
+            settings.antialiasing = 4;
+        }
+        
+        settings
     }
 
     /// Save settings to file
