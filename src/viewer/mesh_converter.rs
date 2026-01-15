@@ -598,7 +598,6 @@ fn collect_samples_recursive(
     
     // Check if this object is a PolyMesh
     if let Some(polymesh) = IPolyMesh::new(obj) {
-        let mesh_name = polymesh.name().to_string();
         let mesh_path = polymesh.full_name().to_string();
         let is_constant = polymesh.is_constant();
         
@@ -631,7 +630,6 @@ fn collect_samples_recursive(
     
     // Check if this object is a SubD (treat as polymesh)
     if let Some(subd) = ISubD::new(obj) {
-        let mesh_name = subd.name().to_string();
         let mesh_path = subd.full_name().to_string();
         let is_constant = subd.is_constant();
         

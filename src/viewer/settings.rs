@@ -40,6 +40,13 @@ pub struct Settings {
     
     // Anti-aliasing (requires restart)
     pub antialiasing: u8,
+    
+    // UI layout
+    pub hierarchy_panel_width: f32,
+    pub side_panel_width: f32,
+    
+    // Playback
+    pub playback_fps: f32,
 }
 
 impl Default for Settings {
@@ -65,6 +72,9 @@ impl Default for Settings {
             hdr_exposure: 1.0,
             last_hdr_file: None,
             antialiasing: 4,
+            hierarchy_panel_width: 200.0,
+            side_panel_width: 200.0,
+            playback_fps: 24.0,
         }
     }
 }

@@ -1,5 +1,6 @@
 //! Main application state and UI
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -56,7 +57,6 @@ pub struct ViewerApp {
     num_samples: usize,
     current_frame: usize,
     playing: bool,
-    playback_fps: f32,
     playback_dir: i32, // 1 = forward, -1 = backward
     last_frame_time: Instant,
     
@@ -71,7 +71,8 @@ pub struct ViewerApp {
     scene_tree: Vec<SceneNode>,
     selected_object: Option<String>,
     object_filter: String,  // Wildcard filter for hierarchy (e.g., "wheel*")
-    
+    expanded_nodes: HashSet<String>,  // Track expanded tree nodes (Shift+click = recursive)
+
     // Scene cameras
     scene_cameras: Vec<mesh_converter::SceneCamera>,
     active_camera: Option<usize>,  // None = orbit camera, Some(i) = scene camera index
@@ -103,7 +104,6 @@ impl ViewerApp {
             num_samples: 0,
             current_frame: 0,
             playing: false,
-            playback_fps: 24.0,
             playback_dir: 1,
             last_frame_time: Instant::now(),
             status_message: "Ready".into(),
@@ -114,6 +114,7 @@ impl ViewerApp {
             scene_tree: Vec::new(),
             selected_object: None,
             object_filter: String::new(),
+            expanded_nodes: HashSet::new(),
             scene_cameras: Vec::new(),
             active_camera: None,
             scene_lights: Vec::new(),
@@ -128,14 +129,23 @@ impl ViewerApp {
             return;
         }
 
-        // Get wgpu render state from egui
-        let _render_state = ctx.input(|i| {
-            i.viewport()
-                .clone()
-        });
+        // Load custom font with good Unicode support
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "noto_sans".to_owned(),
+            egui::FontData::from_static(include_bytes!("../../assets/NotoSans-Regular.ttf")).into(),
+        );
+        // Use Noto Sans as primary font
+        fonts.families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, "noto_sans".to_owned());
+        fonts.families
+            .entry(egui::FontFamily::Monospace)
+            .or_default()
+            .push("noto_sans".to_owned());  // fallback for monospace
+        ctx.set_fonts(fonts);
 
-        // We need to get the render state differently
-        // For now, mark as initialized and we'll init the renderer later
         self.initialized = true;
         self.status_message = "Viewport ready".into();
     }
@@ -180,12 +190,12 @@ impl ViewerApp {
 
             ui.menu_button("View", |ui| {
                 if let Some(renderer) = &mut self.viewport.renderer {
-                    if ui.checkbox(&mut renderer.show_grid, "Show Grid").changed() {
-                        self.settings.show_grid = renderer.show_grid;
+                    if ui.checkbox(&mut self.settings.show_grid, "Show Grid").changed() {
+                        renderer.show_grid = self.settings.show_grid;
                         self.settings.save();
                     }
-                    if ui.checkbox(&mut renderer.show_wireframe, "Wireframe").changed() {
-                        self.settings.show_wireframe = renderer.show_wireframe;
+                    if ui.checkbox(&mut self.settings.show_wireframe, "Wireframe").changed() {
+                        renderer.show_wireframe = self.settings.show_wireframe;
                         self.settings.save();
                     }
                 }
@@ -232,7 +242,7 @@ impl ViewerApp {
     fn hierarchy_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Hierarchy");
         ui.separator();
-        
+
         // Filter input
         ui.horizontal(|ui| {
             ui.label("Filter:");
@@ -246,16 +256,18 @@ impl ViewerApp {
             }
         }
         ui.separator();
-        
+
         let filter = self.object_filter.to_lowercase();
-        
+
         egui::ScrollArea::vertical().show(ui, |ui| {
             let tree = std::mem::take(&mut self.scene_tree);
             let mut selected = self.selected_object.clone();
+            let mut expanded = std::mem::take(&mut self.expanded_nodes);
             for node in &tree {
-                Self::show_tree_node_filtered(ui, node, &mut selected, &filter);
+                Self::show_tree_node(ui, node, &mut selected, &filter, &mut expanded, 0);
             }
             self.selected_object = selected;
+            self.expanded_nodes = expanded;
             self.scene_tree = tree;
         });
     }
@@ -310,7 +322,102 @@ impl ViewerApp {
         false
     }
     
-    /// Render tree node with filtering
+    /// Render tree node with custom expand state (supports Shift+click for recursive toggle)
+    fn show_tree_node(
+        ui: &mut egui::Ui,
+        node: &SceneNode,
+        selected: &mut Option<String>,
+        filter: &str,
+        expanded: &mut HashSet<String>,
+        depth: usize,
+    ) {
+        // Skip nodes that don't match filter
+        if !filter.is_empty() && !Self::node_matches_filter(node, filter) {
+            return;
+        }
+        
+        let is_selected = selected.as_ref() == Some(&node.name);
+        let matches_directly = Self::matches_filter(&node.name, filter);
+        let has_children = !node.children.is_empty();
+        let is_expanded = expanded.contains(&node.name);
+        
+        // Icon based on type
+        let icon = match node.node_type.as_str() {
+            "PolyMesh" => "▲",  // triangle
+            "SubD" => "■",      // square
+            "Xform" => "↺",     // rotation
+            "Camera" => "◎",    // target
+            "Light" => "☀",     // sun
+            "Curves" => "∿",    // wave
+            "Points" => "•",    // bullet
+            _ => "○",           // circle
+        };
+        
+        // Arrow for expandable nodes
+        let arrow = if has_children {
+            if is_expanded { "▼" } else { "▶" }
+        } else {
+            "  " // spacing for leaf nodes
+        };
+        
+        let label_text = format!("{} {} {}", arrow, icon, node.name);
+        let label = if !filter.is_empty() && matches_directly {
+            RichText::new(label_text).color(Color32::YELLOW)
+        } else if is_selected {
+            RichText::new(label_text).color(Color32::LIGHT_BLUE)
+        } else {
+            RichText::new(label_text)
+        };
+        
+        // Indent based on depth
+        ui.horizontal(|ui| {
+            ui.add_space(depth as f32 * 16.0);
+            let response = ui.selectable_label(is_selected, label);
+            
+            if response.clicked() {
+                // Select the node
+                *selected = Some(node.name.clone());
+                
+                // Toggle expand state for nodes with children
+                if has_children {
+                    let shift = ui.input(|i| i.modifiers.shift);
+                    if shift {
+                        // Recursive toggle
+                        Self::toggle_recursive(node, expanded, !is_expanded);
+                    } else {
+                        // Single toggle
+                        if is_expanded {
+                            expanded.remove(&node.name);
+                        } else {
+                            expanded.insert(node.name.clone());
+                        }
+                    }
+                }
+            }
+        });
+        
+        // Show children if expanded
+        if has_children && is_expanded {
+            for child in &node.children {
+                Self::show_tree_node(ui, child, selected, filter, expanded, depth + 1);
+            }
+        }
+    }
+    
+    /// Recursively set expand state for node and all descendants
+    fn toggle_recursive(node: &SceneNode, expanded: &mut HashSet<String>, expand: bool) {
+        if expand {
+            expanded.insert(node.name.clone());
+        } else {
+            expanded.remove(&node.name);
+        }
+        for child in &node.children {
+            Self::toggle_recursive(child, expanded, expand);
+        }
+    }
+    
+    /// Render tree node with filtering (old version, kept for reference)
+    #[allow(dead_code)]
     fn show_tree_node_filtered(ui: &mut egui::Ui, node: &SceneNode, selected: &mut Option<String>, filter: &str) {
         // Skip nodes that don't match filter (and have no matching descendants)
         if !filter.is_empty() && !Self::node_matches_filter(node, filter) {
@@ -601,29 +708,33 @@ impl ViewerApp {
             if has_animation {
                 ui.separator();
                 ui.label("FPS:");
+                let prev_fps = self.settings.playback_fps;
                 egui::ComboBox::from_id_salt("fps_select")
-                    .selected_text(format_fps(self.playback_fps))
+                    .selected_text(format_fps(self.settings.playback_fps))
                     .width(70.0)
                     .show_ui(ui, |ui| {
                         // Film/Cinema
-                        ui.selectable_value(&mut self.playback_fps, 23.976, "23.976 (Film)");
-                        ui.selectable_value(&mut self.playback_fps, 24.0, "24 (Cinema)");
-                        ui.selectable_value(&mut self.playback_fps, 48.0, "48 (HFR)");
+                        ui.selectable_value(&mut self.settings.playback_fps, 23.976, "23.976 (Film)");
+                        ui.selectable_value(&mut self.settings.playback_fps, 24.0, "24 (Cinema)");
+                        ui.selectable_value(&mut self.settings.playback_fps, 48.0, "48 (HFR)");
                         ui.separator();
                         // TV PAL (Europe)
-                        ui.selectable_value(&mut self.playback_fps, 25.0, "25 (PAL)");
-                        ui.selectable_value(&mut self.playback_fps, 50.0, "50 (PAL HD)");
+                        ui.selectable_value(&mut self.settings.playback_fps, 25.0, "25 (PAL)");
+                        ui.selectable_value(&mut self.settings.playback_fps, 50.0, "50 (PAL HD)");
                         ui.separator();
                         // TV NTSC (US/Japan)
-                        ui.selectable_value(&mut self.playback_fps, 29.97, "29.97 (NTSC)");
-                        ui.selectable_value(&mut self.playback_fps, 30.0, "30");
-                        ui.selectable_value(&mut self.playback_fps, 59.94, "59.94 (NTSC HD)");
-                        ui.selectable_value(&mut self.playback_fps, 60.0, "60");
+                        ui.selectable_value(&mut self.settings.playback_fps, 29.97, "29.97 (NTSC)");
+                        ui.selectable_value(&mut self.settings.playback_fps, 30.0, "30");
+                        ui.selectable_value(&mut self.settings.playback_fps, 59.94, "59.94 (NTSC HD)");
+                        ui.selectable_value(&mut self.settings.playback_fps, 60.0, "60");
                         ui.separator();
                         // Animation
-                        ui.selectable_value(&mut self.playback_fps, 12.0, "12 (Animation)");
-                        ui.selectable_value(&mut self.playback_fps, 15.0, "15");
+                        ui.selectable_value(&mut self.settings.playback_fps, 12.0, "12 (Animation)");
+                        ui.selectable_value(&mut self.settings.playback_fps, 15.0, "15");
                     });
+                if self.settings.playback_fps != prev_fps {
+                    self.settings.save();
+                }
             }
             
             ui.separator();
@@ -664,7 +775,7 @@ impl ViewerApp {
 
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_frame_time).as_secs_f32();
-        let frame_duration = 1.0 / self.playback_fps;
+        let frame_duration = 1.0 / self.settings.playback_fps;
 
         if elapsed >= frame_duration {
             self.last_frame_time = now;
@@ -1379,19 +1490,35 @@ impl eframe::App for ViewerApp {
 
         // Left panel - object hierarchy
         if !self.scene_tree.is_empty() {
-            SidePanel::left("hierarchy_panel")
-                .default_width(200.0)
+            let response = SidePanel::left("hierarchy_panel")
+                .default_width(self.settings.hierarchy_panel_width)
+                .min_width(100.0)
+                .max_width(500.0)
+                .resizable(true)
                 .show(ctx, |ui| {
                     self.hierarchy_panel(ui);
                 });
+            // Save panel width on resize
+            if response.response.rect.width() != self.settings.hierarchy_panel_width {
+                self.settings.hierarchy_panel_width = response.response.rect.width();
+                self.settings.save();
+            }
         }
 
         // Right side panel
-        SidePanel::right("side_panel")
-            .default_width(200.0)
+        let response = SidePanel::right("side_panel")
+            .default_width(self.settings.side_panel_width)
+            .min_width(150.0)
+            .max_width(400.0)
+            .resizable(true)
             .show(ctx, |ui| {
                 self.side_panel(ui);
             });
+        // Save panel width on resize
+        if response.response.rect.width() != self.settings.side_panel_width {
+            self.settings.side_panel_width = response.response.rect.width();
+            self.settings.save();
+        }
 
         // Central viewport
         CentralPanel::default().show(ctx, |ui| {
