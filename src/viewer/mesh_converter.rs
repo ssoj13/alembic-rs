@@ -506,7 +506,7 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
     let mut lights = Vec::new();
     let mut materials = Vec::new();
     let mut material_assignments = Vec::new();
-    let root = archive.root();
+    let root = archive.getTop();
 
     // Phase 1: Collect all mesh samples, curves, points, cameras, lights, materials (sequential file reads)
     collect_samples_recursive(
@@ -654,7 +654,7 @@ fn collect_samples_recursive(
     
     // Check if this object is a PolyMesh
     if let Some(polymesh) = IPolyMesh::new(obj) {
-        let mesh_path = polymesh.full_name().to_string();
+        let mesh_path = polymesh.getFullName().to_string();
         let is_constant = polymesh.is_constant();
         
         // Try cache first for constant meshes
@@ -686,7 +686,7 @@ fn collect_samples_recursive(
     
     // Check if this object is a SubD (treat as polymesh)
     if let Some(subd) = ISubD::new(obj) {
-        let mesh_path = subd.full_name().to_string();
+        let mesh_path = subd.getFullName().to_string();
         let is_constant = subd.is_constant();
         
         // Use mesh_path as key for SubD too
@@ -727,7 +727,7 @@ fn collect_samples_recursive(
     // Check if this object is Curves
     if let Some(icurves) = ICurves::new(obj) {
         if let Ok(sample) = icurves.get_sample(sample_index) {
-            if let Some(converted) = convert_curves(&sample, icurves.full_name(), world_transform) {
+            if let Some(converted) = convert_curves(&sample, icurves.getFullName(), world_transform) {
                 curves.push(converted);
             }
         }
@@ -736,7 +736,7 @@ fn collect_samples_recursive(
     // Check if this object is Points
     if let Some(ipoints) = IPoints::new(obj) {
         if let Ok(sample) = ipoints.get_sample(sample_index) {
-            if let Some(converted) = convert_points(&sample, ipoints.full_name(), world_transform) {
+            if let Some(converted) = convert_points(&sample, ipoints.getFullName(), world_transform) {
                 points.push(converted);
             }
         }
@@ -746,7 +746,7 @@ fn collect_samples_recursive(
     if let Some(icamera) = ICamera::new(obj) {
         if let Ok(sample) = icamera.get_sample(sample_index) {
             cameras.push(SceneCamera {
-                name: icamera.name().to_string(),
+                name: icamera.getName().to_string(),
                 transform: world_transform,
                 focal_length: sample.focal_length as f32,
                 h_aperture: sample.horizontal_aperture as f32,
@@ -761,7 +761,7 @@ fn collect_samples_recursive(
     if let Some(ilight) = ILight::new(obj) {
         // Lights use transform for position/direction
         lights.push(SceneLight::from_transform(
-            ilight.name().to_string(),
+            ilight.getName().to_string(),
             world_transform,
         ));
     }
@@ -793,8 +793,8 @@ fn collect_samples_recursive(
         let roughness = find_float(&["roughness", "specular_roughness", "diffuse_roughness"]);
         
         materials.push(SceneMaterial {
-            name: imat.name().to_string(),
-            path: imat.full_name().to_string(),
+            name: imat.getName().to_string(),
+            path: imat.getFullName().to_string(),
             base_color,
             metallic,
             roughness,
@@ -806,13 +806,13 @@ fn collect_samples_recursive(
     // Check for material assignment on this object
     if let Some(mat_path) = get_material_assignment(obj) {
         material_assignments.push(MaterialAssignment {
-            object_path: obj.full_name().to_string(),
+            object_path: obj.getFullName().to_string(),
             material_path: mat_path,
         });
     }
 
     // Recurse into children
-    for child in obj.children() {
+    for child in obj.getChildren() {
         collect_samples_recursive(&child, world_transform, sample_index, mesh_tasks, cached_results, curves, points, cameras, lights, materials, material_assignments, cache);
     }
 }

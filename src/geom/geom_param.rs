@@ -153,7 +153,7 @@ impl<'a> IGeomParam<'a> {
     /// Returns None if the parameter doesn't exist.
     pub fn new(parent: &'a ICompoundProperty<'a>, name: &str) -> Option<Self> {
         let prop = parent.property_by_name(name)?;
-        let header = prop.header();
+        let header = prop.getHeader();
         
         // Check if indexed (compound) or non-indexed (array)
         let is_indexed = prop.is_compound();
@@ -166,7 +166,7 @@ impl<'a> IGeomParam<'a> {
             // For indexed, we need to look at .vals
             if let Some(compound) = prop.as_compound() {
                 if let Some(vals_prop) = compound.property_by_name(VALS_PROPERTY_NAME) {
-                    vals_prop.header().data_type
+                    vals_prop.getHeader().data_type
                 } else {
                     DataType::UNKNOWN
                 }
@@ -196,7 +196,7 @@ impl<'a> IGeomParam<'a> {
     }
     
     /// Get the parameter name.
-    pub fn name(&self) -> &str {
+    pub fn getName(&self) -> &str {
         &self.name
     }
     
@@ -216,7 +216,7 @@ impl<'a> IGeomParam<'a> {
     }
     
     /// Get number of samples.
-    pub fn num_samples(&self) -> usize {
+    pub fn getNumSamples(&self) -> usize {
         let Some(prop) = self.parent.property_by_name(&self.name) else {
             return 0;
         };
@@ -250,7 +250,7 @@ impl<'a> IGeomParam<'a> {
     
     /// Check if this parameter is constant (single sample).
     pub fn is_constant(&self) -> bool {
-        self.num_samples() <= 1
+        self.getNumSamples() <= 1
     }
     
     /// Read a sample at the given index.
@@ -343,7 +343,7 @@ impl<'a> IGeomParam<'a> {
             return 1;
         };
         
-        if let Some(ext_str) = prop.header().meta_data.get(ARRAY_EXTENT_KEY) {
+        if let Some(ext_str) = prop.getHeader().meta_data.get(ARRAY_EXTENT_KEY) {
             ext_str.parse().unwrap_or(1)
         } else {
             1
@@ -381,11 +381,11 @@ impl<'a> IGeomParam<'a> {
             if let Some(compound) = prop.as_compound() {
                 // Get from .vals property
                 if let Some(vals_prop) = compound.property_by_name(VALS_PROPERTY_NAME) {
-                    return vals_prop.header().time_sampling_index;
+                    return vals_prop.getHeader().time_sampling_index;
                 }
             }
         }
-        prop.header().time_sampling_index
+        prop.getHeader().time_sampling_index
     }
     
     /// Read UVs directly as Vec2 array (convenience for UV params).
@@ -573,7 +573,7 @@ impl OGeomParam {
     }
     
     /// Get property name.
-    pub fn name(&self) -> &str {
+    pub fn getName(&self) -> &str {
         &self.name
     }
     
@@ -583,7 +583,7 @@ impl OGeomParam {
     }
     
     /// Get number of samples.
-    pub fn num_samples(&self) -> usize {
+    pub fn getNumSamples(&self) -> usize {
         self.values_samples.len()
     }
     

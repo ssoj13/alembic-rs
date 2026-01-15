@@ -13,7 +13,7 @@
 //! use alembic::abc::IArchive;
 //!
 //! let archive = IArchive::open("animation.abc")?;
-//! println!("Root has {} children", archive.root().num_children());
+//! println!("Root has {} children", archive.getTop().getNumChildren());
 //! ```
 
 use std::path::Path;
@@ -50,22 +50,22 @@ impl IArchive {
     }
 
     /// Get the file name/path.
-    pub fn name(&self) -> &str {
+    pub fn getName(&self) -> &str {
         self.reader.name()
     }
 
     /// Get the number of time samplings in the archive.
-    pub fn num_time_samplings(&self) -> usize {
+    pub fn getNumTimeSamplings(&self) -> usize {
         self.reader.num_time_samplings()
     }
 
     /// Get a time sampling by index.
-    pub fn time_sampling(&self, index: usize) -> Option<&TimeSampling> {
+    pub fn getTimeSampling(&self, index: usize) -> Option<&TimeSampling> {
         self.reader.time_sampling(index)
     }
 
     /// Get the root object of the archive.
-    pub fn root(&self) -> IObject<'_> {
+    pub fn getTop(&self) -> IObject<'_> {
         IObject::new(self.reader.root())
     }
     
@@ -83,7 +83,7 @@ impl IArchive {
     /// 
     /// Returns the Alembic library version this archive was written with.
     /// Format: AABBCC where AA=major, BB=minor, CC=patch (e.g., 10703 = 1.7.3)
-    pub fn archive_version(&self) -> i32 {
+    pub fn getArchiveVersion(&self) -> i32 {
         self.reader.archive_version()
     }
     
@@ -118,7 +118,7 @@ impl IArchive {
             if parts.is_empty() {
                 return true;
             }
-            if let Some(child) = obj.child_by_name(parts[0]) {
+            if let Some(child) = obj.getChildByName(parts[0]) {
                 check_path(child, &parts[1..])
             } else {
                 false
@@ -126,7 +126,7 @@ impl IArchive {
         }
         
         let parts: Vec<&str> = path.split('/').collect();
-        check_path(self.root(), &parts)
+        check_path(self.getTop(), &parts)
     }
     
     /// Get the application name that created this archive.
@@ -167,7 +167,7 @@ impl IArchive {
     /// # Arguments
     /// * `sample_index` - The sample index to query bounds at (0 for static)
     pub fn archive_bounds(&self, sample_index: usize) -> Option<crate::util::BBox3d> {
-        let root = self.root();
+        let root = self.getTop();
         let mut combined = None;
         collect_bounds_recursive(&root, BoundsSelector::Index(sample_index), &mut combined);
         combined
@@ -178,7 +178,7 @@ impl IArchive {
     /// Computes bounds using time-based sampling interpolation.
     pub fn archive_bounds_at_time(&self, time: f64) -> Option<crate::util::BBox3d> {
         // For now, find nearest sample index from default time sampling
-        let root = self.root();
+        let root = self.getTop();
         let mut combined = None;
         collect_bounds_recursive(&root, BoundsSelector::Time(time), &mut combined);
         combined
@@ -234,35 +234,35 @@ fn collect_bounds_recursive(obj: &IObject<'_>, sel: BoundsSelector, combined: &m
     
     // Check for geometry schemas and get their bounds
     if let Some(mesh) = IPolyMesh::new(obj) {
-        let idx = sel.resolve(mesh.num_samples());
+        let idx = sel.resolve(mesh.getNumSamples());
         if let Ok(sample) = mesh.get_sample(idx) {
             merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     } else if let Some(subd) = ISubD::new(obj) {
-        let idx = sel.resolve(subd.num_samples());
+        let idx = sel.resolve(subd.getNumSamples());
         if let Ok(sample) = subd.get_sample(idx) {
             merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     } else if let Some(points) = IPoints::new(obj) {
-        let idx = sel.resolve(points.num_samples());
+        let idx = sel.resolve(points.getNumSamples());
         if let Ok(sample) = points.get_sample(idx) {
             merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     } else if let Some(curves) = ICurves::new(obj) {
-        let idx = sel.resolve(curves.num_samples());
+        let idx = sel.resolve(curves.getNumSamples());
         if let Ok(sample) = curves.get_sample(idx) {
             merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     } else if let Some(nupatch) = INuPatch::new(obj) {
-        let idx = sel.resolve(nupatch.num_samples());
+        let idx = sel.resolve(nupatch.getNumSamples());
         if let Ok(sample) = nupatch.get_sample(idx) {
             merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     }
     
     // Recurse into children
-    for i in 0..obj.num_children() {
-        if let Some(child) = obj.child(i) {
+    for i in 0..obj.getNumChildren() {
+        if let Some(child) = obj.getChild(i) {
             collect_bounds_recursive(&child, sel, combined);
         }
     }
@@ -292,7 +292,7 @@ impl OArchive {
     }
     
     /// Get the archive name/path.
-    pub fn name(&self) -> &str {
+    pub fn getName(&self) -> &str {
         self.inner.name()
     }
     
@@ -305,7 +305,7 @@ impl OArchive {
     }
     
     /// Get the number of time samplings.
-    pub fn num_time_samplings(&self) -> usize {
+    pub fn getNumTimeSamplings(&self) -> usize {
         self.inner.num_time_samplings()
     }
     
@@ -380,25 +380,25 @@ impl<'a> IObject<'a> {
     }
 
     /// Get the object header.
-    pub fn header(&self) -> &ObjectHeader {
+    pub fn getHeader(&self) -> &ObjectHeader {
         self.reader.as_ref().header()
     }
 
     /// Get the name of this object.
-    pub fn name(&self) -> &str {
+    pub fn getName(&self) -> &str {
         self.reader.as_ref().name()
     }
 
     /// Get the full path from root.
-    pub fn full_name(&self) -> &str {
+    pub fn getFullName(&self) -> &str {
         self.reader.as_ref().full_name()
     }
     
     /// Check if this is the root object.
     /// 
     /// Root objects have an empty name and path "/".
-    pub fn is_root(&self) -> bool {
-        let name = self.name();
+    pub fn isRoot(&self) -> bool {
+        let name = self.getName();
         name.is_empty() || name == "ABC"
     }
     
@@ -410,11 +410,11 @@ impl<'a> IObject<'a> {
     /// Note: Due to Rust's ownership model, we cannot return a direct
     /// reference to the parent. Use `archive.root()` and navigate
     /// to the returned path to get the parent object.
-    pub fn parent_full_name(&self) -> Option<String> {
-        if self.is_root() {
+    pub fn getParentFullName(&self) -> Option<String> {
+        if self.isRoot() {
             return None;
         }
-        let full = self.full_name();
+        let full = self.getFullName();
         // Find last '/' and return everything before it
         if let Some(pos) = full.rfind('/') {
             if pos == 0 {
@@ -429,47 +429,47 @@ impl<'a> IObject<'a> {
     }
 
     /// Get the number of child objects.
-    pub fn num_children(&self) -> usize {
+    pub fn getNumChildren(&self) -> usize {
         self.reader.as_ref().num_children()
     }
     
     /// Get a child object by index.
-    pub fn child(&self, index: usize) -> Option<IObject<'_>> {
+    pub fn getChild(&self, index: usize) -> Option<IObject<'_>> {
         self.reader.as_ref().child(index).map(IObject::from_owned)
     }
     
     /// Get a child object by name.
-    pub fn child_by_name(&self, name: &str) -> Option<IObject<'_>> {
+    pub fn getChildByName(&self, name: &str) -> Option<IObject<'_>> {
         self.reader.as_ref().child_by_name(name).map(IObject::from_owned)
     }
     
     /// Iterate over all children.
-    pub fn children(&self) -> impl Iterator<Item = IObject<'_>> + '_ {
-        (0..self.num_children()).filter_map(|i| self.child(i))
+    pub fn getChildren(&self) -> impl Iterator<Item = IObject<'_>> + '_ {
+        (0..self.getNumChildren()).filter_map(|i| self.getChild(i))
     }
 
     /// Check if this object matches a schema.
-    pub fn matches_schema(&self, schema: &str) -> bool {
+    pub fn matchesSchema(&self, schema: &str) -> bool {
         self.reader.as_ref().matches_schema(schema)
     }
 
     /// Get the properties compound.
-    pub fn properties(&self) -> ICompoundProperty<'_> {
+    pub fn getProperties(&self) -> ICompoundProperty<'_> {
         ICompoundProperty::new(self.reader.as_ref().properties())
     }
     
     /// Get the metadata.
-    pub fn meta_data(&self) -> &MetaData {
+    pub fn getMetaData(&self) -> &MetaData {
         self.reader.as_ref().meta_data()
     }
     
     /// Get the header of a child object by index without creating a full object.
-    pub fn child_header(&self, index: usize) -> Option<&ObjectHeader> {
+    pub fn getChildHeader(&self, index: usize) -> Option<&ObjectHeader> {
         self.reader.as_ref().child_header(index)
     }
     
     /// Get the header of a child object by name without creating a full object.
-    pub fn child_header_by_name(&self, name: &str) -> Option<&ObjectHeader> {
+    pub fn getChildHeaderByName(&self, name: &str) -> Option<&ObjectHeader> {
         self.reader.as_ref().child_header_by_name(name)
     }
     
@@ -481,7 +481,7 @@ impl<'a> IObject<'a> {
     /// 
     /// An object can reference another object in the same archive and act as
     /// an instance. This method returns true if this object is such an instance.
-    pub fn is_instance_root(&self) -> bool {
+    pub fn isInstanceRoot(&self) -> bool {
         self.reader.as_ref().is_instance_root()
     }
     
@@ -489,7 +489,7 @@ impl<'a> IObject<'a> {
     /// 
     /// This returns true if this object is either an instance itself or
     /// any of its ancestors is an instance.
-    pub fn is_instance_descendant(&self) -> bool {
+    pub fn isInstanceDescendant(&self) -> bool {
         self.reader.as_ref().is_instance_descendant()
     }
     
@@ -498,17 +498,17 @@ impl<'a> IObject<'a> {
     /// If this object is an instance (is_instance_root() returns true),
     /// this returns the path to the source object that is being instanced.
     /// Otherwise returns an empty string.
-    pub fn instance_source_path(&self) -> &str {
+    pub fn getInstanceSourcePath(&self) -> &str {
         self.reader.as_ref().instance_source_path()
     }
     
     /// Check if the child at the given index is an instance.
-    pub fn is_child_instance(&self, index: usize) -> bool {
+    pub fn isChildInstance(&self, index: usize) -> bool {
         self.reader.as_ref().is_child_instance(index)
     }
     
     /// Check if the child with the given name is an instance.
-    pub fn is_child_instance_by_name(&self, name: &str) -> bool {
+    pub fn isChildInstanceByName(&self, name: &str) -> bool {
         self.reader.as_ref().is_child_instance_by_name(name)
     }
     
@@ -520,7 +520,7 @@ impl<'a> IObject<'a> {
     /// 
     /// This returns a 16-byte digest that can be used to quickly
     /// compare if the properties have changed between two objects.
-    pub fn properties_hash(&self) -> Option<[u8; 16]> {
+    pub fn getPropertiesHash(&self) -> Option<[u8; 16]> {
         self.reader.as_ref().properties_hash()
     }
     
@@ -528,7 +528,7 @@ impl<'a> IObject<'a> {
     /// 
     /// This returns a 16-byte digest that can be used to quickly
     /// compare if the child hierarchy has changed.
-    pub fn children_hash(&self) -> Option<[u8; 16]> {
+    pub fn getChildrenHash(&self) -> Option<[u8; 16]> {
         self.reader.as_ref().children_hash()
     }
     
@@ -549,7 +549,7 @@ pub struct OObject<'a> {
 
 impl OObject<'_> {
     /// Get the name of this object.
-    pub fn name(&self) -> &str {
+    pub fn getName(&self) -> &str {
         ""
     }
     
@@ -581,12 +581,12 @@ impl<'a> ICompoundProperty<'a> {
     }
 
     /// Get the property header.
-    pub fn header(&self) -> &PropertyHeader {
+    pub fn getHeader(&self) -> &PropertyHeader {
         self.reader.header()
     }
 
     /// Get the number of sub-properties.
-    pub fn num_properties(&self) -> usize {
+    pub fn getNumProperties(&self) -> usize {
         self.reader.num_properties()
     }
 
@@ -661,12 +661,12 @@ impl<'a> IProperty<'a> {
     }
     
     /// Get the property header.
-    pub fn header(&self) -> &PropertyHeader {
+    pub fn getHeader(&self) -> &PropertyHeader {
         self.reader.header()
     }
     
     /// Get the property name.
-    pub fn name(&self) -> &str {
+    pub fn getName(&self) -> &str {
         self.reader.name()
     }
     
@@ -720,12 +720,12 @@ pub struct IScalarProperty<'a> {
 
 impl<'a> IScalarProperty<'a> {
     /// Get the property header.
-    pub fn header(&self) -> &PropertyHeader {
+    pub fn getHeader(&self) -> &PropertyHeader {
         self.reader.header()
     }
 
     /// Get the number of samples.
-    pub fn num_samples(&self) -> usize {
+    pub fn getNumSamples(&self) -> usize {
         self.reader.num_samples()
     }
 
@@ -741,7 +741,7 @@ impl<'a> IScalarProperty<'a> {
     pub fn read_sample(&self, sel: impl Into<SampleSelector>, out: &mut [u8]) -> Result<()> {
         let sel = sel.into();
         let index = match sel {
-            SampleSelector::Index(i) => i.min(self.num_samples().saturating_sub(1)),
+            SampleSelector::Index(i) => i.min(self.getNumSamples().saturating_sub(1)),
             _ => 0, // Use read_sample_with_ts() for time-based selection
         };
         self.reader.read_sample(index, out)
@@ -751,7 +751,7 @@ impl<'a> IScalarProperty<'a> {
     /// 
     /// Pass the TimeSampling from `archive.time_sampling(prop.time_sampling_index())`.
     pub fn read_sample_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling, out: &mut [u8]) -> Result<()> {
-        let index = sel.into().get_index(ts, self.num_samples());
+        let index = sel.into().get_index(ts, self.getNumSamples());
         self.reader.read_sample(index, out)
     }
     
@@ -810,12 +810,12 @@ impl<'a, T: bytemuck::Pod + Default> ITypedScalarProperty<'a, T> {
     }
     
     /// Get the property header.
-    pub fn header(&self) -> &PropertyHeader {
+    pub fn getHeader(&self) -> &PropertyHeader {
         self.reader.header()
     }
     
     /// Get the number of samples.
-    pub fn num_samples(&self) -> usize {
+    pub fn getNumSamples(&self) -> usize {
         self.reader.num_samples()
     }
     
@@ -836,7 +836,7 @@ impl<'a, T: bytemuck::Pod + Default> ITypedScalarProperty<'a, T> {
     pub fn get(&self, sel: impl Into<SampleSelector>) -> Result<T> {
         let sel = sel.into();
         let index = match sel {
-            SampleSelector::Index(i) => i.min(self.num_samples().saturating_sub(1)),
+            SampleSelector::Index(i) => i.min(self.getNumSamples().saturating_sub(1)),
             _ => 0,
         };
         self.get_value(index)
@@ -844,7 +844,7 @@ impl<'a, T: bytemuck::Pod + Default> ITypedScalarProperty<'a, T> {
     
     /// Get a typed value with time-based selection.
     pub fn get_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<T> {
-        let index = sel.into().get_index(ts, self.num_samples());
+        let index = sel.into().get_index(ts, self.getNumSamples());
         self.get_value(index)
     }
     
@@ -911,12 +911,12 @@ pub struct IArrayProperty<'a> {
 
 impl<'a> IArrayProperty<'a> {
     /// Get the property header.
-    pub fn header(&self) -> &PropertyHeader {
+    pub fn getHeader(&self) -> &PropertyHeader {
         self.reader.header()
     }
 
     /// Get the number of samples.
-    pub fn num_samples(&self) -> usize {
+    pub fn getNumSamples(&self) -> usize {
         self.reader.num_samples()
     }
 
@@ -931,7 +931,7 @@ impl<'a> IArrayProperty<'a> {
     pub fn sample_len(&self, sel: impl Into<SampleSelector>) -> Result<usize> {
         let sel = sel.into();
         let index = match sel {
-            SampleSelector::Index(i) => i.min(self.num_samples().saturating_sub(1)),
+            SampleSelector::Index(i) => i.min(self.getNumSamples().saturating_sub(1)),
             _ => 0,
         };
         self.reader.sample_len(index)
@@ -939,7 +939,7 @@ impl<'a> IArrayProperty<'a> {
     
     /// Get the number of elements in a sample with time-based selection.
     pub fn sample_len_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<usize> {
-        let index = sel.into().get_index(ts, self.num_samples());
+        let index = sel.into().get_index(ts, self.getNumSamples());
         self.reader.sample_len(index)
     }
 
@@ -949,7 +949,7 @@ impl<'a> IArrayProperty<'a> {
     pub fn read_sample_vec(&self, sel: impl Into<SampleSelector>) -> Result<Vec<u8>> {
         let sel = sel.into();
         let index = match sel {
-            SampleSelector::Index(i) => i.min(self.num_samples().saturating_sub(1)),
+            SampleSelector::Index(i) => i.min(self.getNumSamples().saturating_sub(1)),
             _ => 0,
         };
         self.reader.read_sample_vec(index)
@@ -959,7 +959,7 @@ impl<'a> IArrayProperty<'a> {
     /// 
     /// Pass the TimeSampling from `archive.time_sampling(prop.time_sampling_index())`.
     pub fn read_sample_vec_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<Vec<u8>> {
-        let index = sel.into().get_index(ts, self.num_samples());
+        let index = sel.into().get_index(ts, self.getNumSamples());
         self.reader.read_sample_vec(index)
     }
     
@@ -975,7 +975,7 @@ impl<'a> IArrayProperty<'a> {
     pub fn get_key(&self, sel: impl Into<SampleSelector>) -> Result<crate::core::SampleDigest> {
         let sel = sel.into();
         let index = match sel {
-            SampleSelector::Index(i) => i.min(self.num_samples().saturating_sub(1)),
+            SampleSelector::Index(i) => i.min(self.getNumSamples().saturating_sub(1)),
             _ => 0,
         };
         self.reader.sample_key(index)
@@ -983,7 +983,7 @@ impl<'a> IArrayProperty<'a> {
     
     /// Get the key with time-based selection.
     pub fn get_key_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<crate::core::SampleDigest> {
-        let index = sel.into().get_index(ts, self.num_samples());
+        let index = sel.into().get_index(ts, self.getNumSamples());
         self.reader.sample_key(index)
     }
     
@@ -993,7 +993,7 @@ impl<'a> IArrayProperty<'a> {
     pub fn get_dimensions(&self, sel: impl Into<SampleSelector>) -> Result<Vec<usize>> {
         let sel = sel.into();
         let index = match sel {
-            SampleSelector::Index(i) => i.min(self.num_samples().saturating_sub(1)),
+            SampleSelector::Index(i) => i.min(self.getNumSamples().saturating_sub(1)),
             _ => 0,
         };
         self.reader.sample_dimensions(index)
@@ -1001,7 +1001,7 @@ impl<'a> IArrayProperty<'a> {
     
     /// Get dimensions with time-based selection.
     pub fn get_dimensions_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<Vec<usize>> {
-        let index = sel.into().get_index(ts, self.num_samples());
+        let index = sel.into().get_index(ts, self.getNumSamples());
         self.reader.sample_dimensions(index)
     }
     
@@ -1022,7 +1022,7 @@ impl<'a> IArrayProperty<'a> {
     {
         let sel = sel.into();
         let index = match sel {
-            SampleSelector::Index(i) => i.min(self.num_samples().saturating_sub(1)),
+            SampleSelector::Index(i) => i.min(self.getNumSamples().saturating_sub(1)),
             _ => 0,
         };
         let data = self.reader.read_sample_vec(index)?;
@@ -1036,7 +1036,7 @@ impl<'a> IArrayProperty<'a> {
         Src: bytemuck::Pod + Copy,
         Dst: From<Src> + Clone,
     {
-        let index = sel.into().get_index(ts, self.num_samples());
+        let index = sel.into().get_index(ts, self.getNumSamples());
         let data = self.reader.read_sample_vec(index)?;
         let src_slice: &[Src] = bytemuck::try_cast_slice(&data).map_err(|_| crate::util::Error::invalid("cast error"))?;
         Ok(src_slice.iter().map(|&v| Dst::from(v)).collect())
@@ -1045,7 +1045,7 @@ impl<'a> IArrayProperty<'a> {
     /// Check if this array property behaves like a scalar (single element per sample).
     pub fn is_scalar_like(&self) -> bool {
         // Check if all samples have exactly 1 element
-        let num = self.num_samples();
+        let num = self.getNumSamples();
         if num == 0 {
             return true;
         }

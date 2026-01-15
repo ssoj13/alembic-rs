@@ -84,7 +84,7 @@ impl PyIPolyMesh {
     where
         F: FnOnce(&IPolyMesh<'_>) -> Option<T>,
     {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         
         fn traverse<'a, T>(
             obj: crate::abc::IObject<'a>,
@@ -95,7 +95,7 @@ impl PyIPolyMesh {
                 let mesh = IPolyMesh::new(&obj)?;
                 f(&mesh)
             } else {
-                let child = obj.child_by_name(&path[0])?;
+                let child = obj.getChildByName(&path[0])?;
                 traverse(child, &path[1..], f)
             }
         }
@@ -115,7 +115,7 @@ pub struct PyIPolyMeshSchema {
 impl PyIPolyMeshSchema {
     /// Get number of samples.
     fn getNumSamples(&self) -> usize {
-        self.with_mesh(|m| Some(m.num_samples())).unwrap_or(0)
+        self.with_mesh(|m| Some(m.getNumSamples())).unwrap_or(0)
     }
     
     /// Check if constant (single sample).
@@ -145,7 +145,7 @@ impl PyIPolyMeshSchema {
     where
         F: FnOnce(&IPolyMesh<'_>) -> Option<T>,
     {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         
         fn traverse<'a, T>(
             obj: crate::abc::IObject<'a>,
@@ -156,7 +156,7 @@ impl PyIPolyMeshSchema {
                 let mesh = IPolyMesh::new(&obj)?;
                 f(&mesh)
             } else {
-                let child = obj.child_by_name(&path[0])?;
+                let child = obj.getChildByName(&path[0])?;
                 traverse(child, &path[1..], f)
             }
         }
@@ -219,7 +219,7 @@ impl PyIXform {
     where
         F: FnOnce(&IXform<'_>) -> Option<T>,
     {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(
             obj: crate::abc::IObject<'a>,
             path: &[String],
@@ -229,7 +229,7 @@ impl PyIXform {
                 let x = IXform::new(&obj)?;
                 f(&x)
             } else {
-                let child = obj.child_by_name(&path[0])?;
+                let child = obj.getChildByName(&path[0])?;
                 traverse(child, &path[1..], f)
             }
         }
@@ -246,7 +246,7 @@ pub struct PyIXformSchema {
 #[pymethods]
 impl PyIXformSchema {
     fn getNumSamples(&self) -> usize {
-        self.with_xform(|x| Some(x.num_samples())).unwrap_or(0)
+        self.with_xform(|x| Some(x.getNumSamples())).unwrap_or(0)
     }
     
     fn isConstant(&self) -> bool {
@@ -279,7 +279,7 @@ impl PyIXformSchema {
     where
         F: FnOnce(&IXform<'_>) -> Option<T>,
     {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(
             obj: crate::abc::IObject<'a>,
             path: &[String],
@@ -289,7 +289,7 @@ impl PyIXformSchema {
                 let x = IXform::new(&obj)?;
                 f(&x)
             } else {
-                let child = obj.child_by_name(&path[0])?;
+                let child = obj.getChildByName(&path[0])?;
                 traverse(child, &path[1..], f)
             }
         }
@@ -333,10 +333,10 @@ impl PyISubD {
 impl PyISubD {
     fn with_subd<T, F>(&self, f: F) -> Option<T>
     where F: FnOnce(&ISubD<'_>) -> Option<T> {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&ISubD<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&ISubD::new(&obj)?) }
-            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+            else { traverse(obj.getChildByName(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)
     }
@@ -350,7 +350,7 @@ pub struct PyISubDSchema {
 
 #[pymethods]
 impl PyISubDSchema {
-    fn getNumSamples(&self) -> usize { self.with_subd(|s| Some(s.num_samples())).unwrap_or(0) }
+    fn getNumSamples(&self) -> usize { self.with_subd(|s| Some(s.getNumSamples())).unwrap_or(0) }
     fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
     
     #[pyo3(signature = (index=0))]
@@ -366,10 +366,10 @@ impl PyISubDSchema {
 impl PyISubDSchema {
     fn with_subd<T, F>(&self, f: F) -> Option<T>
     where F: FnOnce(&ISubD<'_>) -> Option<T> {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&ISubD<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&ISubD::new(&obj)?) }
-            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+            else { traverse(obj.getChildByName(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)
     }
@@ -411,10 +411,10 @@ impl PyICurves {
 impl PyICurves {
     fn with_curves<T, F>(&self, f: F) -> Option<T>
     where F: FnOnce(&ICurves<'_>) -> Option<T> {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&ICurves<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&ICurves::new(&obj)?) }
-            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+            else { traverse(obj.getChildByName(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)
     }
@@ -428,7 +428,7 @@ pub struct PyICurvesSchema {
 
 #[pymethods]
 impl PyICurvesSchema {
-    fn getNumSamples(&self) -> usize { self.with_curves(|c| Some(c.num_samples())).unwrap_or(0) }
+    fn getNumSamples(&self) -> usize { self.with_curves(|c| Some(c.getNumSamples())).unwrap_or(0) }
     fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
     
     #[pyo3(signature = (index=0))]
@@ -444,10 +444,10 @@ impl PyICurvesSchema {
 impl PyICurvesSchema {
     fn with_curves<T, F>(&self, f: F) -> Option<T>
     where F: FnOnce(&ICurves<'_>) -> Option<T> {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&ICurves<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&ICurves::new(&obj)?) }
-            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+            else { traverse(obj.getChildByName(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)
     }
@@ -489,10 +489,10 @@ impl PyIPoints {
 impl PyIPoints {
     fn with_points<T, F>(&self, f: F) -> Option<T>
     where F: FnOnce(&IPoints<'_>) -> Option<T> {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&IPoints<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&IPoints::new(&obj)?) }
-            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+            else { traverse(obj.getChildByName(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)
     }
@@ -506,7 +506,7 @@ pub struct PyIPointsSchema {
 
 #[pymethods]
 impl PyIPointsSchema {
-    fn getNumSamples(&self) -> usize { self.with_points(|p| Some(p.num_samples())).unwrap_or(0) }
+    fn getNumSamples(&self) -> usize { self.with_points(|p| Some(p.getNumSamples())).unwrap_or(0) }
     fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
     
     #[pyo3(signature = (index=0))]
@@ -522,10 +522,10 @@ impl PyIPointsSchema {
 impl PyIPointsSchema {
     fn with_points<T, F>(&self, f: F) -> Option<T>
     where F: FnOnce(&IPoints<'_>) -> Option<T> {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&IPoints<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&IPoints::new(&obj)?) }
-            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+            else { traverse(obj.getChildByName(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)
     }
@@ -567,10 +567,10 @@ impl PyICamera {
 impl PyICamera {
     fn with_camera<T, F>(&self, f: F) -> Option<T>
     where F: FnOnce(&ICamera<'_>) -> Option<T> {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&ICamera<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&ICamera::new(&obj)?) }
-            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+            else { traverse(obj.getChildByName(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)
     }
@@ -584,7 +584,7 @@ pub struct PyICameraSchema {
 
 #[pymethods]
 impl PyICameraSchema {
-    fn getNumSamples(&self) -> usize { self.with_camera(|c| Some(c.num_samples())).unwrap_or(0) }
+    fn getNumSamples(&self) -> usize { self.with_camera(|c| Some(c.getNumSamples())).unwrap_or(0) }
     fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
     
     #[pyo3(signature = (index=0))]
@@ -600,10 +600,10 @@ impl PyICameraSchema {
 impl PyICameraSchema {
     fn with_camera<T, F>(&self, f: F) -> Option<T>
     where F: FnOnce(&ICamera<'_>) -> Option<T> {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&ICamera<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&ICamera::new(&obj)?) }
-            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+            else { traverse(obj.getChildByName(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)
     }
@@ -645,10 +645,10 @@ impl PyILight {
 impl PyILight {
     fn with_light<T, F>(&self, f: F) -> Option<T>
     where F: FnOnce(&ILight<'_>) -> Option<T> {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&ILight<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&ILight::new(&obj)?) }
-            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+            else { traverse(obj.getChildByName(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)
     }
@@ -662,7 +662,7 @@ pub struct PyILightSchema {
 
 #[pymethods]
 impl PyILightSchema {
-    fn getNumSamples(&self) -> usize { self.with_light(|l| Some(l.num_samples())).unwrap_or(0) }
+    fn getNumSamples(&self) -> usize { self.with_light(|l| Some(l.getNumSamples())).unwrap_or(0) }
     fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
     
     #[pyo3(signature = (index=0))]
@@ -678,10 +678,10 @@ impl PyILightSchema {
 impl PyILightSchema {
     fn with_light<T, F>(&self, f: F) -> Option<T>
     where F: FnOnce(&ILight<'_>) -> Option<T> {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&ILight<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&ILight::new(&obj)?) }
-            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+            else { traverse(obj.getChildByName(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)
     }
@@ -723,10 +723,10 @@ impl PyINuPatch {
 impl PyINuPatch {
     fn with_nupatch<T, F>(&self, f: F) -> Option<T>
     where F: FnOnce(&INuPatch<'_>) -> Option<T> {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&INuPatch<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&INuPatch::new(&obj)?) }
-            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+            else { traverse(obj.getChildByName(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)
     }
@@ -740,7 +740,7 @@ pub struct PyINuPatchSchema {
 
 #[pymethods]
 impl PyINuPatchSchema {
-    fn getNumSamples(&self) -> usize { self.with_nupatch(|n| Some(n.num_samples())).unwrap_or(0) }
+    fn getNumSamples(&self) -> usize { self.with_nupatch(|n| Some(n.getNumSamples())).unwrap_or(0) }
     fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
     
     #[pyo3(signature = (index=0))]
@@ -756,10 +756,10 @@ impl PyINuPatchSchema {
 impl PyINuPatchSchema {
     fn with_nupatch<T, F>(&self, f: F) -> Option<T>
     where F: FnOnce(&INuPatch<'_>) -> Option<T> {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&INuPatch<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&INuPatch::new(&obj)?) }
-            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+            else { traverse(obj.getChildByName(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)
     }
@@ -777,7 +777,7 @@ pub struct PyIFaceSetSchema {
 
 #[pymethods]
 impl PyIFaceSetSchema {
-    fn getNumSamples(&self) -> usize { self.with_faceset(|f| Some(f.num_samples())).unwrap_or(0) }
+    fn getNumSamples(&self) -> usize { self.with_faceset(|f| Some(f.getNumSamples())).unwrap_or(0) }
     fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
     
     #[pyo3(signature = (index=0))]
@@ -800,10 +800,10 @@ impl PyIFaceSetSchema {
 impl PyIFaceSetSchema {
     fn with_faceset<T, F>(&self, f: F) -> Option<T>
     where F: FnOnce(&IFaceSet<'_>) -> Option<T> {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&IFaceSet<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&IFaceSet::new(&obj)?) }
-            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+            else { traverse(obj.getChildByName(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)
     }
@@ -842,10 +842,10 @@ impl PyIFaceSetTyped {
 impl PyIFaceSetTyped {
     fn with_faceset<T, F>(&self, f: F) -> Option<T>
     where F: FnOnce(&IFaceSet<'_>) -> Option<T> {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         fn traverse<'a, T>(obj: crate::abc::IObject<'a>, path: &[String], f: impl FnOnce(&IFaceSet<'_>) -> Option<T>) -> Option<T> {
             if path.is_empty() { f(&IFaceSet::new(&obj)?) }
-            else { traverse(obj.child_by_name(&path[0])?, &path[1..], f) }
+            else { traverse(obj.getChildByName(&path[0])?, &path[1..], f) }
         }
         traverse(root, &self.path, f)
     }

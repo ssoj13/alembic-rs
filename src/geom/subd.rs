@@ -144,7 +144,7 @@ impl<'a> ISubD<'a> {
     /// Wrap an IObject as ISubD.
     /// Returns None if the object doesn't have the SubD schema.
     pub fn new(object: &'a IObject<'a>) -> Option<Self> {
-        if object.matches_schema(SUBD_SCHEMA) {
+        if object.matchesSchema(SUBD_SCHEMA) {
             Some(Self { object })
         } else {
             None
@@ -157,13 +157,13 @@ impl<'a> ISubD<'a> {
     }
     
     /// Get the object name.
-    pub fn name(&self) -> &str {
-        self.object.name()
+    pub fn getName(&self) -> &str {
+        self.object.getName()
     }
     
     /// Get the full path.
-    pub fn full_name(&self) -> &str {
-        self.object.full_name()
+    pub fn getFullName(&self) -> &str {
+        self.object.getFullName()
     }
     
     /// Get property names.
@@ -172,13 +172,13 @@ impl<'a> ISubD<'a> {
     }
     
     /// Get number of samples.
-    pub fn num_samples(&self) -> usize {
+    pub fn getNumSamples(&self) -> usize {
         geom_util::num_samples_from_positions(self.object)
     }
     
     /// Check if SubD is constant.
     pub fn is_constant(&self) -> bool {
-        self.num_samples() <= 1
+        self.getNumSamples() <= 1
     }
     
     /// Get time sampling index from positions property.
@@ -193,7 +193,7 @@ impl<'a> ISubD<'a> {
     /// - Homogeneous: Topology is constant, only positions change
     /// - Heterogeneous: Topology can change between samples
     pub fn topology_variance(&self) -> TopologyVariance {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(geom_prop) = props.property_by_name(".geom") else {
             return TopologyVariance::Static;
         };
@@ -231,8 +231,8 @@ impl<'a> ISubD<'a> {
     /// FaceSets are child objects with the FaceSet schema.
     pub fn face_set_names(&self) -> Vec<String> {
         let mut names = Vec::new();
-        for i in 0..self.object.num_children() {
-            if let Some(header) = self.object.child_header(i) {
+        for i in 0..self.object.getNumChildren() {
+            if let Some(header) = self.object.getChildHeader(i) {
                 if header.meta_data.get("schema").map(|s| s == FACESET_SCHEMA).unwrap_or(false) {
                     names.push(header.name.clone());
                 }
@@ -243,8 +243,8 @@ impl<'a> ISubD<'a> {
     
     /// Check if this SubD has a FaceSet with the given name.
     pub fn has_face_set(&self, name: &str) -> bool {
-        if let Some(child) = self.object.child_by_name(name) {
-            child.matches_schema(FACESET_SCHEMA)
+        if let Some(child) = self.object.getChildByName(name) {
+            child.matchesSchema(FACESET_SCHEMA)
         } else {
             false
         }
@@ -254,7 +254,7 @@ impl<'a> ISubD<'a> {
     /// 
     /// Returns None if the FaceSet doesn't exist or doesn't have the FaceSet schema.
     pub fn face_set(&self, name: &str) -> Option<IFaceSet<'_>> {
-        let child = self.object.child_by_name(name)?;
+        let child = self.object.getChildByName(name)?;
         IFaceSet::from_owned(child)
     }
     
@@ -307,7 +307,7 @@ impl<'a> ISubD<'a> {
     pub fn get_sample(&self, index: usize) -> Result<SubDSample> {
         use crate::util::Error;
         
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let geom_prop = props.property_by_name(".geom")
             .ok_or_else(|| Error::invalid("No .geom property"))?;
         let geom = geom_prop.as_compound()
@@ -372,7 +372,7 @@ impl<'a> ISubD<'a> {
     
     /// Check if this subd has UVs.
     pub fn has_uvs(&self) -> bool {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(geom_prop) = props.property_by_name(".geom") else { return false };
         let Some(geom) = geom_prop.as_compound() else { return false };
         geom.has_property("uv")
@@ -380,7 +380,7 @@ impl<'a> ISubD<'a> {
     
     /// Check if this subd has normals.
     pub fn has_normals(&self) -> bool {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(geom_prop) = props.property_by_name(".geom") else { return false };
         let Some(geom) = geom_prop.as_compound() else { return false };
         geom.has_property("N")
@@ -390,7 +390,7 @@ impl<'a> ISubD<'a> {
     /// 
     /// If UVs are indexed, this expands them to per-face-vertex values.
     pub fn get_uvs(&self, index: usize) -> Option<Vec<glam::Vec2>> {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let geom_prop = props.property_by_name(".geom")?;
         let geom = geom_prop.as_compound()?;
         let uv_prop = geom.property_by_name("uv")?;
@@ -436,7 +436,7 @@ impl<'a> ISubD<'a> {
     
     /// Get expanded normals at the given sample index.
     pub fn get_normals(&self, index: usize) -> Option<Vec<glam::Vec3>> {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let geom_prop = props.property_by_name(".geom")?;
         let geom = geom_prop.as_compound()?;
         let n_prop = geom.property_by_name("N")?;

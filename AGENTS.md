@@ -1,0 +1,214 @@
+# alembic-rs Architecture & Dataflow
+
+## Project Overview
+
+Rust port of Alembic (.abc) 3D interchange format with integrated PBR viewer.
+
+## Module Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         PUBLIC API (lib.rs)                         │
+│  prelude, IArchive, OArchive, IObject, IPolyMesh, IXform, etc.     │
+└─────────────────────────────────────────────────────────────────────┘
+                                    │
+        ┌───────────────────────────┼───────────────────────────┐
+        ▼                           ▼                           ▼
+┌───────────────┐         ┌─────────────────┐         ┌───────────────┐
+│    abc/       │         │     geom/       │         │   material/   │
+│  High-level   │         │   Geometry      │         │   Materials   │
+│    API        │         │   Schemas       │         │   Shaders     │
+└───────────────┘         └─────────────────┘         └───────────────┘
+        │                         │                           │
+        └─────────────────────────┼───────────────────────────┘
+                                  ▼
+                    ┌─────────────────────────┐
+                    │        core/            │
+                    │   Abstract Traits       │
+                    │   TimeSampling          │
+                    │   MetaData              │
+                    │   Headers               │
+                    └─────────────────────────┘
+                                  │
+                                  ▼
+                    ┌─────────────────────────┐
+                    │        ogawa/           │
+                    │   Binary Format         │
+                    │   Reader/Writer         │
+                    │   Compression           │
+                    │   Deduplication         │
+                    └─────────────────────────┘
+                                  │
+                                  ▼
+                    ┌─────────────────────────┐
+                    │        util/            │
+                    │   DataType, Error       │
+                    │   POD types             │
+                    │   BBox, Vec types       │
+                    └─────────────────────────┘
+```
+
+## Reading Dataflow
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        FILE READING PIPELINE                             │
+└──────────────────────────────────────────────────────────────────────────┘
+
+.abc file
+    │
+    ▼
+┌──────────────────┐     ┌──────────────────┐
+│  mmap/File I/O   │────▶│  Ogawa Parser    │
+└──────────────────┘     │  - Magic check   │
+                         │  - Version       │
+                         │  - Root offset   │
+                         └────────┬─────────┘
+                                  │
+                                  ▼
+                    ┌─────────────────────────┐
+                    │   OgawaArchiveReader    │
+                    │   - time_samplings[]    │
+                    │   - indexed_metadata[]  │
+                    │   - root object         │
+                    └───────────┬─────────────┘
+                                │
+        ┌───────────────────────┼───────────────────────┐
+        ▼                       ▼                       ▼
+┌───────────────┐     ┌─────────────────┐     ┌───────────────┐
+│ OgawaObject   │     │ OgawaCompound   │     │ OgawaArray    │
+│ - header      │     │ - properties[]  │     │ - samples[]   │
+│ - children[]  │     │ - sub-props[]   │     │ - keys[]      │
+│ - properties  │     └─────────────────┘     │ - dims[]      │
+└───────────────┘                             └───────────────┘
+        │
+        ▼
+┌───────────────────────────────────────────────────────────────┐
+│                    SCHEMA INTERPRETATION                       │
+│  IXform, IPolyMesh, ICurves, IPoints, ICamera, IMaterial...   │
+└───────────────────────────────────────────────────────────────┘
+```
+
+## Writing Dataflow
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        FILE WRITING PIPELINE                             │
+└──────────────────────────────────────────────────────────────────────────┘
+
+User Data (vertices, indices, transforms...)
+    │
+    ▼
+┌───────────────────────────────────────────────────────────────┐
+│                      OArchive::create()                        │
+│   - Write Ogawa magic header                                  │
+│   - Initialize time samplings (identity at index 0)           │
+│   - Initialize deduplication map                              │
+└───────────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌───────────────────────────────────────────────────────────────┐
+│              add_object() / add_property()                     │
+│   - Build hierarchy                                           │
+│   - Write samples with deduplication                          │
+│   - Compress data if hint >= 0                                │
+└───────────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌───────────────────────────────────────────────────────────────┐
+│                      OArchive::close()                         │
+│   - Write time samplings                                      │
+│   - Write indexed metadata                                    │
+│   - Write object hierarchy                                    │
+│   - Update root position in header                            │
+│   - Set frozen flag                                           │
+└───────────────────────────────────────────────────────────────┘
+    │
+    ▼
+.abc file
+```
+
+## Viewer Pipeline
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        VIEWER RENDERING PIPELINE                         │
+└──────────────────────────────────────────────────────────────────────────┘
+
+.abc file
+    │
+    ▼
+┌───────────────────────────────────────────────────────────────┐
+│                    collect_scene_cached()                      │
+│   - Sequential file reads                                     │
+│   - Build mesh/curves/points tasks                            │
+│   - Collect cameras, lights, materials                        │
+└───────────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌───────────────────────────────────────────────────────────────┐
+│              Parallel Conversion (Rayon)                       │
+│   convert_polymesh() - triangulation, normals                 │
+│   convert_curves()   - line strips                            │
+│   convert_points()   - point sprites                          │
+└───────────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌───────────────────────────────────────────────────────────────┐
+│                    GPU Upload (wgpu)                           │
+│   Renderer::add_mesh() - vertex/index buffers                 │
+│   Renderer::add_curves() - line buffers                       │
+│   Renderer::add_points() - point buffers                      │
+└───────────────────────────────────────────────────────────────┘
+    │
+    ▼
+┌───────────────────────────────────────────────────────────────┐
+│                    Render Loop                                 │
+│   1. Shadow depth pass                                        │
+│   2. Skybox pass (if HDR loaded)                              │
+│   3. Grid pass (line pipeline)                                │
+│   4. Mesh pass (Standard Surface shader)                      │
+│   5. Curves pass (line pipeline)                              │
+│   6. Points pass (point pipeline)                             │
+└───────────────────────────────────────────────────────────────┘
+    │
+    ▼
+Screen
+```
+
+## Key Data Structures
+
+```
+IArchive
+├── name: String
+├── time_samplings: Vec<TimeSampling>
+├── root: IObject
+│   ├── header: ObjectHeader
+│   │   ├── name
+│   │   ├── full_name
+│   │   └── meta_data
+│   ├── children: Vec<IObject>
+│   └── properties: ICompoundProperty
+│       ├── scalar_properties
+│       ├── array_properties
+│       └── compound_properties
+└── metadata: MetaData
+```
+
+## Dependencies
+
+```
+alembic-rs
+├── murmur3 (internal crate) - hash for dedup
+├── spooky-hash (internal crate) - SpookyHash V2
+├── standard-surface (internal crate) - PBR shader
+│   └── wgpu - GPU rendering
+├── glam - linear algebra
+├── half - f16 support
+├── memmap2 - memory-mapped files
+├── flate2 - zlib compression
+├── rayon - parallel processing
+├── parking_lot - fast mutex
+├── smallvec - stack-allocated vectors
+└── bytemuck - safe POD casting
+```

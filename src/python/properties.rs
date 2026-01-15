@@ -66,7 +66,7 @@ impl PyICompoundProperty {
     where
         F: FnOnce(&crate::abc::ICompoundProperty<'_>) -> Option<T>,
     {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         
         // Recursive object traversal with closure
         fn traverse_obj<'a, T>(
@@ -77,10 +77,10 @@ impl PyICompoundProperty {
         ) -> Option<T> {
             if obj_path.is_empty() {
                 // Reached target object, now traverse properties
-                let props = obj.properties();
+                let props = obj.getProperties();
                 traverse_prop(props, prop_path, f)
             } else {
-                let child = obj.child_by_name(&obj_path[0])?;
+                let child = obj.getChildByName(&obj_path[0])?;
                 traverse_obj(child, &obj_path[1..], prop_path, f)
             }
         }
@@ -108,7 +108,7 @@ impl PyICompoundProperty {
 impl PyICompoundProperty {
     /// Get number of sub-properties.
     fn getNumProperties(&self) -> usize {
-        self.with_compound(|c| Some(c.num_properties())).unwrap_or(0)
+        self.with_compound(|c| Some(c.getNumProperties())).unwrap_or(0)
     }
     
     /// Get property names.
@@ -125,7 +125,7 @@ impl PyICompoundProperty {
     fn getPropertyInfo(&self, name: &str) -> Option<PyPropertyInfo> {
         self.with_compound(|c| {
             let prop = c.property_by_name(name)?;
-            let hdr = prop.header();
+            let hdr = prop.getHeader();
             Some(PyPropertyInfo {
                 name: hdr.name.clone(),
                 is_scalar: prop.is_scalar(),
@@ -134,9 +134,9 @@ impl PyICompoundProperty {
                 data_type: format!("{:?}", hdr.data_type),
                 extent: hdr.data_type.extent,
                 num_samples: if prop.is_scalar() {
-                    prop.as_scalar().map(|s| s.num_samples()).unwrap_or(1)
+                    prop.as_scalar().map(|s| s.getNumSamples()).unwrap_or(1)
                 } else if prop.is_array() {
-                    prop.as_array().map(|a| a.num_samples()).unwrap_or(1)
+                    prop.as_array().map(|a| a.getNumSamples()).unwrap_or(1)
                 } else { 1 },
                 time_sampling_index: hdr.time_sampling_index,
             })
@@ -173,7 +173,7 @@ impl PyICompoundProperty {
             self.with_compound(|c| {
                 let prop = c.property_by_name(name)?;
                 let scalar = prop.as_scalar()?;
-                let hdr = scalar.header();
+                let hdr = scalar.getHeader();
                 
                 read_scalar_as_python(py, scalar, index, hdr.data_type)
             })
@@ -189,7 +189,7 @@ impl PyICompoundProperty {
             self.with_compound(|c| {
                 let prop = c.property_by_name(name)?;
                 let array = prop.as_array()?;
-                let hdr = array.header();
+                let hdr = array.getHeader();
                 let data = array.read_sample_vec(index).ok()?;
                 
                 read_array_as_python(py, &data, hdr.data_type)
@@ -252,7 +252,7 @@ fn read_scalar_as_python(
 ) -> Option<PyObject> {
     use PlainOldDataType::*;
     
-    let num_samples = scalar.num_samples();
+    let num_samples = scalar.getNumSamples();
     let idx = index.min(num_samples.saturating_sub(1));
     let extent = data_type.extent;
     

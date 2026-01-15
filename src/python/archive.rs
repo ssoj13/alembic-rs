@@ -27,7 +27,7 @@ impl PyIArchive {
     
     /// Get the archive name/path.
     fn getName(&self) -> String {
-        self.inner.name().to_string()
+        self.inner.getName().to_string()
     }
     
     /// Get the top-level (root) object.
@@ -37,12 +37,12 @@ impl PyIArchive {
     
     /// Get the number of time samplings.
     fn getNumTimeSamplings(&self) -> usize {
-        self.inner.num_time_samplings()
+        self.inner.getNumTimeSamplings()
     }
     
     /// Get a time sampling by index.
     fn getTimeSampling(&self, index: usize) -> PyResult<PyTimeSampling> {
-        self.inner.time_sampling(index)
+        self.inner.getTimeSampling(index)
             .map(|ts| ts.into())
             .ok_or_else(|| PyValueError::new_err(format!("Time sampling index {} out of range", index)))
     }
@@ -54,12 +54,12 @@ impl PyIArchive {
     
     /// Get archive version (AABBCC format: major.minor.patch).
     fn getArchiveVersion(&self) -> i32 {
-        self.inner.archive_version()
+        self.inner.getArchiveVersion()
     }
     
     /// Get archive version as string (e.g., "1.7.5").
     fn getArchiveVersionString(&self) -> String {
-        let v = self.inner.archive_version();
+        let v = self.inner.getArchiveVersion();
         let major = v / 10000;
         let minor = (v % 10000) / 100;
         let patch = v % 100;
@@ -107,6 +107,6 @@ impl PyIArchive {
     }
     
     fn __repr__(&self) -> String {
-        format!("<IArchive '{}' v{}>", self.inner.name(), self.getArchiveVersionString())
+        format!("<IArchive '{}' v{}>", self.inner.getName(), self.getArchiveVersionString())
     }
 }

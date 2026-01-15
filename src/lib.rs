@@ -1,4 +1,5 @@
 //! # Alembic
+#![allow(non_snake_case)]
 //!
 //! Rust implementation of the Alembic (.abc) 3D interchange format.
 //!
@@ -23,10 +24,10 @@
 //! use alembic::abc::IArchive;
 //!
 //! let archive = IArchive::open("animation.abc")?;
-//! let root = archive.root();
+//! let root = archive.getTop();
 //!
-//! for child in root.children() {
-//!     println!("{}", child.name());
+//! for child in root.getChildren() {
+//!     println!("{}", child.getName());
 //! }
 //! ```
 

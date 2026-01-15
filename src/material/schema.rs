@@ -377,7 +377,7 @@ impl<'a> IMaterial<'a> {
     /// Wrap an IObject as IMaterial.
     /// Returns None if the object doesn't have the Material schema.
     pub fn new(object: &'a IObject<'a>) -> Option<Self> {
-        if !object.matches_schema(MATERIAL_SCHEMA) {
+        if !object.matchesSchema(MATERIAL_SCHEMA) {
             return None;
         }
         
@@ -391,7 +391,7 @@ impl<'a> IMaterial<'a> {
     
     /// Parse .shaderNames array into shader_names map.
     fn parse_shader_names(&mut self) {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(mat_prop) = props.property_by_name(".material") else { return };
         let Some(mat) = mat_prop.as_compound() else { return };
         let Some(names_prop) = mat.property_by_name(".shaderNames") else { return };
@@ -413,13 +413,13 @@ impl<'a> IMaterial<'a> {
     }
     
     /// Get the object name.
-    pub fn name(&self) -> &str {
-        self.object.name()
+    pub fn getName(&self) -> &str {
+        self.object.getName()
     }
     
     /// Get the full path.
-    pub fn full_name(&self) -> &str {
-        self.object.full_name()
+    pub fn getFullName(&self) -> &str {
+        self.object.getFullName()
     }
     
     /// Get target names (renderer targets like "arnold", "renderman").
@@ -456,7 +456,7 @@ impl<'a> IMaterial<'a> {
     
     /// Read all parameters for a shader into ShaderParam list.
     pub fn read_shader_params(&self, target: &str, shader_type: &str) -> Vec<ShaderParam> {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(mat_prop) = props.property_by_name(".material") else {
             return Vec::new();
         };
@@ -596,7 +596,7 @@ impl<'a> IMaterial<'a> {
 /// 
 /// Returns the path to the assigned material, if any.
 pub fn get_material_assignment(object: &IObject) -> Option<String> {
-    let props = object.properties();
+    let props = object.getProperties();
     
     // Look for .material.assign property
     let mat_prop = props.property_by_name(".material")?;
@@ -614,7 +614,7 @@ pub fn get_material_assignment(object: &IObject) -> Option<String> {
 
 /// Check if an object has material assignments.
 pub fn has_material_assignment(object: &IObject) -> bool {
-    let props = object.properties();
+    let props = object.getProperties();
     
     if let Some(mat_prop) = props.property_by_name(".material") {
         if let Some(mat) = mat_prop.as_compound() {
@@ -631,11 +631,11 @@ pub fn get_faceset_material_assignments(object: &IObject) -> HashMap<String, Str
     let mut assignments = HashMap::new();
     
     // Iterate through child objects looking for FaceSets with material assignments
-    for i in 0..object.num_children() {
-        if let Some(child) = object.child(i) {
-            if child.matches_schema("AbcGeom_FaceSet_v1") {
+    for i in 0..object.getNumChildren() {
+        if let Some(child) = object.getChild(i) {
+            if child.matchesSchema("AbcGeom_FaceSet_v1") {
                 if let Some(path) = get_material_assignment(&child) {
-                    assignments.insert(child.name().to_string(), path);
+                    assignments.insert(child.getName().to_string(), path);
                 }
             }
         }
@@ -696,7 +696,7 @@ impl IMaterial<'_> {
     /// Note: For full inheritance resolution, use flatten_material() with archive root.
     pub fn flatten(&self) -> FlattenedMaterial {
         let mut result = FlattenedMaterial::new();
-        result.inheritance_chain.push(self.full_name().to_string());
+        result.inheritance_chain.push(self.getFullName().to_string());
         
         // Collect shader networks for each target
         for target in self.target_names() {
@@ -728,7 +728,7 @@ impl IMaterial<'_> {
     
     /// Get the inherits path if this material inherits from another.
     pub fn inherits_path(&self) -> Option<String> {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let mat_prop = props.property_by_name(".material")?;
         let mat = mat_prop.as_compound()?;
         let inherits_prop = mat.property_by_name(".inherits")?;

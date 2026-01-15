@@ -356,7 +356,7 @@ impl<'a> ICamera<'a> {
     /// Wrap an IObject as ICamera.
     /// Returns None if the object doesn't have the Camera schema.
     pub fn new(object: &'a IObject<'a>) -> Option<Self> {
-        if object.matches_schema(CAMERA_SCHEMA) {
+        if object.matchesSchema(CAMERA_SCHEMA) {
             Some(Self { object })
         } else {
             None
@@ -369,18 +369,18 @@ impl<'a> ICamera<'a> {
     }
     
     /// Get the object name.
-    pub fn name(&self) -> &str {
-        self.object.name()
+    pub fn getName(&self) -> &str {
+        self.object.getName()
     }
     
     /// Get the full path.
-    pub fn full_name(&self) -> &str {
-        self.object.full_name()
+    pub fn getFullName(&self) -> &str {
+        self.object.getFullName()
     }
     
     /// Get property names.
     pub fn property_names(&self) -> Vec<String> {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         if let Some(cam_prop) = props.property_by_name(".camera") {
             if let Some(cam) = cam_prop.as_compound() {
                 return cam.property_names();
@@ -390,8 +390,8 @@ impl<'a> ICamera<'a> {
     }
     
     /// Get number of samples.
-    pub fn num_samples(&self) -> usize {
-        let props = self.object.properties();
+    pub fn getNumSamples(&self) -> usize {
+        let props = self.object.getProperties();
         let Some(cam_prop) = props.property_by_name(".camera") else { return 1 };
         let Some(cam) = cam_prop.as_compound() else { return 1 };
         let Some(core_prop) = cam.property_by_name(".core") else { return 1 };
@@ -401,14 +401,14 @@ impl<'a> ICamera<'a> {
     
     /// Check if camera is constant.
     pub fn is_constant(&self) -> bool {
-        self.num_samples() <= 1
+        self.getNumSamples() <= 1
     }
     
     /// Read a sample at the given index.
     pub fn get_sample(&self, index: usize) -> Result<CameraSample> {
         use crate::util::Error;
         
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let cam_prop = props.property_by_name(".camera")
             .ok_or_else(|| Error::invalid("No .camera property"))?;
         let cam = cam_prop.as_compound()
@@ -454,7 +454,7 @@ impl<'a> ICamera<'a> {
     
     /// Check if this camera has child bounds property.
     pub fn has_child_bounds(&self) -> bool {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(cam_prop) = props.property_by_name(".camera") else {
             return false;
         };
@@ -466,7 +466,7 @@ impl<'a> ICamera<'a> {
     
     /// Read child bounds at the given sample index.
     pub fn child_bounds(&self, index: usize) -> Option<crate::util::BBox3d> {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let cam_prop = props.property_by_name(".camera")?;
         let cam = cam_prop.as_compound()?;
         let bnds_prop = cam.property_by_name(".childBnds")?;
@@ -487,7 +487,7 @@ impl<'a> ICamera<'a> {
     
     /// Get the number of child bounds samples.
     pub fn child_bounds_num_samples(&self) -> usize {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(cam_prop) = props.property_by_name(".camera") else { return 0 };
         let Some(cam) = cam_prop.as_compound() else { return 0 };
         let Some(bnds_prop) = cam.property_by_name(".childBnds") else { return 0 };
@@ -497,25 +497,25 @@ impl<'a> ICamera<'a> {
     
     /// Get time sampling index from core properties.
     pub fn time_sampling_index(&self) -> u32 {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(cam_prop) = props.property_by_name(".camera") else { return 0 };
         let Some(cam) = cam_prop.as_compound() else { return 0 };
         let Some(core_prop) = cam.property_by_name(".core") else { return 0 };
-        core_prop.header().time_sampling_index
+        core_prop.getHeader().time_sampling_index
     }
     
     /// Get the time sampling index for child bounds property.
     pub fn child_bounds_time_sampling_index(&self) -> u32 {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(cam_prop) = props.property_by_name(".camera") else { return 0 };
         let Some(cam) = cam_prop.as_compound() else { return 0 };
         let Some(bnds_prop) = cam.property_by_name(".childBnds") else { return 0 };
-        bnds_prop.header().time_sampling_index
+        bnds_prop.getHeader().time_sampling_index
     }
     
     /// Check if this camera has arbitrary geometry parameters.
     pub fn has_arb_geom_params(&self) -> bool {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(cam_prop) = props.property_by_name(".camera") else {
             return false;
         };
@@ -527,7 +527,7 @@ impl<'a> ICamera<'a> {
     
     /// Get names of arbitrary geometry parameters.
     pub fn arb_geom_param_names(&self) -> Vec<String> {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(cam_prop) = props.property_by_name(".camera") else {
             return Vec::new();
         };
@@ -545,7 +545,7 @@ impl<'a> ICamera<'a> {
     
     /// Check if this camera has user properties.
     pub fn has_user_properties(&self) -> bool {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(cam_prop) = props.property_by_name(".camera") else {
             return false;
         };
@@ -557,7 +557,7 @@ impl<'a> ICamera<'a> {
     
     /// Get names of user properties.
     pub fn user_property_names(&self) -> Vec<String> {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(cam_prop) = props.property_by_name(".camera") else {
             return Vec::new();
         };

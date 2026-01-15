@@ -4,65 +4,65 @@ use alembic::abc::IArchive;
 
 #[test]
 fn debug_brake_disc_xform() {
-    let archive = IArchive::open("data/bmw.abc").expect("Failed to open archive");
-    let root = archive.root();
+    let archive = IArchive::open("data/Abc/bmw.abc").expect("Failed to open archive");
+    let root = archive.getTop();
     
     println!("\n=== Examining wheel_lb/moving/brake_disc ===\n");
     
     // Navigate: bmw3 -> wheels -> wheel_lb -> moving -> brake_disc
-    let bmw3 = root.child(0).expect("bmw3");
-    println!("Found: {}", bmw3.name());
+    let bmw3 = root.getChild(0).expect("bmw3");
+    println!("Found: {}", bmw3.getName());
     
     let mut wheels = None;
-    for i in 0..bmw3.num_children() {
-        if let Some(c) = bmw3.child(i) {
-            if c.name() == "wheels" {
+    for i in 0..bmw3.getNumChildren() {
+        if let Some(c) = bmw3.getChild(i) {
+            if c.getName() == "wheels" {
                 wheels = Some(c);
                 break;
             }
         }
     }
     let wheels = wheels.expect("wheels");
-    println!("Found: {}", wheels.name());
+    println!("Found: {}", wheels.getName());
     
     let mut wheel_lb = None;
-    for i in 0..wheels.num_children() {
-        if let Some(c) = wheels.child(i) {
-            if c.name() == "wheel_lb" {
+    for i in 0..wheels.getNumChildren() {
+        if let Some(c) = wheels.getChild(i) {
+            if c.getName() == "wheel_lb" {
                 wheel_lb = Some(c);
                 break;
             }
         }
     }
     let wheel_lb = wheel_lb.expect("wheel_lb");
-    println!("Found: {}", wheel_lb.name());
+    println!("Found: {}", wheel_lb.getName());
     
     let mut moving = None;
-    for i in 0..wheel_lb.num_children() {
-        if let Some(c) = wheel_lb.child(i) {
-            if c.name() == "moving" {
+    for i in 0..wheel_lb.getNumChildren() {
+        if let Some(c) = wheel_lb.getChild(i) {
+            if c.getName() == "moving" {
                 moving = Some(c);
                 break;
             }
         }
     }
     let moving = moving.expect("moving");
-    println!("Found: {}", moving.name());
+    println!("Found: {}", moving.getName());
     
     let mut brake_disc = None;
-    for i in 0..moving.num_children() {
-        if let Some(c) = moving.child(i) {
-            if c.name() == "brake_disc" {
+    for i in 0..moving.getNumChildren() {
+        if let Some(c) = moving.getChild(i) {
+            if c.getName() == "brake_disc" {
                 brake_disc = Some(c);
                 break;
             }
         }
     }
     let brake_disc = brake_disc.expect("brake_disc");
-    println!("Found: {}", brake_disc.name());
+    println!("Found: {}", brake_disc.getName());
     
     // Now read raw xform properties
-    let props = brake_disc.properties();
+    let props = brake_disc.getProperties();
     
     // Get .xform compound
     let xform_prop = props.property_by_name(".xform").expect(".xform property");

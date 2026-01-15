@@ -970,7 +970,7 @@ impl ViewerApp {
     
     /// Detect maximum number of samples in archive
     fn detect_num_samples(archive: &crate::abc::IArchive) -> usize {
-        let root = archive.root();
+        let root = archive.getTop();
         Self::detect_num_samples_recursive(&root, 1)
     }
     
@@ -979,35 +979,35 @@ impl ViewerApp {
         
         // Check ALL geometry schemas
         if let Some(g) = crate::geom::IPolyMesh::new(obj) {
-            current_max = current_max.max(g.num_samples());
+            current_max = current_max.max(g.getNumSamples());
         }
         if let Some(g) = crate::geom::ISubD::new(obj) {
-            current_max = current_max.max(g.num_samples());
+            current_max = current_max.max(g.getNumSamples());
         }
         if let Some(g) = crate::geom::ICurves::new(obj) {
-            current_max = current_max.max(g.num_samples());
+            current_max = current_max.max(g.getNumSamples());
         }
         if let Some(g) = crate::geom::IPoints::new(obj) {
-            current_max = current_max.max(g.num_samples());
+            current_max = current_max.max(g.getNumSamples());
         }
         if let Some(g) = crate::geom::INuPatch::new(obj) {
-            current_max = current_max.max(g.num_samples());
+            current_max = current_max.max(g.getNumSamples());
         }
         if let Some(g) = crate::geom::IXform::new(obj) {
-            current_max = current_max.max(g.num_samples());
+            current_max = current_max.max(g.getNumSamples());
         }
         if let Some(g) = crate::geom::ICamera::new(obj) {
-            current_max = current_max.max(g.num_samples());
+            current_max = current_max.max(g.getNumSamples());
         }
         if let Some(g) = crate::geom::ILight::new(obj) {
-            current_max = current_max.max(g.num_samples());
+            current_max = current_max.max(g.getNumSamples());
         }
         if let Some(g) = crate::geom::IFaceSet::new(obj) {
-            current_max = current_max.max(g.num_samples());
+            current_max = current_max.max(g.getNumSamples());
         }
         
         // Recurse children
-        for child in obj.children() {
+        for child in obj.getChildren() {
             current_max = Self::detect_num_samples_recursive(&child, current_max);
         }
         
@@ -1016,16 +1016,16 @@ impl ViewerApp {
     
     /// Build scene hierarchy tree from archive
     fn build_scene_tree(archive: &crate::abc::IArchive) -> Vec<SceneNode> {
-        let root = archive.root();
+        let root = archive.getTop();
         let mut children = Vec::new();
-        for child in root.children() {
+        for child in root.getChildren() {
             children.push(Self::build_scene_node(&child));
         }
         children
     }
     
     fn build_scene_node(obj: &crate::abc::IObject) -> SceneNode {
-        let name = obj.name();
+        let name = obj.getName();
         
         // Detect object type
         let node_type = if crate::geom::IPolyMesh::new(obj).is_some() {
@@ -1048,7 +1048,7 @@ impl ViewerApp {
         
         let mut node = SceneNode::new(name, node_type);
         
-        for child in obj.children() {
+        for child in obj.getChildren() {
             node.children.push(Self::build_scene_node(&child));
         }
         
@@ -1074,16 +1074,16 @@ impl ViewerApp {
     
     /// Show object properties by searching archive
     fn show_object_properties_by_name(&self, ui: &mut egui::Ui, archive: &crate::abc::IArchive, name: &str) {
-        let root = archive.root();
+        let root = archive.getTop();
         Self::show_props_recursive(ui, &root, name, self.current_frame);
     }
     
     fn show_props_recursive(ui: &mut egui::Ui, obj: &crate::abc::IObject, name: &str, frame: usize) -> bool {
-        if obj.name() == name {
+        if obj.getName() == name {
             // Found the object - show its properties
             if let Some(mesh) = crate::geom::IPolyMesh::new(obj) {
                 ui.label("Type: PolyMesh");
-                ui.label(format!("Samples: {}", mesh.num_samples()));
+                ui.label(format!("Samples: {}", mesh.getNumSamples()));
                 if let Ok(sample) = mesh.get_sample(frame) {
                     ui.label(format!("Vertices: {}", sample.positions.len()));
                     ui.label(format!("Faces: {}", sample.face_counts.len()));
@@ -1103,7 +1103,7 @@ impl ViewerApp {
                 }
             } else if let Some(xform) = crate::geom::IXform::new(obj) {
                 ui.label("Type: Xform");
-                ui.label(format!("Samples: {}", xform.num_samples()));
+                ui.label(format!("Samples: {}", xform.getNumSamples()));
                 if let Ok(sample) = xform.get_sample(frame) {
                     let matrix = sample.matrix();
                     let (_, rot, trans) = matrix.to_scale_rotation_translation();
@@ -1114,28 +1114,28 @@ impl ViewerApp {
                 }
             } else if let Some(cam) = crate::geom::ICamera::new(obj) {
                 ui.label("Type: Camera");
-                ui.label(format!("Samples: {}", cam.num_samples()));
+                ui.label(format!("Samples: {}", cam.getNumSamples()));
                 if let Ok(sample) = cam.get_sample(frame) {
                     ui.label(format!("Focal: {:.1}mm", sample.focal_length));
                     ui.label(format!("Aperture: {:.1}mm", sample.horizontal_aperture));
                 }
             } else if let Some(subd) = crate::geom::ISubD::new(obj) {
                 ui.label(format!("Type: SubD"));
-                ui.label(format!("Samples: {}", subd.num_samples()));
+                ui.label(format!("Samples: {}", subd.getNumSamples()));
                 if let Ok(sample) = subd.get_sample(frame) {
                     ui.label(format!("Vertices: {}", sample.positions.len()));
                     ui.label(format!("Faces: {}", sample.face_counts.len()));
                 }
             } else if let Some(curves) = crate::geom::ICurves::new(obj) {
                 ui.label(format!("Type: Curves"));
-                ui.label(format!("Samples: {}", curves.num_samples()));
+                ui.label(format!("Samples: {}", curves.getNumSamples()));
                 if let Ok(sample) = curves.get_sample(frame) {
                     ui.label(format!("Points: {}", sample.positions.len()));
                     ui.label(format!("Curves: {}", sample.num_curves()));
                 }
             } else if let Some(points) = crate::geom::IPoints::new(obj) {
                 ui.label(format!("Type: Points"));
-                ui.label(format!("Samples: {}", points.num_samples()));
+                ui.label(format!("Samples: {}", points.getNumSamples()));
                 if let Ok(sample) = points.get_sample(frame) {
                     ui.label(format!("Point count: {}", sample.positions.len()));
                     if sample.has_widths() {
@@ -1147,7 +1147,7 @@ impl ViewerApp {
                 }
             } else if let Some(light) = crate::geom::ILight::new(obj) {
                 ui.label(format!("Type: Light"));
-                ui.label(format!("Samples: {}", light.num_samples()));
+                ui.label(format!("Samples: {}", light.getNumSamples()));
             } else if let Some(mat) = crate::material::IMaterial::new(obj) {
                 ui.label(format!("Type: Material"));
                 let targets = mat.target_names();
@@ -1162,7 +1162,7 @@ impl ViewerApp {
         }
         
         // Recurse into children
-        for child in obj.children() {
+        for child in obj.getChildren() {
             if Self::show_props_recursive(ui, &child, name, frame) {
                 return true;
             }

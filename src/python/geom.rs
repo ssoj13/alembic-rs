@@ -186,7 +186,7 @@ impl PyIFaceSet {
     
     /// Get number of samples.
     fn getNumSamples(&self) -> usize {
-        self.with_faceset(|fs| fs.num_samples()).unwrap_or(1)
+        self.with_faceset(|fs| fs.getNumSamples()).unwrap_or(1)
     }
     
     /// Check if constant (single sample).
@@ -226,7 +226,7 @@ impl PyIFaceSet {
     where
         F: FnOnce(&IFaceSet<'_>) -> T,
     {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         let parts: Vec<&str> = self.path.trim_start_matches('/').split('/').filter(|s| !s.is_empty()).collect();
         
         fn traverse<'a, T>(
@@ -238,7 +238,7 @@ impl PyIFaceSet {
                 let fs = IFaceSet::new(&obj)?;
                 Some(f(&fs))
             } else {
-                let child = obj.child_by_name(path[0])?;
+                let child = obj.getChildByName(path[0])?;
                 traverse(child, &path[1..], f)
             }
         }
@@ -342,7 +342,7 @@ impl PyIGeomParam {
     
     /// Get number of samples.
     fn getNumSamples(&self) -> usize {
-        self.with_geomparam(|gp| gp.num_samples()).unwrap_or(0)
+        self.with_geomparam(|gp| gp.getNumSamples()).unwrap_or(0)
     }
     
     /// Check if constant.
@@ -427,7 +427,7 @@ impl PyIGeomParam {
     where
         F: FnOnce(&IGeomParam<'_>) -> T,
     {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         let parts: Vec<&str> = self.object_path.trim_start_matches('/').split('/').filter(|s| !s.is_empty()).collect();
         let param_name = self.param_name.clone();
         
@@ -438,13 +438,13 @@ impl PyIGeomParam {
             f: impl FnOnce(&IGeomParam<'_>) -> T,
         ) -> Option<T> {
             if path.is_empty() {
-                let props = obj.properties();
+                let props = obj.getProperties();
                 let geom_box = props.property_by_name(".geom")?;
                 let geom_prop = geom_box.as_compound()?;
                 let gp = IGeomParam::new(&geom_prop, param_name)?;
                 Some(f(&gp))
             } else {
-                let child = obj.child_by_name(path[0])?;
+                let child = obj.getChildByName(path[0])?;
                 traverse(child, &path[1..], param_name, f)
             }
         }

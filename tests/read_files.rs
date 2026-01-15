@@ -4,9 +4,9 @@ use alembic::abc::IArchive;
 use alembic::ogawa::IArchive as OgawaIArchive;
 use alembic::geom::{IXform, XFORM_SCHEMA, IPolyMesh, POLYMESH_SCHEMA};
 
-const CHESS3_PATH: &str = "data/chess3.abc";
-const CHESS4_PATH: &str = "data/chess4.abc";
-const BMW_PATH: &str = "data/bmw.abc";
+const CHESS3_PATH: &str = "data/Abc/chess3.abc";
+const CHESS4_PATH: &str = "data/Abc/chess4.abc";
+const BMW_PATH: &str = "data/Abc/bmw.abc";
 
 #[test]
 fn test_open_chess3() {
@@ -51,10 +51,10 @@ fn test_open_bmw() {
 #[test]
 fn test_bmw_geometry() {
     let archive = IArchive::open(BMW_PATH).expect("Failed to open bmw.abc");
-    let root = archive.root();
+    let root = archive.getTop();
     
     println!("\n=== BMW Geometry Test ===");
-    println!("Root children: {}", root.num_children());
+    println!("Root children: {}", root.getNumChildren());
     
     let mut total_meshes = 0;
     let mut total_xforms = 0;
@@ -76,7 +76,7 @@ fn test_bmw_geometry() {
         if let Some(xform) = IXform::new(obj) {
             *xforms += 1;
             if depth < 2 {
-                println!("{}Xform: '{}'", indent, xform.name());
+                println!("{}Xform: '{}'", indent, xform.getName());
             }
         }
         
@@ -88,18 +88,18 @@ fn test_bmw_geometry() {
                 *faces += sample.num_faces();
                 if depth < 3 {
                     println!("{}PolyMesh: '{}' - {} verts, {} faces", 
-                        indent, mesh.name(), sample.num_vertices(), sample.num_faces());
+                        indent, mesh.getName(), sample.num_vertices(), sample.num_faces());
                 }
             }
         }
         
         // Recurse children
-        for child in obj.children() {
+        for child in obj.getChildren() {
             scan_object(&child, depth + 1, meshes, xforms, verts, faces);
         }
     }
     
-    for child in root.children() {
+    for child in root.getChildren() {
         scan_object(&child, 0, &mut total_meshes, &mut total_xforms, &mut total_vertices, &mut total_faces);
     }
     
@@ -119,11 +119,11 @@ fn test_bmw_geometry() {
             if let Ok(sample) = mesh.get_sample(0) {
                 if sample.num_vertices() > 0 {
                     let (min, max) = sample.compute_bounds();
-                    return Some((min, max, mesh.name().to_string()));
+                    return Some((min, max, mesh.getName().to_string()));
                 }
             }
         }
-        for child in obj.children() {
+        for child in obj.getChildren() {
             if let Some(result) = find_first_mesh(&child) {
                 return Some(result);
             }
@@ -235,22 +235,22 @@ fn test_high_level_api() {
     let archive = IArchive::open(CHESS3_PATH).expect("Failed to open");
     
     println!("\n=== High-level API ===");
-    println!("Archive: {}", archive.name());
-    println!("Time samplings: {}", archive.num_time_samplings());
+    println!("Archive: {}", archive.getName());
+    println!("Time samplings: {}", archive.getNumTimeSamplings());
     
-    let root = archive.root();
-    println!("Root name: '{}'", root.name());
-    println!("Root full_name: '{}'", root.full_name());
-    println!("Root children: {}", root.num_children());
+    let root = archive.getTop();
+    println!("Root name: '{}'", root.getName());
+    println!("Root full_name: '{}'", root.getFullName());
+    println!("Root children: {}", root.getNumChildren());
     
-    let props = root.properties();
-    println!("Root properties: {}", props.num_properties());
+    let props = root.getProperties();
+    println!("Root properties: {}", props.getNumProperties());
 }
 
 #[test]
 fn test_traverse_hierarchy() {
     let archive = IArchive::open(CHESS3_PATH).expect("Failed to open");
-    let root = archive.root();
+    let root = archive.getTop();
     
     println!("\n=== Object Hierarchy ===");
     traverse_iobject(&root, 0);
@@ -259,27 +259,27 @@ fn test_traverse_hierarchy() {
 fn traverse_iobject(obj: &alembic::abc::IObject, depth: usize) {
     let indent = "  ".repeat(depth);
     
-    println!("{}Object: '{}' ({})", indent, obj.name(), obj.full_name());
+    println!("{}Object: '{}' ({})", indent, obj.getName(), obj.getFullName());
     
     // Show properties
-    let props = obj.properties();
-    if props.num_properties() > 0 {
-        println!("{}  Properties: {}", indent, props.num_properties());
+    let props = obj.getProperties();
+    if props.getNumProperties() > 0 {
+        println!("{}  Properties: {}", indent, props.getNumProperties());
         for name in props.property_names() {
             println!("{}    - {}", indent, name);
         }
     }
     
     // Show metadata
-    let header = obj.header();
+    let header = obj.getHeader();
     if !header.meta_data.is_empty() {
         println!("{}  Schema: {}", indent, header.meta_data.get("schema").unwrap_or_default());
     }
     
     // Recurse children (limit depth to avoid huge output)
-    let num_children = obj.num_children();
+    let num_children = obj.getNumChildren();
     if depth < 2 && num_children > 0 {
-        for child in obj.children() {
+        for child in obj.getChildren() {
             traverse_iobject(&child, depth + 1);
         }
     } else if num_children > 0 {
@@ -290,24 +290,24 @@ fn traverse_iobject(obj: &alembic::abc::IObject, depth: usize) {
 #[test]
 fn test_polymesh_schema() {
     let archive = IArchive::open(CHESS3_PATH).expect("Failed to open");
-    let root = archive.root();
+    let root = archive.getTop();
     
     println!("\n=== Testing IPolyMesh ===");
     
     // Find polymesh objects (they're children of xforms)
     let mut mesh_count = 0;
-    for child in root.children() {
+    for child in root.getChildren() {
         // Look for mesh children of xform objects
-        for grandchild in child.children() {
-            if grandchild.matches_schema(POLYMESH_SCHEMA) {
+        for grandchild in child.getChildren() {
+            if grandchild.matchesSchema(POLYMESH_SCHEMA) {
                 mesh_count += 1;
                 if mesh_count <= 3 {
-                    println!("Found PolyMesh: '{}'", grandchild.name());
+                    println!("Found PolyMesh: '{}'", grandchild.getName());
                     
                     if let Some(mesh) = IPolyMesh::new(&grandchild) {
                         println!("  - IPolyMesh created successfully");
-                        println!("  - Name: {}", mesh.name());
-                        println!("  - Full name: {}", mesh.full_name());
+                        println!("  - Name: {}", mesh.getName());
+                        println!("  - Full name: {}", mesh.getFullName());
                         println!("  - Constant: {}", mesh.is_constant());
                         println!("  - Properties: {:?}", mesh.property_names());
                     }
@@ -323,23 +323,23 @@ fn test_polymesh_schema() {
 #[test]
 fn test_xform_schema() {
     let archive = IArchive::open(CHESS3_PATH).expect("Failed to open");
-    let root = archive.root();
+    let root = archive.getTop();
     
     println!("\n=== Testing IXform ===");
     
     // Find first xform object
     let mut xform_count = 0;
-    for child in root.children() {
-        if child.matches_schema(XFORM_SCHEMA) {
+    for child in root.getChildren() {
+        if child.matchesSchema(XFORM_SCHEMA) {
             xform_count += 1;
             if xform_count <= 3 {
-                println!("Found Xform: '{}'", child.name());
+                println!("Found Xform: '{}'", child.getName());
                 
                 // Try to create IXform
                 if let Some(xform) = IXform::new(&child) {
                     println!("  - IXform created successfully");
-                    println!("  - Name: {}", xform.name());
-                    println!("  - Full name: {}", xform.full_name());
+                    println!("  - Name: {}", xform.getName());
+                    println!("  - Full name: {}", xform.getFullName());
                     println!("  - Inheriting: {}", xform.is_inheriting());
                     println!("  - Constant: {}", xform.is_constant());
                 }
@@ -413,24 +413,24 @@ fn test_read_alembic_header_data() {
 #[test]
 fn test_xform_get_sample() {
     let archive = IArchive::open(CHESS3_PATH).expect("Failed to open");
-    let root = archive.root();
+    let root = archive.getTop();
     
     println!("\n=== Testing IXform.get_sample() ===");
     
     // Find first xform and read its sample
     let mut found_xform = false;
     
-    for child in root.children() {
+    for child in root.getChildren() {
         if let Some(xform) = IXform::new(&child) {
             found_xform = true;
-            println!("Found xform: '{}'", xform.name());
-            println!("  properties: {:?}", xform.object().properties().property_names());
-            println!("  num_samples: {}", xform.num_samples());
+            println!("Found xform: '{}'", xform.getName());
+            println!("  properties: {:?}", xform.object().getProperties().property_names());
+            println!("  num_samples: {}", xform.getNumSamples());
             println!("  is_inheriting: {}", xform.is_inheriting());
             println!("  is_constant: {}", xform.is_constant());
             
             // Check .xform compound contents
-            let props = xform.object().properties();
+            let props = xform.object().getProperties();
             if let Some(xf_prop) = props.property_by_name(".xform") {
                 if let Some(xf_compound) = xf_prop.as_compound() {
                     println!("  .xform sub-properties: {:?}", xf_compound.property_names());
@@ -473,19 +473,19 @@ fn test_xform_get_sample() {
 #[test]
 fn test_polymesh_get_sample() {
     let archive = IArchive::open(CHESS3_PATH).expect("Failed to open");
-    let root = archive.root();
+    let root = archive.getTop();
     
     println!("\n=== Testing IPolyMesh.get_sample() ===");
     
     // Find first polymesh and read its sample
     let mut found_mesh = false;
     
-    for child in root.children() {
-        for grandchild in child.children() {
+    for child in root.getChildren() {
+        for grandchild in child.getChildren() {
             if let Some(mesh) = IPolyMesh::new(&grandchild) {
                 found_mesh = true;
-                println!("Found mesh: '{}'", mesh.name());
-                println!("  num_samples: {}", mesh.num_samples());
+                println!("Found mesh: '{}'", mesh.getName());
+                println!("  num_samples: {}", mesh.getNumSamples());
                 
                 // Read sample 0
                 match mesh.get_sample(0) {
@@ -525,21 +525,21 @@ fn test_polymesh_get_sample() {
 #[test]
 fn test_read_mesh_properties() {
     let archive = IArchive::open(CHESS3_PATH).expect("Failed to open");
-    let root = archive.root();
+    let root = archive.getTop();
     
     println!("\n=== Reading Mesh Properties ===");
     
     // Find first polymesh and read its properties
     let mut found_mesh = false;
     
-    for child in root.children() {
-        for grandchild in child.children() {
-            if grandchild.matches_schema(POLYMESH_SCHEMA) {
+    for child in root.getChildren() {
+        for grandchild in child.getChildren() {
+            if grandchild.matchesSchema(POLYMESH_SCHEMA) {
                 found_mesh = true;
-                println!("Found PolyMesh: '{}'", grandchild.name());
+                println!("Found PolyMesh: '{}'", grandchild.getName());
                 
                 // Get properties
-                let props = grandchild.properties();
+                let props = grandchild.getProperties();
                 println!("  Properties: {:?}", props.property_names());
                 
                 // Try to read .geom compound which contains mesh data

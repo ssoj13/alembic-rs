@@ -4,7 +4,7 @@ use alembic::geom::IPolyMesh;
 
 fn find_brake_disc_meshes(obj: &alembic::abc::IObject, path: &str) -> Vec<(String, Vec<[f64; 3]>)> {
     let mut results = Vec::new();
-    let name = obj.name();
+    let name = obj.getName();
     let current_path = if path.is_empty() {
         name.to_string()
     } else {
@@ -26,8 +26,8 @@ fn find_brake_disc_meshes(obj: &alembic::abc::IObject, path: &str) -> Vec<(Strin
     }
     
     // Recurse children
-    for i in 0..obj.num_children() {
-        if let Some(child) = obj.child(i) {
+    for i in 0..obj.getNumChildren() {
+        if let Some(child) = obj.getChild(i) {
             results.extend(find_brake_disc_meshes(&child, &current_path));
         }
     }
@@ -37,8 +37,8 @@ fn find_brake_disc_meshes(obj: &alembic::abc::IObject, path: &str) -> Vec<(Strin
 
 #[test]
 fn debug_brake_disc_positions() {
-    let archive = IArchive::open("data/bmw.abc").expect("Failed to open archive");
-    let root = archive.root();
+    let archive = IArchive::open("data/Abc/bmw.abc").expect("Failed to open archive");
+    let root = archive.getTop();
     
     let brake_discs = find_brake_disc_meshes(&root, "");
     
@@ -56,7 +56,7 @@ fn debug_brake_disc_positions() {
     if brake_discs.len() >= 2 {
         let first = &brake_discs[0].1;
         let mut all_same = true;
-        for (path, verts) in brake_discs.iter().skip(1) {
+        for (_path, verts) in brake_discs.iter().skip(1) {
             if verts != first {
                 all_same = false;
             }

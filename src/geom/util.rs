@@ -12,7 +12,7 @@ use crate::util::BBox3d;
 
 /// Get number of samples from an array property in .geom.
 pub fn num_samples_from_property(object: &IObject<'_>, prop_name: &str) -> usize {
-    let props = object.properties();
+    let props = object.getProperties();
     let Some(geom_prop) = props.property_by_name(".geom") else { return 1 };
     let Some(geom) = geom_prop.as_compound() else { return 1 };
     let Some(prop) = geom.property_by_name(prop_name) else { return 1 };
@@ -32,7 +32,7 @@ pub fn num_samples_from_positions(object: &IObject<'_>) -> usize {
 
 /// Check if the schema has arbitrary geometry parameters.
 pub fn has_arb_geom_params(object: &IObject<'_>) -> bool {
-    let props = object.properties();
+    let props = object.getProperties();
     let Some(geom_prop) = props.property_by_name(".geom") else { return false };
     let Some(geom) = geom_prop.as_compound() else { return false };
     geom.has_property(".arbGeomParams")
@@ -40,7 +40,7 @@ pub fn has_arb_geom_params(object: &IObject<'_>) -> bool {
 
 /// Get names of arbitrary geometry parameters.
 pub fn arb_geom_param_names(object: &IObject<'_>) -> Vec<String> {
-    let props = object.properties();
+    let props = object.getProperties();
     let Some(geom_prop) = props.property_by_name(".geom") else { return Vec::new() };
     let Some(geom) = geom_prop.as_compound() else { return Vec::new() };
     let Some(arb_prop) = geom.property_by_name(".arbGeomParams") else { return Vec::new() };
@@ -54,7 +54,7 @@ pub fn arb_geom_param_names(object: &IObject<'_>) -> Vec<String> {
 
 /// Check if the schema has user properties.
 pub fn has_user_properties(object: &IObject<'_>) -> bool {
-    let props = object.properties();
+    let props = object.getProperties();
     let Some(geom_prop) = props.property_by_name(".geom") else { return false };
     let Some(geom) = geom_prop.as_compound() else { return false };
     geom.has_property(".userProperties")
@@ -62,7 +62,7 @@ pub fn has_user_properties(object: &IObject<'_>) -> bool {
 
 /// Get names of user properties.
 pub fn user_property_names(object: &IObject<'_>) -> Vec<String> {
-    let props = object.properties();
+    let props = object.getProperties();
     let Some(geom_prop) = props.property_by_name(".geom") else { return Vec::new() };
     let Some(geom) = geom_prop.as_compound() else { return Vec::new() };
     let Some(user_prop) = geom.property_by_name(".userProperties") else { return Vec::new() };
@@ -76,7 +76,7 @@ pub fn user_property_names(object: &IObject<'_>) -> Vec<String> {
 
 /// Check if the schema has self bounds (.selfBnds).
 pub fn has_self_bounds(object: &IObject<'_>) -> bool {
-    let props = object.properties();
+    let props = object.getProperties();
     let Some(geom_prop) = props.property_by_name(".geom") else { return false };
     let Some(geom) = geom_prop.as_compound() else { return false };
     geom.has_property(".selfBnds")
@@ -84,7 +84,7 @@ pub fn has_self_bounds(object: &IObject<'_>) -> bool {
 
 /// Check if the schema has child bounds (.childBnds).
 pub fn has_child_bounds(object: &IObject<'_>) -> bool {
-    let props = object.properties();
+    let props = object.getProperties();
     let Some(geom_prop) = props.property_by_name(".geom") else { return false };
     let Some(geom) = geom_prop.as_compound() else { return false };
     geom.has_property(".childBnds")
@@ -92,7 +92,7 @@ pub fn has_child_bounds(object: &IObject<'_>) -> bool {
 
 /// Read child bounds at a given sample index.
 pub fn read_child_bounds(object: &IObject<'_>, index: usize) -> Option<BBox3d> {
-    let props = object.properties();
+    let props = object.getProperties();
     let geom_prop = props.property_by_name(".geom")?;
     let geom = geom_prop.as_compound()?;
     let bnds_prop = geom.property_by_name(".childBnds")?;
@@ -114,7 +114,7 @@ pub fn read_child_bounds(object: &IObject<'_>, index: usize) -> Option<BBox3d> {
 
 /// Get number of child bounds samples.
 pub fn child_bounds_num_samples(object: &IObject<'_>) -> usize {
-    let props = object.properties();
+    let props = object.getProperties();
     let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
     let Some(geom) = geom_prop.as_compound() else { return 0 };
     let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
@@ -124,39 +124,39 @@ pub fn child_bounds_num_samples(object: &IObject<'_>) -> usize {
 
 /// Get the time sampling index for child bounds.
 pub fn child_bounds_time_sampling_index(object: &IObject<'_>) -> u32 {
-    let props = object.properties();
+    let props = object.getProperties();
     let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
     let Some(geom) = geom_prop.as_compound() else { return 0 };
     let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
-    bnds_prop.header().time_sampling_index
+    bnds_prop.getHeader().time_sampling_index
 }
 
 /// Get time sampling index from positions property (P).
 /// Used for curves, points, polymesh, etc.
 pub fn positions_time_sampling_index(object: &IObject<'_>) -> u32 {
-    let props = object.properties();
+    let props = object.getProperties();
     let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
     let Some(geom) = geom_prop.as_compound() else { return 0 };
     let Some(p_prop) = geom.property_by_name("P") else { return 0 };
-    p_prop.header().time_sampling_index
+    p_prop.getHeader().time_sampling_index
 }
 
 /// Get time sampling index from a named property in .geom compound.
 pub fn property_time_sampling_index(object: &IObject<'_>, prop_name: &str) -> u32 {
-    let props = object.properties();
+    let props = object.getProperties();
     let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
     let Some(geom) = geom_prop.as_compound() else { return 0 };
     let Some(prop) = geom.property_by_name(prop_name) else { return 0 };
-    prop.header().time_sampling_index
+    prop.getHeader().time_sampling_index
 }
 
 /// Get time sampling index from a schema-specific compound (e.g. .xform, .camera, .light).
 pub fn schema_property_time_sampling_index(object: &IObject<'_>, schema_name: &str, prop_name: &str) -> u32 {
-    let props = object.properties();
+    let props = object.getProperties();
     let Some(schema_prop) = props.property_by_name(schema_name) else { return 0 };
     let Some(schema) = schema_prop.as_compound() else { return 0 };
     let Some(prop) = schema.property_by_name(prop_name) else { return 0 };
-    prop.header().time_sampling_index
+    prop.getHeader().time_sampling_index
 }
 
 // ============================================================================
@@ -165,7 +165,7 @@ pub fn schema_property_time_sampling_index(object: &IObject<'_>, schema_name: &s
 
 /// Check if a property exists in .geom compound.
 pub fn has_geom_property(object: &IObject<'_>, prop_name: &str) -> bool {
-    let props = object.properties();
+    let props = object.getProperties();
     let Some(geom_prop) = props.property_by_name(".geom") else { return false };
     let Some(geom) = geom_prop.as_compound() else { return false };
     geom.has_property(prop_name)
@@ -173,7 +173,7 @@ pub fn has_geom_property(object: &IObject<'_>, prop_name: &str) -> bool {
 
 /// Get property names from .geom compound.
 pub fn geom_property_names(object: &IObject<'_>) -> Vec<String> {
-    let props = object.properties();
+    let props = object.getProperties();
     let Some(geom_prop) = props.property_by_name(".geom") else { return Vec::new() };
     let Some(geom) = geom_prop.as_compound() else { return Vec::new() };
     geom.property_names()

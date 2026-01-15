@@ -61,7 +61,7 @@ impl<'a> ICollections<'a> {
     /// Wrap an IObject as ICollections.
     /// Returns None if the object doesn't have the Collections schema.
     pub fn new(object: &'a IObject<'a>) -> Option<Self> {
-        if object.matches_schema(COLLECTIONS_SCHEMA) {
+        if object.matchesSchema(COLLECTIONS_SCHEMA) {
             Some(Self { object })
         } else {
             None
@@ -75,29 +75,29 @@ impl<'a> ICollections<'a> {
     
     /// Get the object name.
     pub fn name(&self) -> &str {
-        self.object.name()
+        self.object.getName()
     }
     
     /// Get the full path.
     pub fn full_name(&self) -> &str {
-        self.object.full_name()
+        self.object.getFullName()
     }
     
     /// Get the number of collections.
     pub fn num_collections(&self) -> usize {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(coll_prop) = props.property_by_name(".collections") else {
             return 0;
         };
         let Some(coll) = coll_prop.as_compound() else {
             return 0;
         };
-        coll.num_properties()
+        coll.getNumProperties()
     }
     
     /// Get collection names.
     pub fn collection_names(&self) -> Vec<String> {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(coll_prop) = props.property_by_name(".collections") else {
             return Vec::new();
         };
@@ -109,7 +109,7 @@ impl<'a> ICollections<'a> {
     
     /// Get a collection by name.
     pub fn get(&self, name: &str) -> Option<Collection> {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let coll_prop = props.property_by_name(".collections")?;
         let coll = coll_prop.as_compound()?;
         let col_prop = coll.property_by_name(name)?;
@@ -153,7 +153,7 @@ impl<'a> ICollections<'a> {
     
     /// Check if a collection exists.
     pub fn has_collection(&self, name: &str) -> bool {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(coll_prop) = props.property_by_name(".collections") else {
             return false;
         };
@@ -193,7 +193,7 @@ pub fn path_exists(root: &IObject, path: &str) -> bool {
     }
     
     // Check first level
-    let Some(first) = root.child_by_name(parts[0]) else {
+    let Some(first) = root.getChildByName(parts[0]) else {
         return false;
     };
     
@@ -212,7 +212,7 @@ fn check_path_recursive(current: &IObject, remaining: &[&str]) -> bool {
         return true;
     }
     
-    let Some(child) = current.child_by_name(remaining[0]) else {
+    let Some(child) = current.getChildByName(remaining[0]) else {
         return false;
     };
     

@@ -32,13 +32,13 @@ fn test_roundtrip_simple_hierarchy() {
     
     // Read back and verify
     let archive = IArchive::open(path).expect("Failed to open archive");
-    let root = archive.root();
+    let root = archive.getTop();
     
     // Verify structure
-    assert_eq!(root.num_children(), 3, "Root should have 3 children");
+    assert_eq!(root.getNumChildren(), 3, "Root should have 3 children");
     
     // Find children by name
-    let child_names: Vec<String> = root.children().map(|c| c.name().to_string()).collect();
+    let child_names: Vec<String> = root.getChildren().map(|c| c.getName().to_string()).collect();
     println!("Children: {:?}", child_names);
     
     assert!(child_names.contains(&"child1".to_string()));
@@ -46,9 +46,9 @@ fn test_roundtrip_simple_hierarchy() {
     assert!(child_names.contains(&"parent".to_string()));
     
     // Check nested child
-    let parent = root.child_by_name("parent").expect("Could not find 'parent' child");
-    assert_eq!(parent.num_children(), 1, "Parent should have 1 child");
-    let nested_names: Vec<String> = parent.children().map(|c| c.name().to_string()).collect();
+    let parent = root.getChildByName("parent").expect("Could not find 'parent' child");
+    assert_eq!(parent.getNumChildren(), 1, "Parent should have 1 child");
+    let nested_names: Vec<String> = parent.getChildren().map(|c| c.getName().to_string()).collect();
     assert!(nested_names.contains(&"nested".to_string()));
 }
 
@@ -85,19 +85,19 @@ fn test_roundtrip_polymesh_triangle() {
     
     // Read back and verify
     let archive = IArchive::open(path).expect("Failed to open archive");
-    let root = archive.root();
+    let root = archive.getTop();
     
-    assert_eq!(root.num_children(), 1);
+    assert_eq!(root.getNumChildren(), 1);
     
-    let mesh_obj = root.child_by_name("triangle").expect("Should find triangle");
+    let mesh_obj = root.getChildByName("triangle").expect("Should find triangle");
     println!("Found object: '{}' with schema: {:?}", 
-             mesh_obj.name(), 
-             mesh_obj.header().meta_data.get("schema"));
+             mesh_obj.getName(), 
+             mesh_obj.getHeader().meta_data.get("schema"));
     
     // Try to create IPolyMesh
     if let Some(mesh) = IPolyMesh::new(&mesh_obj) {
         println!("Created IPolyMesh successfully");
-        println!("  num_samples: {}", mesh.num_samples());
+        println!("  num_samples: {}", mesh.getNumSamples());
         
         match mesh.get_sample(0) {
             Ok(sample) => {
@@ -131,7 +131,7 @@ fn test_roundtrip_polymesh_triangle() {
         }
     } else {
         println!("Could not create IPolyMesh - checking properties instead");
-        let props = mesh_obj.properties();
+        let props = mesh_obj.getProperties();
         println!("  Properties: {:?}", props.property_names());
     }
 }
@@ -185,9 +185,9 @@ fn test_roundtrip_polymesh_cube() {
     
     // Read back and verify
     let archive = IArchive::open(path).expect("Failed to open archive");
-    let root = archive.root();
+    let root = archive.getTop();
     
-    let mesh_obj = root.child_by_name("cube").expect("Should find cube");
+    let mesh_obj = root.getChildByName("cube").expect("Should find cube");
     
     if let Some(mesh) = IPolyMesh::new(&mesh_obj) {
         match mesh.get_sample(0) {
@@ -238,14 +238,14 @@ fn test_roundtrip_xform() {
     
     // Read back
     let archive = IArchive::open(path).expect("Failed to open archive");
-    let root = archive.root();
+    let root = archive.getTop();
     
-    let xform_obj = root.child_by_name("transform").expect("Should find transform");
-    println!("Found xform: schema={:?}", xform_obj.header().meta_data.get("schema"));
+    let xform_obj = root.getChildByName("transform").expect("Should find transform");
+    println!("Found xform: schema={:?}", xform_obj.getHeader().meta_data.get("schema"));
     
     if let Some(xform) = IXform::new(&xform_obj) {
         println!("Created IXform successfully");
-        println!("  num_samples: {}", xform.num_samples());
+        println!("  num_samples: {}", xform.getNumSamples());
         
         match xform.get_sample(0) {
             Ok(sample) => {
@@ -311,12 +311,12 @@ fn test_roundtrip_animated_mesh() {
     
     // Read back
     let archive = IArchive::open(path).expect("Failed to open archive");
-    let root = archive.root();
+    let root = archive.getTop();
     
-    let mesh_obj = root.child_by_name("animated_triangle").expect("Should find mesh");
+    let mesh_obj = root.getChildByName("animated_triangle").expect("Should find mesh");
     
     if let Some(mesh) = IPolyMesh::new(&mesh_obj) {
-        let num_samples = mesh.num_samples();
+        let num_samples = mesh.getNumSamples();
         println!("Animated mesh has {} samples", num_samples);
         
         // We wrote 2 samples
@@ -373,15 +373,15 @@ fn test_roundtrip_scene_hierarchy() {
     
     // Read back and verify hierarchy
     let archive = IArchive::open(path).expect("Failed to open archive");
-    let root = archive.root();
+    let root = archive.getTop();
     
     // Root -> group1 (xform) -> geo (mesh)
-    assert_eq!(root.num_children(), 1);
+    assert_eq!(root.getNumChildren(), 1);
     
-    let group1 = root.child_by_name("group1").expect("Should find group1");
-    assert_eq!(group1.num_children(), 1);
+    let group1 = root.getChildByName("group1").expect("Should find group1");
+    assert_eq!(group1.getNumChildren(), 1);
     
-    let geo = group1.child_by_name("geo").expect("Should find geo under group1");
+    let geo = group1.getChildByName("geo").expect("Should find geo under group1");
     assert!(IPolyMesh::new(&geo).is_some(), "geo should be a PolyMesh");
     
     println!("Scene hierarchy verified: root -> group1 -> geo");
@@ -409,12 +409,12 @@ fn test_roundtrip_with_time_sampling() {
     
     // Read back
     let archive = IArchive::open(path).expect("Failed to open archive");
-    println!("Archive has {} time samplings", archive.num_time_samplings());
+    println!("Archive has {} time samplings", archive.getNumTimeSamplings());
     
     // Should have at least 2: identity (index 0) and our uniform (index 1)
-    assert!(archive.num_time_samplings() >= 1, "Should have at least 1 time sampling");
+    assert!(archive.getNumTimeSamplings() >= 1, "Should have at least 1 time sampling");
     
-    if let Some(ts) = archive.time_sampling(0) {
+    if let Some(ts) = archive.getTimeSampling(0) {
         println!("Time sampling 0: {:?}", ts.sampling_type);
     }
 }
@@ -457,7 +457,7 @@ fn test_write_file_is_readable_by_low_level() {
 // BMW Round-trip Test
 // ============================================================================
 
-const BMW_PATH: &str = "data/bmw.abc";
+const BMW_PATH: &str = "data/Abc/bmw.abc";
 
 /// Copy all time samplings from source archive to output archive.
 /// Returns mapping of old indices to new indices.
@@ -468,8 +468,8 @@ fn copy_time_samplings(src: &alembic::abc::IArchive, dst: &mut OArchive) -> std:
     mapping.insert(0, 0);
     
     // Copy remaining time samplings
-    for i in 1..src.num_time_samplings() {
-        if let Some(ts) = src.time_sampling(i) {
+    for i in 1..src.getNumTimeSamplings() {
+        if let Some(ts) = src.getTimeSampling(i) {
             let new_idx = dst.add_time_sampling(ts.clone());
             mapping.insert(i as u32, new_idx);
         }
@@ -484,17 +484,17 @@ fn convert_object_with_ts(
     src_archive: &alembic::abc::IArchive,
     ts_map: &std::collections::HashMap<u32, u32>,
 ) -> OObject {
-    let mut out = OObject::new(obj.name());
+    let mut out = OObject::new(obj.getName());
     
     // Copy metadata
-    let header = obj.header();
+    let header = obj.getHeader();
     out.meta_data = header.meta_data.clone();
     
     // Check if it's an Xform - copy ALL transform samples with time sampling
-    if obj.matches_schema(XFORM_SCHEMA) {
+    if obj.matchesSchema(XFORM_SCHEMA) {
         if let Some(xform) = IXform::new(obj) {
-            let num_samples = xform.num_samples();
-            let mut oxform = OXform::new(obj.name());
+            let num_samples = xform.getNumSamples();
+            let mut oxform = OXform::new(obj.getName());
             
             // Get and map time sampling index
             let src_ts_idx = xform.child_bounds_time_sampling_index();
@@ -514,10 +514,10 @@ fn convert_object_with_ts(
     }
     
     // Check if it's a PolyMesh - copy ALL geometry samples with time sampling
-    if obj.matches_schema(POLYMESH_SCHEMA) {
+    if obj.matchesSchema(POLYMESH_SCHEMA) {
         if let Some(mesh) = IPolyMesh::new(obj) {
-            let num_samples = mesh.num_samples();
-            let mut omesh = OPolyMesh::new(obj.name());
+            let num_samples = mesh.getNumSamples();
+            let mut omesh = OPolyMesh::new(obj.getName());
             
             // Get and map time sampling index
             let src_ts_idx = mesh.child_bounds_time_sampling_index();
@@ -547,7 +547,7 @@ fn convert_object_with_ts(
     }
     
     // Recurse children
-    for child in obj.children() {
+    for child in obj.getChildren() {
         let child_out = convert_object_with_ts(&child, src_archive, ts_map);
         out.children.push(child_out);
     }
@@ -557,17 +557,17 @@ fn convert_object_with_ts(
 
 /// Convert IObject hierarchy to OObject hierarchy (legacy, no time sampling).
 fn convert_object(obj: &alembic::abc::IObject) -> OObject {
-    let mut out = OObject::new(obj.name());
+    let mut out = OObject::new(obj.getName());
     
     // Copy metadata
-    let header = obj.header();
+    let header = obj.getHeader();
     out.meta_data = header.meta_data.clone();
     
     // Check if it's an Xform - copy ALL transform samples
-    if obj.matches_schema(XFORM_SCHEMA) {
+    if obj.matchesSchema(XFORM_SCHEMA) {
         if let Some(xform) = IXform::new(obj) {
-            let num_samples = xform.num_samples();
-            let mut oxform = OXform::new(obj.name());
+            let num_samples = xform.getNumSamples();
+            let mut oxform = OXform::new(obj.getName());
             for i in 0..num_samples {
                 if let Ok(sample) = xform.get_sample(i) {
                     let matrix = sample.matrix();
@@ -581,10 +581,10 @@ fn convert_object(obj: &alembic::abc::IObject) -> OObject {
     }
     
     // Check if it's a PolyMesh - copy ALL geometry samples with all attributes
-    if obj.matches_schema(POLYMESH_SCHEMA) {
+    if obj.matchesSchema(POLYMESH_SCHEMA) {
         if let Some(mesh) = IPolyMesh::new(obj) {
-            let num_samples = mesh.num_samples();
-            let mut omesh = OPolyMesh::new(obj.name());
+            let num_samples = mesh.getNumSamples();
+            let mut omesh = OPolyMesh::new(obj.getName());
             for i in 0..num_samples {
                 if let Ok(sample) = mesh.get_sample(i) {
                     if sample.num_vertices() > 0 {
@@ -608,7 +608,7 @@ fn convert_object(obj: &alembic::abc::IObject) -> OObject {
     }
     
     // Recurse children
-    for child in obj.children() {
+    for child in obj.getChildren() {
         let child_out = convert_object(&child);
         out.children.push(child_out);
     }
@@ -629,7 +629,7 @@ fn test_bmw_roundtrip() {
     
     // Read original BMW
     let original = IArchive::open(BMW_PATH).expect("Failed to open BMW");
-    let orig_root = original.root();
+    let orig_root = original.getTop();
     
     // Count original objects
     fn count_objects(obj: &alembic::abc::IObject) -> (usize, usize, usize) {
@@ -637,7 +637,7 @@ fn test_bmw_roundtrip() {
         let mut meshes = 0;
         let mut verts = 0;
         
-        if obj.matches_schema(XFORM_SCHEMA) { xforms += 1; }
+        if obj.matchesSchema(XFORM_SCHEMA) { xforms += 1; }
         if let Some(mesh) = IPolyMesh::new(obj) {
             meshes += 1;
             if let Ok(sample) = mesh.get_sample(0) {
@@ -645,7 +645,7 @@ fn test_bmw_roundtrip() {
             }
         }
         
-        for child in obj.children() {
+        for child in obj.getChildren() {
             let (x, m, v) = count_objects(&child);
             xforms += x;
             meshes += m;
@@ -660,7 +660,7 @@ fn test_bmw_roundtrip() {
     
     // Convert to OObject hierarchy
     let mut out_root = OObject::new("");
-    for child in orig_root.children() {
+    for child in orig_root.getChildren() {
         out_root.children.push(convert_object(&child));
     }
     
@@ -674,7 +674,7 @@ fn test_bmw_roundtrip() {
     
     // Read back
     let roundtrip = IArchive::open(output_path).expect("Failed to open roundtrip file");
-    let rt_root = roundtrip.root();
+    let rt_root = roundtrip.getTop();
     
     let (rt_xforms, rt_meshes, rt_verts) = count_objects(&rt_root);
     println!("Roundtrip: {} xforms, {} meshes, {} vertices", rt_xforms, rt_meshes, rt_verts);
@@ -689,7 +689,7 @@ fn test_bmw_roundtrip() {
              if orig_verts > 0 { rt_verts * 100 / orig_verts } else { 100 });
     
     // Verify structure is preserved
-    assert_eq!(orig_root.num_children(), rt_root.num_children(), 
+    assert_eq!(orig_root.getNumChildren(), rt_root.getNumChildren(), 
                "Top-level child count should match");
     
     // Meshes should match
@@ -735,15 +735,15 @@ fn test_roundtrip_visibility() {
     // Read back and verify
     {
         let archive = IArchive::open(path).expect("Failed to open archive");
-        let root = archive.root();
+        let root = archive.getTop();
         
         // Find visible object
-        let vis_obj = root.child_by_name("visible_object").expect("Missing visible_object");
+        let vis_obj = root.getChildByName("visible_object").expect("Missing visible_object");
         let vis = get_visibility(&vis_obj, 0);
         assert_eq!(vis, ObjectVisibility::Visible, "Expected Visible");
         
         // Find hidden object
-        let hid_obj = root.child_by_name("hidden_object").expect("Missing hidden_object");
+        let hid_obj = root.getChildByName("hidden_object").expect("Missing hidden_object");
         let hid = get_visibility(&hid_obj, 0);
         assert_eq!(hid, ObjectVisibility::Hidden, "Expected Hidden");
         
@@ -843,10 +843,10 @@ fn test_deduplication() {
     
     // Verify data is still correct
     let archive = IArchive::open(path_dedup).expect("Failed to open");
-    let root = archive.root();
+    let root = archive.getTop();
     for i in 0..5 {
-        let mesh = root.child_by_name(&format!("mesh{}", i)).unwrap();
-        let props = mesh.properties();
+        let mesh = root.getChildByName(&format!("mesh{}", i)).unwrap();
+        let props = mesh.getProperties();
         let p_prop = props.property_by_name("P").unwrap();
         let p_array = p_prop.as_array().unwrap();
         let data = p_array.read_sample_vec(0).unwrap();
@@ -897,7 +897,7 @@ fn test_cyclic_time_sampling() {
         let archive = IArchive::open(path).expect("Failed to open");
         
         // Check time sampling was preserved
-        let ts = archive.time_sampling(1).expect("Should have time sampling 1");
+        let ts = archive.getTimeSampling(1).expect("Should have time sampling 1");
         assert!(ts.is_cyclic(), "Should be cyclic sampling");
         assert!((ts.time_per_cycle() - 1.0).abs() < 0.001, "Time per cycle should be 1.0");
         assert_eq!(ts.samples_per_cycle(), 3, "Should have 3 samples per cycle");
@@ -953,7 +953,7 @@ fn test_acyclic_time_sampling() {
     {
         let archive = IArchive::open(path).expect("Failed to open");
         
-        let ts = archive.time_sampling(1).expect("Should have time sampling 1");
+        let ts = archive.getTimeSampling(1).expect("Should have time sampling 1");
         assert!(ts.is_acyclic(), "Should be acyclic sampling");
         assert_eq!(ts.num_stored_times(), 5, "Should have 5 stored times");
         
@@ -1035,11 +1035,11 @@ fn test_bmw_binary_comparison() {
     
     // Read original BMW
     let original = IArchive::open(BMW_PATH).expect("Failed to open BMW");
-    let orig_root = original.root();
+    let orig_root = original.getTop();
     
     // Convert to OObject hierarchy
     let mut out_root = OObject::new("");
-    for child in orig_root.children() {
+    for child in orig_root.getChildren() {
         out_root.children.push(convert_object(&child));
     }
     
@@ -1267,10 +1267,10 @@ fn test_format_self_consistency() {
     // Pass 1: Read source -> Write
     {
         let original = IArchive::open(&source_path).expect("Failed to open source");
-        let orig_root = original.root();
+        let orig_root = original.getTop();
         
         let mut out_root = OObject::new("");
-        for child in orig_root.children() {
+        for child in orig_root.getChildren() {
             out_root.children.push(convert_object(&child));
         }
         
@@ -1281,10 +1281,10 @@ fn test_format_self_consistency() {
     // Pass 2: Read pass1 -> Write
     {
         let pass1 = IArchive::open(&path1).expect("Failed to open pass1");
-        let pass1_root = pass1.root();
+        let pass1_root = pass1.getTop();
         
         let mut out_root = OObject::new("");
-        for child in pass1_root.children() {
+        for child in pass1_root.getChildren() {
             out_root.children.push(convert_object(&child));
         }
         
@@ -1341,7 +1341,7 @@ fn test_binary_diff_analysis() {
     
     // Read and convert with time sampling preservation
     let original = IArchive::open(BMW_PATH).expect("Failed to open BMW");
-    let orig_root = original.root();
+    let orig_root = original.getTop();
     
     {
         let mut archive = OArchive::create(&output_path).expect("Failed to create archive");
@@ -1352,7 +1352,7 @@ fn test_binary_diff_analysis() {
         
         // Convert with time sampling mapping
         let mut out_root = OObject::new("");
-        for child in orig_root.children() {
+        for child in orig_root.getChildren() {
             out_root.children.push(convert_object_with_ts(&child, &original, &ts_map));
         }
         
@@ -1362,9 +1362,9 @@ fn test_binary_diff_analysis() {
     // Verify the written file can be read back
     {
         let written = IArchive::open(&output_path).expect("Failed to re-open written file");
-        assert_eq!(written.num_time_samplings(), 2, "Should have 2 time samplings");
-        let root = written.root();
-        assert_eq!(root.num_children(), 1, "Should have 1 child");
+        assert_eq!(written.getNumTimeSamplings(), 2, "Should have 2 time samplings");
+        let root = written.getTop();
+        assert_eq!(root.getNumChildren(), 1, "Should have 1 child");
     }
     
     // Read both files

@@ -101,7 +101,7 @@ impl<'a> IFaceSet<'a> {
     /// Wrap an IObject reference as an IFaceSet.
     /// Returns None if the object doesn't have the FaceSet schema.
     pub fn new(object: &'a IObject<'a>) -> Option<Self> {
-        if object.matches_schema(FACESET_SCHEMA) {
+        if object.matchesSchema(FACESET_SCHEMA) {
             let exclusivity = Self::read_exclusivity_from(object);
             Some(Self { 
                 object: FaceSetObject::Borrowed(object), 
@@ -115,7 +115,7 @@ impl<'a> IFaceSet<'a> {
     /// Create an IFaceSet from an owned IObject.
     /// Returns None if the object doesn't have the FaceSet schema.
     pub fn from_owned(object: IObject<'a>) -> Option<Self> {
-        if object.matches_schema(FACESET_SCHEMA) {
+        if object.matchesSchema(FACESET_SCHEMA) {
             let exclusivity = Self::read_exclusivity_from(&object);
             Some(Self { 
                 object: FaceSetObject::Owned(object), 
@@ -128,7 +128,7 @@ impl<'a> IFaceSet<'a> {
     
     /// Read exclusivity from object metadata.
     fn read_exclusivity_from(object: &IObject<'_>) -> FaceSetExclusivity {
-        let header = object.header();
+        let header = object.getHeader();
         if let Some(excl_str) = header.meta_data.get(FACE_EXCLUSIVITY_KEY) {
             FaceSetExclusivity::parse(excl_str)
         } else {
@@ -142,13 +142,13 @@ impl<'a> IFaceSet<'a> {
     }
     
     /// Get the object name.
-    pub fn name(&self) -> &str {
-        self.object.as_ref().name()
+    pub fn getName(&self) -> &str {
+        self.object.as_ref().getName()
     }
     
     /// Get the full path.
-    pub fn full_name(&self) -> &str {
-        self.object.as_ref().full_name()
+    pub fn getFullName(&self) -> &str {
+        self.object.as_ref().getFullName()
     }
     
     /// Get the face exclusivity setting.
@@ -157,8 +157,8 @@ impl<'a> IFaceSet<'a> {
     }
     
     /// Get number of samples.
-    pub fn num_samples(&self) -> usize {
-        let props = self.object.as_ref().properties();
+    pub fn getNumSamples(&self) -> usize {
+        let props = self.object.as_ref().getProperties();
         let Some(geom_prop) = props.property_by_name(".geom") else { return 1 };
         let Some(geom) = geom_prop.as_compound() else { return 1 };
         let Some(faces_prop) = geom.property_by_name(".faces") else { return 1 };
@@ -168,32 +168,32 @@ impl<'a> IFaceSet<'a> {
     
     /// Check if this face set is constant (single sample).
     pub fn is_constant(&self) -> bool {
-        self.num_samples() <= 1
+        self.getNumSamples() <= 1
     }
     
     /// Get time sampling index from faces property.
     pub fn time_sampling_index(&self) -> u32 {
-        let props = self.object.as_ref().properties();
+        let props = self.object.as_ref().getProperties();
         let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
         let Some(geom) = geom_prop.as_compound() else { return 0 };
         let Some(faces_prop) = geom.property_by_name(".faces") else { return 0 };
-        faces_prop.header().time_sampling_index
+        faces_prop.getHeader().time_sampling_index
     }
     
     /// Get the time sampling index for child bounds property.
     pub fn child_bounds_time_sampling_index(&self) -> u32 {
-        let props = self.object.as_ref().properties();
+        let props = self.object.as_ref().getProperties();
         let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
         let Some(geom) = geom_prop.as_compound() else { return 0 };
         let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
-        bnds_prop.header().time_sampling_index
+        bnds_prop.getHeader().time_sampling_index
     }
     
     /// Read a sample at the given index.
     pub fn get_sample(&self, index: usize) -> Result<FaceSetSample> {
         let mut sample = FaceSetSample::new();
         
-        let props = self.object.as_ref().properties();
+        let props = self.object.as_ref().getProperties();
         let geom_prop = props.property_by_name(".geom")
             .ok_or_else(|| Error::invalid("No .geom property"))?;
         let geom = geom_prop.as_compound()

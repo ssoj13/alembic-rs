@@ -106,7 +106,7 @@ impl PyICollections {
     where
         F: FnOnce(&ICollections<'_>) -> Option<T>,
     {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         
         fn traverse_and_execute<'a, T>(
             obj: crate::abc::IObject<'a>,
@@ -117,7 +117,7 @@ impl PyICollections {
                 let collections = ICollections::new(&obj)?;
                 f(&collections)
             } else {
-                let child = obj.child_by_name(&path[0])?;
+                let child = obj.getChildByName(&path[0])?;
                 traverse_and_execute(child, &path[1..], f)
             }
         }
@@ -183,7 +183,7 @@ impl PyIMaterial {
     where
         F: FnOnce(&IMaterial<'_>) -> Option<T>,
     {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         
         fn traverse_and_execute<'a, T>(
             obj: crate::abc::IObject<'a>,
@@ -194,7 +194,7 @@ impl PyIMaterial {
                 let material = IMaterial::new(&obj)?;
                 f(&material)
             } else {
-                let child = obj.child_by_name(&path[0])?;
+                let child = obj.getChildByName(&path[0])?;
                 traverse_and_execute(child, &path[1..], f)
             }
         }

@@ -298,7 +298,7 @@ impl<'a> INuPatch<'a> {
     /// Wrap an IObject as an INuPatch.
     /// Returns None if the object doesn't have the NuPatch schema.
     pub fn new(object: &'a IObject<'a>) -> Option<Self> {
-        if object.matches_schema(NUPATCH_SCHEMA) {
+        if object.matchesSchema(NUPATCH_SCHEMA) {
             Some(Self { object })
         } else {
             None
@@ -311,23 +311,23 @@ impl<'a> INuPatch<'a> {
     }
     
     /// Get the object name.
-    pub fn name(&self) -> &str {
-        self.object.name()
+    pub fn getName(&self) -> &str {
+        self.object.getName()
     }
     
     /// Get the full path.
-    pub fn full_name(&self) -> &str {
-        self.object.full_name()
+    pub fn getFullName(&self) -> &str {
+        self.object.getFullName()
     }
     
     /// Get number of samples.
-    pub fn num_samples(&self) -> usize {
+    pub fn getNumSamples(&self) -> usize {
         geom_util::num_samples_from_positions(self.object)
     }
     
     /// Check if this patch is constant (single sample).
     pub fn is_constant(&self) -> bool {
-        self.num_samples() <= 1
+        self.getNumSamples() <= 1
     }
     
     /// Get time sampling index from positions property.
@@ -349,7 +349,7 @@ impl<'a> INuPatch<'a> {
     /// 
     /// NuPatch is typically homogeneous (CVs move but topology is fixed).
     pub fn topology_variance(&self) -> TopologyVariance {
-        if self.num_samples() <= 1 {
+        if self.getNumSamples() <= 1 {
             TopologyVariance::Static
         } else {
             // NURBS patches typically have fixed topology
@@ -371,7 +371,7 @@ impl<'a> INuPatch<'a> {
     pub fn get_sample(&self, index: usize) -> Result<NuPatchSample> {
         let mut sample = NuPatchSample::new();
         
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let geom_prop = props.property_by_name(".geom")
             .ok_or_else(|| Error::invalid("No .geom property"))?;
         let geom = geom_prop.as_compound()
@@ -525,7 +525,7 @@ impl<'a> INuPatch<'a> {
     
     /// Check if this patch has trim curves.
     pub fn has_trim_curve(&self) -> bool {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(geom_prop) = props.property_by_name(".geom") else { return false };
         let Some(geom) = geom_prop.as_compound() else { return false };
         geom.has_property("trim_nloops")

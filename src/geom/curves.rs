@@ -206,7 +206,7 @@ impl<'a> ICurves<'a> {
     /// Wrap an IObject as ICurves.
     /// Returns None if the object doesn't have the Curves schema.
     pub fn new(object: &'a IObject<'a>) -> Option<Self> {
-        if object.matches_schema(CURVES_SCHEMA) {
+        if object.matchesSchema(CURVES_SCHEMA) {
             Some(Self { object })
         } else {
             None
@@ -219,13 +219,13 @@ impl<'a> ICurves<'a> {
     }
     
     /// Get the object name.
-    pub fn name(&self) -> &str {
-        self.object.name()
+    pub fn getName(&self) -> &str {
+        self.object.getName()
     }
     
     /// Get the full path.
-    pub fn full_name(&self) -> &str {
-        self.object.full_name()
+    pub fn getFullName(&self) -> &str {
+        self.object.getFullName()
     }
     
     /// Get property names from .geom compound.
@@ -234,13 +234,13 @@ impl<'a> ICurves<'a> {
     }
     
     /// Get number of samples.
-    pub fn num_samples(&self) -> usize {
+    pub fn getNumSamples(&self) -> usize {
         geom_util::num_samples_from_positions(self.object)
     }
     
     /// Check if curves are constant (single sample).
     pub fn is_constant(&self) -> bool {
-        self.num_samples() <= 1
+        self.getNumSamples() <= 1
     }
     
     /// Get time sampling index from positions property.
@@ -260,7 +260,7 @@ impl<'a> ICurves<'a> {
     /// - Homogeneous: Topology is constant, only positions change
     /// - Heterogeneous: Topology can change between samples
     pub fn topology_variance(&self) -> TopologyVariance {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(geom_prop) = props.property_by_name(".geom") else {
             return TopologyVariance::Static;
         };
@@ -313,7 +313,7 @@ impl<'a> ICurves<'a> {
     pub fn get_sample(&self, index: usize) -> Result<CurvesSample> {
         use crate::util::Error;
         
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let geom_prop = props.property_by_name(".geom")
             .ok_or_else(|| Error::invalid("No .geom property"))?;
         let geom = geom_prop.as_compound()

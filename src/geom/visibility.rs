@@ -82,7 +82,7 @@ impl From<ObjectVisibility> for i8 {
 ///
 /// Returns None if the object doesn't have a visibility property.
 pub fn get_visibility_property(obj: &IObject<'_>) -> Option<ObjectVisibility> {
-    let props = obj.properties();
+    let props = obj.getProperties();
     
     // Look for "visible" property
     if let Some(prop) = props.property_by_name(VISIBILITY_PROPERTY_NAME) {
@@ -104,7 +104,7 @@ pub fn get_visibility_property(obj: &IObject<'_>) -> Option<ObjectVisibility> {
 ///
 /// If the object doesn't have a visibility property, returns Deferred.
 pub fn get_visibility(obj: &IObject<'_>, sel: impl Into<SampleSelector>) -> ObjectVisibility {
-    let props = obj.properties();
+    let props = obj.getProperties();
     let sel = sel.into();
     
     if let Some(prop) = props.property_by_name(VISIBILITY_PROPERTY_NAME) {
@@ -205,7 +205,7 @@ pub fn is_ancestor_invisible_in_archive(
     }
     
     // Check visibility at each ancestor level
-    check_ancestors_recursive(&archive.root(), &parts[..parts.len()-1], sel)
+    check_ancestors_recursive(&archive.getTop(), &parts[..parts.len()-1], sel)
 }
 
 /// Recursively check ancestors for hidden visibility.
@@ -219,7 +219,7 @@ fn check_ancestors_recursive(
     }
     
     // Get first child in path
-    let Some(child) = current.child_by_name(remaining[0]) else {
+    let Some(child) = current.getChildByName(remaining[0]) else {
         return false; // Path not found
     };
     

@@ -125,7 +125,7 @@ impl<'a> IPolyMesh<'a> {
     /// Wrap an IObject as an IPolyMesh.
     /// Returns None if the object doesn't have the PolyMesh schema.
     pub fn new(object: &'a IObject<'a>) -> Option<Self> {
-        if object.matches_schema(POLYMESH_SCHEMA) {
+        if object.matchesSchema(POLYMESH_SCHEMA) {
             Some(Self { object })
         } else {
             None
@@ -138,23 +138,23 @@ impl<'a> IPolyMesh<'a> {
     }
     
     /// Get the object name.
-    pub fn name(&self) -> &str {
-        self.object.name()
+    pub fn getName(&self) -> &str {
+        self.object.getName()
     }
     
     /// Get the full path.
-    pub fn full_name(&self) -> &str {
-        self.object.full_name()
+    pub fn getFullName(&self) -> &str {
+        self.object.getFullName()
     }
     
     /// Get number of samples.
-    pub fn num_samples(&self) -> usize {
+    pub fn getNumSamples(&self) -> usize {
         geom_util::num_samples_from_positions(self.object)
     }
     
     /// Check if this mesh is constant (single sample).
     pub fn is_constant(&self) -> bool {
-        self.num_samples() <= 1
+        self.getNumSamples() <= 1
     }
     
     /// Get time sampling index from positions property.
@@ -169,7 +169,7 @@ impl<'a> IPolyMesh<'a> {
     /// - Homogeneous: Topology is constant, only positions change
     /// - Heterogeneous: Topology can change between samples
     pub fn topology_variance(&self) -> TopologyVariance {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(geom_prop) = props.property_by_name(".geom") else {
             return TopologyVariance::Static;
         };
@@ -206,7 +206,7 @@ impl<'a> IPolyMesh<'a> {
     
     /// Get property names available on this mesh.
     pub fn property_names(&self) -> Vec<String> {
-        self.object.properties().property_names()
+        self.object.getProperties().property_names()
     }
     
     /// Get the names of all FaceSets on this mesh.
@@ -214,8 +214,8 @@ impl<'a> IPolyMesh<'a> {
     /// FaceSets are child objects with the FaceSet schema.
     pub fn face_set_names(&self) -> Vec<String> {
         let mut names = Vec::new();
-        for i in 0..self.object.num_children() {
-            if let Some(header) = self.object.child_header(i) {
+        for i in 0..self.object.getNumChildren() {
+            if let Some(header) = self.object.getChildHeader(i) {
                 if header.meta_data.get("schema").map(|s| s == FACESET_SCHEMA).unwrap_or(false) {
                     names.push(header.name.clone());
                 }
@@ -226,8 +226,8 @@ impl<'a> IPolyMesh<'a> {
     
     /// Check if this mesh has a FaceSet with the given name.
     pub fn has_face_set(&self, name: &str) -> bool {
-        if let Some(child) = self.object.child_by_name(name) {
-            child.matches_schema(FACESET_SCHEMA)
+        if let Some(child) = self.object.getChildByName(name) {
+            child.matchesSchema(FACESET_SCHEMA)
         } else {
             false
         }
@@ -238,14 +238,14 @@ impl<'a> IPolyMesh<'a> {
     /// This reads the FaceSet data directly without returning an IFaceSet wrapper.
     /// Use this when you need the face indices for a specific sample.
     pub fn get_face_set_sample(&self, name: &str, index: usize) -> Option<super::faceset::FaceSetSample> {
-        let child = self.object.child_by_name(name)?;
-        if !child.matches_schema(FACESET_SCHEMA) {
+        let child = self.object.getChildByName(name)?;
+        if !child.matchesSchema(FACESET_SCHEMA) {
             return None;
         }
         
         let mut sample = super::faceset::FaceSetSample::new();
         
-        let props = child.properties();
+        let props = child.getProperties();
         let geom_prop = props.property_by_name(".geom")?;
         let geom = geom_prop.as_compound()?;
         
@@ -280,12 +280,12 @@ impl<'a> IPolyMesh<'a> {
     
     /// Get the exclusivity setting for a FaceSet.
     pub fn face_set_exclusivity(&self, name: &str) -> Option<super::faceset::FaceSetExclusivity> {
-        let child = self.object.child_by_name(name)?;
-        if !child.matches_schema(FACESET_SCHEMA) {
+        let child = self.object.getChildByName(name)?;
+        if !child.matchesSchema(FACESET_SCHEMA) {
             return None;
         }
         
-        let header = child.header();
+        let header = child.getHeader();
         Some(if let Some(excl_str) = header.meta_data.get(super::faceset::FACE_EXCLUSIVITY_KEY) {
             super::faceset::FaceSetExclusivity::parse(excl_str)
         } else {
@@ -295,12 +295,12 @@ impl<'a> IPolyMesh<'a> {
     
     /// Get number of samples in a FaceSet.
     pub fn face_set_num_samples(&self, name: &str) -> usize {
-        let Some(child) = self.object.child_by_name(name) else { return 0 };
-        if !child.matches_schema(FACESET_SCHEMA) {
+        let Some(child) = self.object.getChildByName(name) else { return 0 };
+        if !child.matchesSchema(FACESET_SCHEMA) {
             return 0;
         }
         
-        let props = child.properties();
+        let props = child.getProperties();
         let Some(geom_prop) = props.property_by_name(".geom") else { return 1 };
         let Some(geom) = geom_prop.as_compound() else { return 1 };
         let Some(faces_prop) = geom.property_by_name(".faces") else { return 1 };
@@ -359,7 +359,7 @@ impl<'a> IPolyMesh<'a> {
         
         let mut sample = PolyMeshSample::new();
         
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let geom_prop = props.property_by_name(".geom")
             .ok_or_else(|| Error::invalid("No .geom property"))?;
         let geom = geom_prop.as_compound()
@@ -400,7 +400,7 @@ impl<'a> IPolyMesh<'a> {
     /// 
     /// If UVs are indexed, this expands them to per-face-vertex values.
     pub fn get_uvs(&self, index: usize) -> Option<Vec<glam::Vec2>> {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let geom_prop = props.property_by_name(".geom")?;
         let geom = geom_prop.as_compound()?;
         let uv_prop = geom.property_by_name("uv")?;
@@ -451,7 +451,7 @@ impl<'a> IPolyMesh<'a> {
     /// 
     /// If normals are indexed, this expands them to per-face-vertex values.
     pub fn get_normals(&self, index: usize) -> Option<Vec<glam::Vec3>> {
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let geom_prop = props.property_by_name(".geom")?;
         let geom = geom_prop.as_compound()?;
         let n_prop = geom.property_by_name("N")?;
@@ -502,7 +502,7 @@ impl<'a> IPolyMesh<'a> {
     pub fn uvs_scope(&self) -> crate::core::GeometryScope {
         use crate::core::GeometryScope;
         
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(geom_prop) = props.property_by_name(".geom") else {
             return GeometryScope::Unknown;
         };
@@ -513,7 +513,7 @@ impl<'a> IPolyMesh<'a> {
             return GeometryScope::Unknown;
         };
         
-        if let Some(scope_str) = uv_prop.header().meta_data.get("geoScope") {
+        if let Some(scope_str) = uv_prop.getHeader().meta_data.get("geoScope") {
             GeometryScope::parse(scope_str)
         } else {
             GeometryScope::FaceVarying // Default for UVs
@@ -524,7 +524,7 @@ impl<'a> IPolyMesh<'a> {
     pub fn normals_scope(&self) -> crate::core::GeometryScope {
         use crate::core::GeometryScope;
         
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let Some(geom_prop) = props.property_by_name(".geom") else {
             return GeometryScope::Unknown;
         };
@@ -535,7 +535,7 @@ impl<'a> IPolyMesh<'a> {
             return GeometryScope::Unknown;
         };
         
-        if let Some(scope_str) = n_prop.header().meta_data.get("geoScope") {
+        if let Some(scope_str) = n_prop.getHeader().meta_data.get("geoScope") {
             GeometryScope::parse(scope_str)
         } else {
             GeometryScope::FaceVarying // Default for normals

@@ -39,7 +39,7 @@ impl PyIObject {
     where
         F: FnOnce(&crate::abc::IObject) -> Option<T>,
     {
-        let root = self.archive.root();
+        let root = self.archive.getTop();
         
         if self.path.is_empty() {
             return f(&root);
@@ -54,7 +54,7 @@ impl PyIObject {
             if path.is_empty() {
                 f(&obj)
             } else {
-                let child = obj.child_by_name(&path[0])?;
+                let child = obj.getChildByName(&path[0])?;
                 traverse(child, &path[1..], f)
             }
         }
@@ -81,13 +81,13 @@ impl PyIObject {
     
     /// Get number of children.
     fn getNumChildren(&self) -> usize {
-        self.with_object(|obj| Some(obj.num_children())).unwrap_or(0)
+        self.with_object(|obj| Some(obj.getNumChildren())).unwrap_or(0)
     }
     
     /// Get child by index.
     fn getChild(&self, index: usize) -> PyResult<PyIObject> {
         let child_name = self.with_object(|obj| {
-            obj.child(index).map(|c| c.name().to_string())
+            obj.getChild(index).map(|c| c.getName().to_string())
         }).ok_or_else(|| PyValueError::new_err("Child index out of range"))?;
         
         let mut new_path = self.path.clone();
@@ -103,7 +103,7 @@ impl PyIObject {
     #[pyo3(signature = (name))]
     fn getChildByName(&self, name: &str) -> PyResult<PyIObject> {
         let exists = self.with_object(|obj| {
-            Some(obj.child_by_name(name).is_some())
+            Some(obj.getChildByName(name).is_some())
         }).unwrap_or(false);
         
         if !exists {
@@ -142,7 +142,7 @@ impl PyIObject {
     /// Get schema type string.
     fn getSchemaType(&self) -> String {
         self.with_object(|obj| {
-            Some(obj.meta_data().get("schema").unwrap_or_default().to_string())
+            Some(obj.getMetaData().get("schema").unwrap_or_default().to_string())
         }).unwrap_or_default()
     }
     
@@ -158,12 +158,12 @@ impl PyIObject {
     /// Get number of samples.
     fn getNumSamples(&self) -> usize {
         self.with_object(|obj| {
-            if let Some(m) = IPolyMesh::new(obj) { return Some(m.num_samples()); }
-            if let Some(x) = IXform::new(obj) { return Some(x.num_samples()); }
-            if let Some(c) = ICamera::new(obj) { return Some(c.num_samples()); }
-            if let Some(p) = IPoints::new(obj) { return Some(p.num_samples()); }
-            if let Some(c) = ICurves::new(obj) { return Some(c.num_samples()); }
-            if let Some(s) = ISubD::new(obj) { return Some(s.num_samples()); }
+            if let Some(m) = IPolyMesh::new(obj) { return Some(m.getNumSamples()); }
+            if let Some(x) = IXform::new(obj) { return Some(x.getNumSamples()); }
+            if let Some(c) = ICamera::new(obj) { return Some(c.getNumSamples()); }
+            if let Some(p) = IPoints::new(obj) { return Some(p.getNumSamples()); }
+            if let Some(c) = ICurves::new(obj) { return Some(c.getNumSamples()); }
+            if let Some(s) = ISubD::new(obj) { return Some(s.getNumSamples()); }
             Some(0)
         }).unwrap_or(0)
     }
@@ -297,10 +297,10 @@ impl PyIObject {
     fn getFaceSetNames(&self) -> Vec<String> {
         self.with_object(|obj| {
             let mut names = Vec::new();
-            for i in 0..obj.num_children() {
-                if let Some(child) = obj.child(i) {
+            for i in 0..obj.getNumChildren() {
+                if let Some(child) = obj.getChild(i) {
                     if IFaceSet::new(&child).is_some() {
-                        names.push(child.name().to_string());
+                        names.push(child.getName().to_string());
                     }
                 }
             }
@@ -311,7 +311,7 @@ impl PyIObject {
     /// Get FaceSet child by name.
     fn getFaceSet(&self, name: &str) -> PyResult<PyIFaceSet> {
         let exists = self.with_object(|obj| {
-            if let Some(child) = obj.child_by_name(name) {
+            if let Some(child) = obj.getChildByName(name) {
                 if IFaceSet::new(&child).is_some() {
                     return Some(true);
                 }
@@ -335,7 +335,7 @@ impl PyIObject {
     /// Get geometry parameter by name (for meshes, etc).
     fn getGeomParam(&self, name: &str) -> PyResult<PyIGeomParam> {
         let exists = self.with_object(|obj| {
-            let props = obj.properties();
+            let props = obj.getProperties();
             let geom_box = props.property_by_name(".geom")?;
             let geom = geom_box.as_compound()?;
             if IGeomParam::new(&geom, name).is_some() {
@@ -361,13 +361,13 @@ impl PyIObject {
     /// List available geometry parameter names.
     fn getGeomParamNames(&self) -> Vec<String> {
         self.with_object(|obj| {
-            let props = obj.properties();
+            let props = obj.getProperties();
             let geom_box = props.property_by_name(".geom")?;
             let geom = geom_box.as_compound()?;
             let mut names = Vec::new();
-            for i in 0..geom.num_properties() {
+            for i in 0..geom.getNumProperties() {
                 if let Some(prop) = geom.property(i) {
-                    let name = prop.name();
+                    let name = prop.getName();
                     // Filter out standard properties
                     if !name.starts_with('.') && !name.is_empty() {
                         names.push(name.to_string());
@@ -412,21 +412,21 @@ impl PyIObject {
     /// Returns 0 (identity/static) if no time sampling found.
     fn getTimeSamplingIndex(&self) -> u32 {
         self.with_object(|obj| {
-            let props = obj.properties();
+            let props = obj.getProperties();
             let geom_box = props.property_by_name(".geom")?;
             let geom = geom_box.as_compound()?;
             
             // Try common property names in priority order
             for name in &["P", ".vals", ".xform", ".camera", ".light", ".userProperties"] {
                 if let Some(prop) = geom.property_by_name(name) {
-                    return Some(prop.header().time_sampling_index);
+                    return Some(prop.getHeader().time_sampling_index);
                 }
             }
             
             // Fallback: first property
-            if geom.num_properties() > 0 {
+            if geom.getNumProperties() > 0 {
                 if let Some(prop) = geom.property(0) {
-                    return Some(prop.header().time_sampling_index);
+                    return Some(prop.getHeader().time_sampling_index);
                 }
             }
             
@@ -443,7 +443,7 @@ impl PyIObject {
     #[pyo3(signature = (index=0))]
     fn getSelfBounds(&self, index: usize) -> Option<([f64; 3], [f64; 3])> {
         self.with_object(|obj| {
-            let props = obj.properties();
+            let props = obj.getProperties();
             let geom_box = props.property_by_name(".geom")?;
             let geom = geom_box.as_compound()?;
             let bnds_prop = geom.property_by_name(".selfBnds")?;
@@ -469,7 +469,7 @@ impl PyIObject {
     #[pyo3(signature = (index=0))]
     fn getChildBounds(&self, index: usize) -> Option<([f64; 3], [f64; 3])> {
         self.with_object(|obj| {
-            let props = obj.properties();
+            let props = obj.getProperties();
             let geom_box = props.property_by_name(".geom")?;
             let geom = geom_box.as_compound()?;
             let bnds_prop = geom.property_by_name(".childBnds")?;
@@ -493,7 +493,7 @@ impl PyIObject {
     /// Check if object has self bounds property.
     fn hasSelfBounds(&self) -> bool {
         self.with_object(|obj| {
-            let props = obj.properties();
+            let props = obj.getProperties();
             let geom_box = props.property_by_name(".geom")?;
             let geom = geom_box.as_compound()?;
             Some(geom.has_property(".selfBnds"))
@@ -503,7 +503,7 @@ impl PyIObject {
     /// Check if object has child bounds property.
     fn hasChildBounds(&self) -> bool {
         self.with_object(|obj| {
-            let props = obj.properties();
+            let props = obj.getProperties();
             let geom_box = props.property_by_name(".geom")?;
             let geom = geom_box.as_compound()?;
             Some(geom.has_property(".childBnds"))

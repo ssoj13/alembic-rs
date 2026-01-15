@@ -76,7 +76,7 @@ impl<'a> IPoints<'a> {
     /// Wrap an IObject as IPoints.
     /// Returns None if the object doesn't have the Points schema.
     pub fn new(object: &'a IObject<'a>) -> Option<Self> {
-        if object.matches_schema(POINTS_SCHEMA) {
+        if object.matchesSchema(POINTS_SCHEMA) {
             Some(Self { object })
         } else {
             None
@@ -89,13 +89,13 @@ impl<'a> IPoints<'a> {
     }
     
     /// Get the object name.
-    pub fn name(&self) -> &str {
-        self.object.name()
+    pub fn getName(&self) -> &str {
+        self.object.getName()
     }
     
     /// Get the full path.
-    pub fn full_name(&self) -> &str {
-        self.object.full_name()
+    pub fn getFullName(&self) -> &str {
+        self.object.getFullName()
     }
     
     /// Get property names from .geom compound.
@@ -104,13 +104,13 @@ impl<'a> IPoints<'a> {
     }
     
     /// Get number of samples.
-    pub fn num_samples(&self) -> usize {
+    pub fn getNumSamples(&self) -> usize {
         geom_util::num_samples_from_positions(self.object)
     }
     
     /// Check if points are constant.
     pub fn is_constant(&self) -> bool {
-        self.num_samples() <= 1
+        self.getNumSamples() <= 1
     }
     
     /// Get time sampling index from positions property.
@@ -152,7 +152,7 @@ impl<'a> IPoints<'a> {
     /// 
     /// Points are typically heterogeneous since particle count can change.
     pub fn topology_variance(&self) -> TopologyVariance {
-        if self.num_samples() <= 1 {
+        if self.getNumSamples() <= 1 {
             TopologyVariance::Static
         } else {
             // Points typically have changing topology (particle birth/death)
@@ -164,7 +164,7 @@ impl<'a> IPoints<'a> {
     pub fn get_sample(&self, index: usize) -> Result<PointsSample> {
         use crate::util::Error;
         
-        let props = self.object.properties();
+        let props = self.object.getProperties();
         let geom_prop = props.property_by_name(".geom")
             .ok_or_else(|| Error::invalid("No .geom property"))?;
         let geom = geom_prop.as_compound()

@@ -45,7 +45,7 @@ impl PyOArchive {
     fn getName(&self) -> PyResult<String> {
         let guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in getName(): {}", e)))?;
         let archive = guard.as_ref().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
-        Ok(archive.name().to_string())
+        Ok(archive.getName().to_string())
     }
     
     /// Set application writer string.
@@ -199,7 +199,7 @@ impl PyOArchive {
         let guard = self.archive.lock();
         if let Ok(g) = guard {
             if let Some(archive) = g.as_ref() {
-                return format!("<OArchive '{}'>", archive.name());
+                return format!("<OArchive '{}'>", archive.getName());
             }
         }
         "<OArchive (closed)>".to_string()
