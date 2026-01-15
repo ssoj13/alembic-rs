@@ -1078,8 +1078,8 @@ impl Renderer {
         let (center, size, y) = if let Some(b) = bounds {
             let c = b.center();
             let r = b.radius().max(1.0);
-            // Floor at 0.01 below scene's lower bound
-            (c, r * 4.0, b.min.y - 0.01)
+            // Floor at 0.1 below scene's lower bound (avoid z-fighting)
+            (c, r * 4.0, b.min.y - 0.1)
         } else {
             (Vec3::ZERO, 10.0, 0.0)
         };

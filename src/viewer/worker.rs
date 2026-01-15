@@ -101,7 +101,7 @@ fn worker_loop(
                 let scene = mesh_converter::collect_scene_cached(&archive, final_frame, Some(&cache));
                 let elapsed = t0.elapsed();
                 if elapsed.as_millis() > 10 {
-                    eprintln!("[PERF] Frame {} loaded in {:?}", final_frame, elapsed);
+                    log::trace!("[PERF] Frame {} loaded in {:?}", final_frame, elapsed);
                 }
                 
                 // Send result back
