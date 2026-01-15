@@ -354,6 +354,12 @@ pub struct PipelineConfig {
     pub wireframe: bool,
     /// Primitive topology (TriangleList, LineList, etc)
     pub topology: wgpu::PrimitiveTopology,
+    /// Write to depth buffer (disable for transparency)
+    pub depth_write: bool,
+    /// Depth-only pass (no color output, for depth prepass)
+    pub depth_only: bool,
+    /// Use LessEqual depth compare (needed after depth prepass)
+    pub depth_equal: bool,
 }
 
 impl Default for PipelineConfig {
@@ -365,6 +371,9 @@ impl Default for PipelineConfig {
             cull_mode: Some(wgpu::Face::Back),
             wireframe: false,
             topology: wgpu::PrimitiveTopology::TriangleList,
+            depth_write: true,
+            depth_only: false,
+            depth_equal: false,
         }
     }
 }
@@ -588,6 +597,24 @@ pub fn create_pipeline(
         Some(wgpu::BlendState::REPLACE)
     };
 
+    // Color targets for fragment shader (must outlive the pipeline descriptor)
+    let color_targets = [Some(wgpu::ColorTargetState {
+        format: config.format,
+        blend: blend_state,
+        write_mask: wgpu::ColorWrites::ALL,
+    })];
+
+    let fragment_state = if config.depth_only {
+        None  // Depth-only pass - no fragment shader
+    } else {
+        Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some(fragment_entry),
+            compilation_options: Default::default(),
+            targets: &color_targets,
+        })
+    };
+
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("standard_surface_pipeline"),
         layout: Some(&pipeline_layout),
@@ -608,22 +635,17 @@ pub fn create_pipeline(
         },
         depth_stencil: config.depth_format.map(|format| wgpu::DepthStencilState {
             format,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
+            depth_write_enabled: config.depth_write,
+            depth_compare: if config.depth_equal {
+                wgpu::CompareFunction::LessEqual
+            } else {
+                wgpu::CompareFunction::Less
+            },
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),
         multisample: wgpu::MultisampleState::default(),
-        fragment: Some(wgpu::FragmentState {
-            module: &shader,
-            entry_point: Some(fragment_entry),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: config.format,
-                blend: blend_state,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
+        fragment: fragment_state,
         multiview: None,
         cache: None,
     })
@@ -679,8 +701,8 @@ mod tests {
 
     #[test]
     fn test_camera_uniform_size() {
-        // 2 mat4 + vec3 + pad = 128 + 16 = 144 bytes
-        assert_eq!(std::mem::size_of::<CameraUniform>(), 144);
+        // 2 mat4 + vec4(position+xray) + vec4(flat+auto+pad) = 128 + 16 + 16 = 160 bytes
+        assert_eq!(std::mem::size_of::<CameraUniform>(), 160);
     }
 
     #[test]

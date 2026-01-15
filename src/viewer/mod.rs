@@ -6,6 +6,7 @@ mod environment;
 mod mesh_converter;
 mod renderer;
 mod settings;
+mod smooth_normals;
 mod viewport;
 mod worker;
 
@@ -62,10 +63,11 @@ pub fn run(initial_file: Option<PathBuf>) -> Result<()> {
                             | wgpu::Features::DEPTH32FLOAT_STENCIL8
                             | wgpu::Features::TEXTURE_COMPRESSION_BC
                             | wgpu::Features::PUSH_CONSTANTS
-                            | wgpu::Features::MULTI_DRAW_INDIRECT,
+                            | wgpu::Features::MULTI_DRAW_INDIRECT_COUNT,
                         required_limits: wgpu::Limits {
                             max_texture_dimension_2d: 8192,
                             max_bind_groups: 8,
+                            max_push_constant_size: 128,  // For PUSH_CONSTANTS feature
                             ..base_limits
                         },
                         ..Default::default()

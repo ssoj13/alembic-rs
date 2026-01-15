@@ -14,7 +14,9 @@ pub struct Settings {
     pub show_shadows: bool,
     pub xray_alpha: f32,
     pub double_sided: bool,
-    pub flip_normals: bool,
+    pub auto_normals: bool,
+    pub smooth_normals: bool,
+    pub smooth_angle: f32,  // 0-180 degrees
     pub background_color: [f32; 4],
     
     // Window
@@ -61,7 +63,9 @@ impl Default for Settings {
             show_shadows: true,
             xray_alpha: 1.0,
             double_sided: false,
-            flip_normals: false,
+            auto_normals: true,  // Auto-flip backface normals by default
+            smooth_normals: false,
+            smooth_angle: 45.0,  // Default 45 degrees
             background_color: [0.1, 0.1, 0.12, 1.0],
             window_width: 1280.0,
             window_height: 720.0,

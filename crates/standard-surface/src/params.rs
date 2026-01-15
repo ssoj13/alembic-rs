@@ -162,8 +162,9 @@ pub struct CameraUniform {
     pub xray_alpha: f32,
     /// Flat shading mode (1.0 = flat, 0.0 = smooth)
     pub flat_shading: f32,
+    /// Auto-flip normals for backfaces (1.0 = enabled, 0.0 = disabled)
+    pub auto_normals: f32,
     /// Padding for alignment
-    pub _pad1: f32,
     pub _pad2: f32,
     pub _pad3: f32,
 }

@@ -544,11 +544,25 @@ impl ViewerApp {
                 renderer.double_sided = self.settings.double_sided;
                 changed = true;
             }
-            if ui.checkbox(&mut self.settings.flip_normals, "Flip Normals").changed() {
-                renderer.flip_normals = self.settings.flip_normals;
-                renderer.update_normals();
+            if ui.checkbox(&mut self.settings.auto_normals, "Auto Normals").changed() {
+                renderer.auto_normals = self.settings.auto_normals;
                 changed = true;
             }
+            
+            // Smooth normals - recalculate dynamically
+            ui.horizontal(|ui| {
+                let checkbox_changed = ui.checkbox(&mut self.settings.smooth_normals, "SmoothN").changed();
+                let slider_changed = ui.add(egui::Slider::new(&mut self.settings.smooth_angle, 0.0..=180.0)
+                    .suffix("\u{00b0}")
+                    .fixed_decimals(0)).changed();
+                if checkbox_changed || slider_changed {
+                    renderer.recalculate_smooth_normals(
+                        self.settings.smooth_angle,
+                        self.settings.smooth_normals,
+                    );
+                    changed = true;
+                }
+            });
             
             // Anti-aliasing (requires restart to take effect)
             ui.horizontal(|ui| {
@@ -1202,6 +1216,7 @@ impl ViewerApp {
             &indices,
             Mat4::IDENTITY,
             &material,
+            None,  // no smooth data for test cube
         );
 
         self.mesh_count = renderer.meshes.len();
@@ -1346,6 +1361,7 @@ impl ViewerApp {
                     &mesh.indices,
                     mesh.transform,
                     &material,
+                    mesh.smooth_data,
                 );
             }
         }
@@ -1561,7 +1577,7 @@ impl eframe::App for ViewerApp {
                     renderer.hdr_visible = self.settings.hdr_visible;
                     renderer.xray_alpha = self.settings.xray_alpha;
                     renderer.double_sided = self.settings.double_sided;
-                    renderer.flip_normals = self.settings.flip_normals;
+                    renderer.auto_normals = self.settings.auto_normals;
                     renderer.background_color = self.settings.background_color;
                 }
                 // Ensure settings file exists

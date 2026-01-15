@@ -2,6 +2,7 @@
 
 use crate::geom::{IPolyMesh, PolyMeshSample, ICurves, CurvesSample, ISubD, IPoints, PointsSample, ICamera, ILight};
 use crate::material::{IMaterial, get_material_assignment};
+use super::smooth_normals::SmoothNormalData;
 use glam::{Mat4, Vec3};
 use rayon::prelude::*;
 use standard_surface::Vertex;
@@ -73,6 +74,8 @@ pub struct ConvertedMesh {
     pub base_color: Option<Vec3>,
     pub metallic: Option<f32>,
     pub roughness: Option<f32>,
+    // Data for dynamic smooth normal recalculation
+    pub smooth_data: Option<SmoothNormalData>,
 }
 
 /// Converted curves data ready for GPU (as line strips)
@@ -280,6 +283,9 @@ pub fn convert_polymesh(sample: &PolyMeshSample, transform: Mat4) -> Option<Conv
     
     let mut vertices = Vec::with_capacity(tri_count * 3);
     let mut indices = Vec::with_capacity(tri_count * 3);
+    // For smooth normals: position and face normal per vertex
+    let mut smooth_positions = Vec::with_capacity(tri_count * 3);
+    let mut smooth_face_normals = Vec::with_capacity(tri_count * 3);
     
     let mut idx_offset = 0usize;
     let mut face_idx = 0usize;
@@ -346,6 +352,11 @@ pub fn convert_polymesh(sample: &PolyMeshSample, transform: Mat4) -> Option<Conv
                 (glam::Vec2::ZERO, glam::Vec2::ZERO, glam::Vec2::ZERO)
             };
             
+            // Compute geometric face normal for this triangle
+            let edge1 = p1 - p0;
+            let edge2 = p2 - p0;
+            let geo_face_normal = edge1.cross(edge2).normalize_or_zero();
+            
             // Add vertices
             let base_idx = vertices.len() as u32;
             
@@ -365,6 +376,14 @@ pub fn convert_polymesh(sample: &PolyMeshSample, transform: Mat4) -> Option<Conv
                 uv: uv2.into(),
             });
             
+            // Store data for smooth normals recalculation
+            smooth_positions.push(p0);
+            smooth_positions.push(p1);
+            smooth_positions.push(p2);
+            smooth_face_normals.push(geo_face_normal);
+            smooth_face_normals.push(geo_face_normal);
+            smooth_face_normals.push(geo_face_normal);
+            
             indices.push(base_idx);
             indices.push(base_idx + 1);
             indices.push(base_idx + 2);
@@ -381,6 +400,9 @@ pub fn convert_polymesh(sample: &PolyMeshSample, transform: Mat4) -> Option<Conv
         bounds.expand(world_pos);
     }
     
+    // Build smooth normal data for dynamic recalculation
+    let smooth_data = SmoothNormalData::from_vertices(&smooth_positions, &smooth_face_normals);
+    
     Some(ConvertedMesh {
         path: String::new(),  // set by caller
         vertices: Arc::new(vertices),
@@ -390,6 +412,7 @@ pub fn convert_polymesh(sample: &PolyMeshSample, transform: Mat4) -> Option<Conv
         base_color: None,  // set by apply_materials
         metallic: None,
         roughness: None,
+        smooth_data: Some(smooth_data),
     })
 }
 
@@ -544,6 +567,7 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
             base_color: None,  // set by apply_materials
             metallic: None,
             roughness: None,
+            smooth_data: None,  // cached meshes don't store smooth data
         });
     }
     

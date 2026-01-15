@@ -11,6 +11,7 @@ use standard_surface::{
 };
 
 use super::environment::{self, EnvironmentMap, EnvUniform};
+use super::smooth_normals::SmoothNormalData;
 
 /// Shadow map resolution
 const SHADOW_MAP_SIZE: u32 = 2048;
@@ -89,7 +90,7 @@ pub struct Renderer {
     pub hdr_visible: bool,
     pub xray_alpha: f32,
     pub double_sided: bool,
-    pub flip_normals: bool,
+    pub auto_normals: bool,
     pub background_color: [f32; 4],
 }
 
@@ -118,6 +119,9 @@ pub struct SceneMesh {
     pub bounds: (Vec3, Vec3),  // (min, max) in world space
     #[allow(dead_code)]
     pub name: String,
+    // For dynamic smooth normal recalculation
+    pub smooth_data: Option<SmoothNormalData>,
+    pub base_vertices: Option<Vec<Vertex>>,  // vertices with flat normals
 }
 
 /// Compute a quick hash for vertex change detection
@@ -237,14 +241,14 @@ impl Renderer {
         // Double-sided pipelines (no backface culling)
         let double_sided_config = PipelineConfig {
             cull_mode: None,
-            ..config
+            ..config.clone()
         };
         let pipeline_double_sided = standard_surface::create_pipeline(&device, &layouts, &double_sided_config);
         
         let wireframe_double_sided_config = PipelineConfig {
             wireframe: true,
             cull_mode: None,
-            ..double_sided_config
+            ..double_sided_config.clone()
         };
         let wireframe_pipeline_double_sided = standard_surface::create_pipeline(&device, &layouts, &wireframe_double_sided_config);
         
@@ -297,7 +301,7 @@ impl Renderer {
             position: Vec3::new(0.0, 0.0, 5.0),
             xray_alpha: 1.0,
             flat_shading: 0.0,
-            _pad1: 0.0,
+            auto_normals: 0.0,
             _pad2: 0.0,
             _pad3: 0.0,
         };
@@ -487,21 +491,20 @@ impl Renderer {
             hdr_visible: true,
             xray_alpha: 1.0,
             double_sided: false,
-            flip_normals: false,
+            auto_normals: false,
             background_color: [0.1, 0.1, 0.12, 1.0],
         }
     }
 
     /// Update camera uniform
     pub fn update_camera(&self, view_proj: Mat4, view: Mat4, position: Vec3) {
-        let xray_alpha = self.xray_alpha;
         let uniform = CameraUniform {
             view_proj: view_proj.to_cols_array_2d(),
             view: view.to_cols_array_2d(),
             position,
-            xray_alpha,
+            xray_alpha: self.xray_alpha,
             flat_shading: if self.flat_shading { 1.0 } else { 0.0 },
-            _pad1: 0.0,
+            auto_normals: if self.auto_normals { 1.0 } else { 0.0 },
             _pad2: 0.0,
             _pad3: 0.0,
         };
@@ -707,6 +710,7 @@ impl Renderer {
         indices: &[u32],
         transform: Mat4,
         params: &StandardSurfaceParams,
+        smooth_data: Option<SmoothNormalData>,
     ) {
         let mesh = self.create_mesh(vertices, indices);
 
@@ -750,6 +754,8 @@ impl Renderer {
             vertex_hash: compute_vertex_hash(vertices),
             bounds,
             name,
+            smooth_data,
+            base_vertices: Some(vertices.to_vec()),
         });
     }
     
@@ -967,6 +973,32 @@ impl Renderer {
         self.meshes.get(name).map(|m| m.vertex_hash)
     }
     
+    /// Recalculate smooth normals for all meshes with given angle
+    pub fn recalculate_smooth_normals(&mut self, angle_deg: f32, enabled: bool) {
+        for scene_mesh in self.meshes.values_mut() {
+            if let (Some(smooth_data), Some(base_verts)) = (&scene_mesh.smooth_data, &scene_mesh.base_vertices) {
+                let mut new_vertices = base_verts.clone();
+                
+                if enabled {
+                    // Calculate smooth normals
+                    let smooth_normals = smooth_data.calculate(angle_deg);
+                    for (vert, normal) in new_vertices.iter_mut().zip(smooth_normals.iter()) {
+                        vert.normal = (*normal).into();
+                    }
+                }
+                // else: use base_vertices which have flat normals
+                
+                // Recreate vertex buffer
+                let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("mesh_vertex_buffer"),
+                    contents: bytemuck::cast_slice(&new_vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+                scene_mesh.mesh.vertex_buffer = vertex_buffer;
+            }
+        }
+    }
+    
     /// Update curves transform
     #[allow(dead_code)]
     pub fn update_curves_transform(&mut self, name: &str, transform: Mat4) -> bool {
@@ -1023,20 +1055,6 @@ impl Renderer {
         self.queue.write_buffer(&self.env_map.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
     }
 
-    /// Update all mesh normal matrices (call when flip_normals changes)
-    pub fn update_normals(&self) {
-        let flip_scale = if self.flip_normals { -1.0 } else { 1.0 };
-        
-        for mesh in self.meshes.values() {
-            let normal_matrix = mesh.transform.inverse().transpose() 
-                * Mat4::from_scale(Vec3::splat(flip_scale));
-            let model_uniform = ModelUniform {
-                model: mesh.transform.to_cols_array_2d(),
-                normal_matrix: normal_matrix.to_cols_array_2d(),
-            };
-            self.queue.write_buffer(&mesh.model_buffer, 0, bytemuck::bytes_of(&model_uniform));
-        }
-    }
 
     /// Render the scene
     pub fn render(&mut self, view: &wgpu::TextureView, width: u32, height: u32, camera_distance: f32) {
@@ -1121,6 +1139,7 @@ impl Renderer {
                 render_pass.draw_indexed(0..self.skybox_index_count, 0, 0..1);
             }
 
+            // Select pipeline based on display mode
             let pipeline = match (self.show_wireframe, self.double_sided) {
                 (false, false) => &self.pipeline,
                 (false, true) => &self.pipeline_double_sided,
