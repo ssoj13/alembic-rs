@@ -84,6 +84,7 @@ pub struct ViewerApp {
     worker: Option<super::worker::WorkerHandle>,
     pending_frame: Option<usize>,  // Frame we've requested but not yet received
     epoch: u64,  // Incremented on each request, used to discard stale results
+    is_fullscreen: bool,
 }
 
 impl ViewerApp {
@@ -121,6 +122,7 @@ impl ViewerApp {
             worker: None,
             pending_frame: None,
             epoch: 0,
+            is_fullscreen: false,
         }
     }
 
@@ -517,10 +519,6 @@ impl ViewerApp {
         if let Some(renderer) = &mut self.viewport.renderer {
             let mut changed = false;
             
-            if ui.checkbox(&mut self.settings.show_grid, "Grid").changed() {
-                renderer.show_grid = self.settings.show_grid;
-                changed = true;
-            }
             if ui.checkbox(&mut self.settings.show_wireframe, "Wireframe").changed() {
                 renderer.show_wireframe = self.settings.show_wireframe;
                 changed = true;
@@ -684,6 +682,14 @@ impl ViewerApp {
         if has_env && ui.checkbox(&mut self.settings.hdr_visible, "Show Background").changed() {
             if let Some(renderer) = &mut self.viewport.renderer {
                 renderer.hdr_visible = self.settings.hdr_visible;
+            }
+            self.settings.save();
+        }
+        
+        // Grid
+        if ui.checkbox(&mut self.settings.show_grid, "Grid").changed() {
+            if let Some(renderer) = &mut self.viewport.renderer {
+                renderer.show_grid = self.settings.show_grid;
             }
             self.settings.save();
         }
@@ -1427,39 +1433,41 @@ impl ViewerApp {
         self.current_frame = frame;
     }
     
-    /// Find next or previous ABC file in the same directory
+    /// Find next or previous file with given extensions in the same directory
     /// direction: -1 for previous, +1 for next
-    fn find_sibling_abc(&self, direction: i32) -> Option<PathBuf> {
-        let current = self.current_file.as_ref()?;
+    fn find_sibling_file(current: &PathBuf, direction: i32, extensions: &[&str]) -> Option<PathBuf> {
         let dir = current.parent()?;
         
-        // Collect all .abc files in directory
-        let mut abc_files: Vec<PathBuf> = std::fs::read_dir(dir)
+        // Collect all matching files in directory
+        let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
             .ok()?
             .filter_map(|e| e.ok())
             .map(|e| e.path())
             .filter(|p| {
                 p.extension()
-                    .map(|ext| ext.eq_ignore_ascii_case("abc"))
+                    .map(|ext| {
+                        let ext_str = ext.to_string_lossy().to_lowercase();
+                        extensions.iter().any(|e| e.eq_ignore_ascii_case(&ext_str))
+                    })
                     .unwrap_or(false)
             })
             .collect();
         
         // Sort alphabetically
-        abc_files.sort();
+        files.sort();
         
-        if abc_files.is_empty() {
+        if files.is_empty() {
             return None;
         }
         
         // Find current file index
-        let current_idx = abc_files.iter().position(|p| p == current)?;
+        let current_idx = files.iter().position(|p| p == current)?;
         
         // Calculate new index with wrapping
         let new_idx = if direction > 0 {
-            (current_idx + 1) % abc_files.len()
+            (current_idx + 1) % files.len()
         } else if current_idx == 0 {
-            abc_files.len() - 1
+            files.len() - 1
         } else {
             current_idx - 1
         };
@@ -1469,19 +1477,38 @@ impl ViewerApp {
             return None;
         }
         
-        Some(abc_files[new_idx].clone())
+        Some(files[new_idx].clone())
     }
     
     /// Navigate to next or previous ABC file in directory
-    fn navigate_sibling(&mut self, direction: i32) {
-        if let Some(path) = self.find_sibling_abc(direction) {
-            let filename = path.file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.display().to_string());
-            self.status_message = format!("Opening: {}", filename);
-            self.pending_file = Some(path);
+    fn navigate_sibling_abc(&mut self, direction: i32) {
+        if let Some(current) = &self.current_file {
+            if let Some(path) = Self::find_sibling_file(current, direction, &["abc"]) {
+                let filename = path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.display().to_string());
+                self.status_message = format!("Opening: {}", filename);
+                self.pending_file = Some(path);
+            } else {
+                self.status_message = "No other ABC files in directory".into();
+            }
+        }
+    }
+    
+    /// Navigate to next or previous HDR/EXR file in directory
+    fn navigate_sibling_hdr(&mut self, direction: i32) {
+        if let Some(current) = &self.settings.last_hdr_file {
+            if let Some(path) = Self::find_sibling_file(current, direction, &["hdr", "exr"]) {
+                let filename = path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.display().to_string());
+                self.status_message = format!("Loading HDR: {}", filename);
+                self.pending_hdr_file = Some(path);
+            } else {
+                self.status_message = "No other HDR/EXR files in directory".into();
+            }
         } else {
-            self.status_message = "No other ABC files in directory".into();
+            self.status_message = "No HDR file loaded".into();
         }
     }
 }
@@ -1520,21 +1547,41 @@ impl eframe::App for ViewerApp {
         // Process any ready frames from background worker (non-blocking)
         self.process_worker_results();
         
-        // Close on Escape - stop worker first to clear queue
+        // Escape - exit fullscreen first, then close app
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            if let Some(mut worker) = self.worker.take() {
-                worker.stop();
+            if self.is_fullscreen {
+                self.is_fullscreen = false;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+            } else {
+                if let Some(mut worker) = self.worker.take() {
+                    worker.stop();
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
             }
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            return;
+        }
+        
+        // Z = Toggle fullscreen
+        if ctx.input(|i| i.key_pressed(egui::Key::Z)) {
+            self.is_fullscreen = !self.is_fullscreen;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.is_fullscreen));
         }
         
         // Navigate ABC files in directory: PageUp = prev, PageDown = next
+        // Navigate HDR files: Ctrl+PageUp = prev, Ctrl+PageDown = next
         if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
-            self.navigate_sibling(-1);
+            if ctx.input(|i| i.modifiers.ctrl) {
+                self.navigate_sibling_hdr(-1);
+            } else {
+                self.navigate_sibling_abc(-1);
+            }
         }
         if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
-            self.navigate_sibling(1);
+            if ctx.input(|i| i.modifiers.ctrl) {
+                self.navigate_sibling_hdr(1);
+            } else {
+                self.navigate_sibling_abc(1);
+            }
         }
         
         // H = Home camera (reset to default view)
