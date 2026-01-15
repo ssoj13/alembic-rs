@@ -70,6 +70,7 @@ pub struct ViewerApp {
     scene_bounds: Option<mesh_converter::Bounds>,
     scene_tree: Vec<SceneNode>,
     selected_object: Option<String>,
+    object_filter: String,  // Wildcard filter for hierarchy (e.g., "wheel*")
     
     // Scene cameras
     scene_cameras: Vec<mesh_converter::SceneCamera>,
@@ -112,6 +113,7 @@ impl ViewerApp {
             scene_bounds: None,
             scene_tree: Vec::new(),
             selected_object: None,
+            object_filter: String::new(),
             scene_cameras: Vec::new(),
             active_camera: None,
             scene_lights: Vec::new(),
@@ -231,50 +233,126 @@ impl ViewerApp {
         ui.heading("Hierarchy");
         ui.separator();
         
+        // Filter input
+        ui.horizontal(|ui| {
+            ui.label("Filter:");
+            ui.add(egui::TextEdit::singleline(&mut self.object_filter)
+                .hint_text("wheel*")
+                .desired_width(ui.available_width()));
+        });
+        if !self.object_filter.is_empty() {
+            if ui.small_button("✕ Clear").clicked() {
+                self.object_filter.clear();
+            }
+        }
+        ui.separator();
+        
+        let filter = self.object_filter.to_lowercase();
+        
         egui::ScrollArea::vertical().show(ui, |ui| {
             let tree = std::mem::take(&mut self.scene_tree);
             let mut selected = self.selected_object.clone();
             for node in &tree {
-                Self::show_tree_node(ui, node, &mut selected);
+                Self::show_tree_node_filtered(ui, node, &mut selected, &filter);
             }
             self.selected_object = selected;
             self.scene_tree = tree;
         });
     }
     
-    /// Render a tree node recursively
-    fn show_tree_node(ui: &mut egui::Ui, node: &SceneNode, selected: &mut Option<String>) {
+    /// Check if name matches wildcard filter (e.g., "wheel*" matches "wheel_lb")
+    fn matches_filter(name: &str, filter: &str) -> bool {
+        if filter.is_empty() {
+            return true;
+        }
+        let name_lower = name.to_lowercase();
+        // Split by * for wildcard matching
+        let parts: Vec<&str> = filter.split('*').collect();
+        
+        if parts.len() == 1 {
+            // No wildcard - exact substring match
+            return name_lower.contains(filter);
+        }
+        
+        let mut pos = 0;
+        for (i, part) in parts.iter().enumerate() {
+            if part.is_empty() {
+                continue;
+            }
+            if let Some(found) = name_lower[pos..].find(part) {
+                if i == 0 && found != 0 {
+                    // First part must match at start (no leading *)
+                    return false;
+                }
+                pos += found + part.len();
+            } else {
+                return false;
+            }
+        }
+        // If filter ends with *, any trailing chars are OK
+        // If not, must match to end
+        if !filter.ends_with('*') && pos != name_lower.len() {
+            return false;
+        }
+        true
+    }
+    
+    /// Check if node or any descendant matches filter
+    fn node_matches_filter(node: &SceneNode, filter: &str) -> bool {
+        if Self::matches_filter(&node.name, filter) {
+            return true;
+        }
+        for child in &node.children {
+            if Self::node_matches_filter(child, filter) {
+                return true;
+            }
+        }
+        false
+    }
+    
+    /// Render tree node with filtering
+    fn show_tree_node_filtered(ui: &mut egui::Ui, node: &SceneNode, selected: &mut Option<String>, filter: &str) {
+        // Skip nodes that don't match filter (and have no matching descendants)
+        if !filter.is_empty() && !Self::node_matches_filter(node, filter) {
+            return;
+        }
+        
         let id = ui.make_persistent_id(&node.name);
         let is_selected = selected.as_ref() == Some(&node.name);
+        let matches_directly = Self::matches_filter(&node.name, filter);
         
         // Icon based on type
         let icon = match node.node_type.as_str() {
-            "PolyMesh" => "▲",  // triangle
-            "SubD" => "■",      // square
-            "Xform" => "↺",     // rotation arrow
-            "Camera" => "◎",    // target
-            "Light" => "☀",     // sun
-            "Curves" => "∿",    // curve
-            "Points" => "•",    // bullet
-            _ => "○",           // circle
+            "PolyMesh" => "▲",
+            "SubD" => "■",
+            "Xform" => "↺",
+            "Camera" => "◎",
+            "Light" => "☀",
+            "Curves" => "∿",
+            "Points" => "•",
+            _ => "○",
         };
         
         let label = format!("{} {}", icon, node.name);
+        // Highlight matching nodes
+        let label = if !filter.is_empty() && matches_directly {
+            RichText::new(label).color(Color32::YELLOW)
+        } else {
+            RichText::new(label)
+        };
         
         if node.children.is_empty() {
-            // Leaf node
-            let response = ui.selectable_label(is_selected, &label);
+            let response = ui.selectable_label(is_selected, label);
             if response.clicked() {
                 *selected = Some(node.name.clone());
             }
         } else {
-            // Parent node with children
-            egui::CollapsingHeader::new(&label)
+            egui::CollapsingHeader::new(label)
                 .id_salt(id)
-                .default_open(true)
+                .default_open(!filter.is_empty())
                 .show(ui, |ui| {
                     for child in &node.children {
-                        Self::show_tree_node(ui, child, selected);
+                        Self::show_tree_node_filtered(ui, child, selected, filter);
                     }
                 });
         }
@@ -814,6 +892,19 @@ impl ViewerApp {
                 if let Ok(sample) = mesh.get_sample(frame) {
                     ui.label(format!("Vertices: {}", sample.positions.len()));
                     ui.label(format!("Faces: {}", sample.face_counts.len()));
+                    // Compute and show bounds center (world space since mesh data is baked)
+                    if !sample.positions.is_empty() {
+                        let mut min = sample.positions[0];
+                        let mut max = sample.positions[0];
+                        for p in &sample.positions {
+                            min = min.min(*p);
+                            max = max.max(*p);
+                        }
+                        let center = (min + max) * 0.5;
+                        ui.label(format!("Center: ({:.2}, {:.2}, {:.2})", center.x, center.y, center.z));
+                        ui.label(format!("Min: ({:.2}, {:.2}, {:.2})", min.x, min.y, min.z));
+                        ui.label(format!("Max: ({:.2}, {:.2}, {:.2})", max.x, max.y, max.z));
+                    }
                 }
             } else if let Some(xform) = crate::geom::IXform::new(obj) {
                 ui.label(format!("Samples: {}", xform.num_samples()));
@@ -988,27 +1079,28 @@ impl ViewerApp {
             self.scene_lights = scene.lights;
         }
 
-        // Collect names using references (no String cloning)
-        let new_mesh_names: std::collections::HashSet<&str> = 
-            scene.meshes.iter().map(|m| m.name.as_str()).collect();
-        let new_curve_names: std::collections::HashSet<&str> = 
-            scene.curves.iter().map(|c| c.name.as_str()).collect();
+        // Collect paths using references (use path for uniqueness, not name)
+        // IMPORTANT: Different objects may have the same name (e.g., brake_discShape)
+        let new_mesh_paths: std::collections::HashSet<&str> = 
+            scene.meshes.iter().map(|m| m.path.as_str()).collect();
+        let new_curve_paths: std::collections::HashSet<&str> = 
+            scene.curves.iter().map(|c| c.path.as_str()).collect();
         
         // Remove meshes that no longer exist (retain avoids intermediate Vec)
-        renderer.meshes.retain(|name, _| new_mesh_names.contains(name.as_str()));
-        renderer.curves.retain(|name, _| new_curve_names.contains(name.as_str()));
+        renderer.meshes.retain(|path, _| new_mesh_paths.contains(path.as_str()));
+        renderer.curves.retain(|path, _| new_curve_paths.contains(path.as_str()));
 
-        // Update or add meshes
+        // Update or add meshes (use path as key for uniqueness)
         for mesh in scene.meshes {
-            if renderer.has_mesh(&mesh.name) {
+            if renderer.has_mesh(&mesh.path) {
                 // Always update transform (cheap uniform write)
-                renderer.update_mesh_transform(&mesh.name, mesh.transform);
+                renderer.update_mesh_transform(&mesh.path, mesh.transform);
                 
                 // Only update vertices if they actually changed (expensive buffer recreation)
                 let new_hash = super::renderer::compute_vertex_hash(&mesh.vertices);
-                if let Some(old_hash) = renderer.get_vertex_hash(&mesh.name) {
+                if let Some(old_hash) = renderer.get_vertex_hash(&mesh.path) {
                     if new_hash != old_hash {
-                        renderer.update_mesh_vertices(&mesh.name, &mesh.vertices, &mesh.indices);
+                        renderer.update_mesh_vertices(&mesh.path, &mesh.vertices, &mesh.indices);
                     }
                 }
             } else {
@@ -1016,8 +1108,8 @@ impl ViewerApp {
                 let base_color = mesh.base_color.unwrap_or(Vec3::new(0.7, 0.7, 0.75));
                 let material = StandardSurfaceParams::plastic(base_color, 0.4);
                 renderer.add_mesh(
-                    mesh.name,
-                    &mesh.vertices,  // Arc<Vec> derefs to &[T]
+                    mesh.path,  // Use path for unique key
+                    &mesh.vertices,
                     &mesh.indices,
                     mesh.transform,
                     &material,
@@ -1032,7 +1124,7 @@ impl ViewerApp {
         );
         for curves in scene.curves {
             renderer.add_curves(
-                curves.name,
+                curves.path,  // Use path for unique key
                 &curves.vertices,
                 &curves.indices,
                 curves.transform,
@@ -1047,7 +1139,7 @@ impl ViewerApp {
         );
         for pts in scene.points {
             renderer.add_points(
-                pts.name,
+                pts.path,  // Use path for unique key
                 &pts.positions,
                 pts.transform,
                 &points_material,

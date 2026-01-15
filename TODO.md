@@ -22,6 +22,8 @@
 
 ## Parity (~0.5% remaining)
 
+- [x] Xform ops decoding (translate hints, matrix ops) - verified identical to C++ Alembic
+- [x] Mesh cache key collision (fixed: use mesh_path instead of mesh_name)
 - [ ] ArchiveBounds edge cases
 - [ ] Material flattening advanced inheritance
 
@@ -31,4 +33,5 @@
 - [ ] Export to glTF format
 - [ ] Properties inspector panel in viewer
 - [ ] Timeline with keyframe markers
-- [ ] Hierarchy tree view with visibility toggles
+- [x] Hierarchy tree view with visibility toggles
+- [x] Hierarchy filter with wildcard support (e.g., wheel*)

@@ -49,7 +49,6 @@ impl Bounds {
 
 /// Converted mesh data ready for GPU
 pub struct ConvertedMesh {
-    pub name: String,
     pub path: String,  // full object path
     pub vertices: Arc<Vec<Vertex>>,  // Arc for cheap cloning from cache
     pub indices: Arc<Vec<u32>>,
@@ -60,7 +59,7 @@ pub struct ConvertedMesh {
 
 /// Converted curves data ready for GPU (as line strips)
 pub struct ConvertedCurves {
-    pub name: String,
+    pub path: String,
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>,
     pub transform: Mat4,
@@ -68,7 +67,7 @@ pub struct ConvertedCurves {
 
 /// Converted points data ready for GPU
 pub struct ConvertedPoints {
-    pub name: String,
+    pub path: String,
     pub positions: Vec<[f32; 3]>,
     #[allow(dead_code)]
     pub widths: Vec<f32>,  // radius per point
@@ -163,7 +162,7 @@ pub struct MaterialAssignment {
 }
 
 /// Convert CurvesSample to line strips for GPU
-pub fn convert_curves(sample: &CurvesSample, name: &str, transform: Mat4) -> Option<ConvertedCurves> {
+pub fn convert_curves(sample: &CurvesSample, name: &str, path: &str, transform: Mat4) -> Option<ConvertedCurves> {
     if !sample.is_valid() {
         return None;
     }
@@ -223,7 +222,7 @@ pub fn convert_curves(sample: &CurvesSample, name: &str, transform: Mat4) -> Opt
     }
     
     Some(ConvertedCurves {
-        name: name.to_string(),
+        path: path.to_string(),
         vertices,
         indices,
         transform,
@@ -359,7 +358,6 @@ pub fn convert_polymesh(sample: &PolyMeshSample, name: &str, transform: Mat4) ->
     }
     
     Some(ConvertedMesh {
-        name: name.to_string(),
         path: String::new(),  // set by caller
         vertices: Arc::new(vertices),
         indices: Arc::new(indices),
@@ -370,7 +368,7 @@ pub fn convert_polymesh(sample: &PolyMeshSample, name: &str, transform: Mat4) ->
 }
 
 /// Convert PointsSample to GPU points
-pub fn convert_points(sample: &PointsSample, name: &str, transform: Mat4) -> Option<ConvertedPoints> {
+pub fn convert_points(sample: &PointsSample, name: &str, path: &str, transform: Mat4) -> Option<ConvertedPoints> {
     if !sample.is_valid() {
         return None;
     }
@@ -394,7 +392,7 @@ pub fn convert_points(sample: &PointsSample, name: &str, transform: Mat4) -> Opt
     }
     
     Some(ConvertedPoints {
-        name: name.to_string(),
+        path: path.to_string(),
         positions,
         widths,
         transform,
@@ -434,7 +432,6 @@ pub fn new_mesh_cache() -> MeshCache {
 
 /// Pending mesh conversion task
 struct MeshTask {
-    name: String,
     path: String,
     sample: PolyMeshSample,
     transform: Mat4,
@@ -443,7 +440,6 @@ struct MeshTask {
 
 /// Cached mesh result (from cache hit)
 struct CachedResult {
-    name: String,
     path: String,
     vertices: Arc<Vec<Vertex>>,
     indices: Arc<Vec<u32>>,
@@ -494,7 +490,8 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
                         for pos in &task.sample.positions {
                             local_bounds.expand(*pos);
                         }
-                        cache.lock().insert(task.name.clone(), CachedMesh {
+                        // Use path as cache key for uniqueness
+                        cache.lock().insert(task.path.clone(), CachedMesh {
                             vertices: Arc::clone(&converted.vertices),
                             indices: Arc::clone(&converted.indices),
                             local_bounds,
@@ -513,7 +510,6 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
     for cached in cached_results {
         let bounds = transform_bounds(&cached.local_bounds, cached.transform);
         meshes.push(ConvertedMesh {
-            name: cached.name,
             path: cached.path,
             vertices: cached.vertices,
             indices: cached.indices,
@@ -607,33 +603,29 @@ fn collect_samples_recursive(
         let is_constant = polymesh.is_constant();
         
         // Try cache first for constant meshes
+        // IMPORTANT: Use mesh_path as key, not mesh_name - different objects may have same name
+        // but different world-space positions (e.g., brake_discShape in multiple wheels)
         let cached = if is_constant {
-            cache.and_then(|c| c.lock().get(&mesh_name).cloned())
+            cache.and_then(|c| c.lock().get(&mesh_path).cloned())
         } else {
             None
         };
         
         if let Some(cached_mesh) = cached {
-            // Cache hit - just store for later bounds transform
             cached_results.push(CachedResult {
-                name: mesh_name,
                 path: mesh_path,
                 vertices: cached_mesh.vertices,
                 indices: cached_mesh.indices,
                 transform: world_transform,
                 local_bounds: cached_mesh.local_bounds,
             });
-        } else {
-            // Cache miss - read sample and queue for parallel conversion
-            if let Ok(sample) = polymesh.get_sample(sample_index) {
-                mesh_tasks.push(MeshTask {
-                    name: mesh_name,
-                    path: mesh_path,
-                    sample,
-                    transform: world_transform,
-                    is_constant,
-                });
-            }
+        } else if let Ok(sample) = polymesh.get_sample(sample_index) {
+            mesh_tasks.push(MeshTask {
+                path: mesh_path,
+                sample,
+                transform: world_transform,
+                is_constant,
+            });
         }
     }
     
@@ -643,15 +635,15 @@ fn collect_samples_recursive(
         let mesh_path = subd.full_name().to_string();
         let is_constant = subd.is_constant();
         
+        // Use mesh_path as key for SubD too
         let cached = if is_constant {
-            cache.and_then(|c| c.lock().get(&mesh_name).cloned())
+            cache.and_then(|c| c.lock().get(&mesh_path).cloned())
         } else {
             None
         };
         
         if let Some(cached_mesh) = cached {
             cached_results.push(CachedResult {
-                name: mesh_name,
                 path: mesh_path,
                 vertices: cached_mesh.vertices,
                 indices: cached_mesh.indices,
@@ -670,7 +662,6 @@ fn collect_samples_recursive(
                 self_bounds: sample.self_bounds,
             };
             mesh_tasks.push(MeshTask {
-                name: mesh_name,
                 path: mesh_path,
                 sample: poly_sample,
                 transform: world_transform,
@@ -682,7 +673,7 @@ fn collect_samples_recursive(
     // Check if this object is Curves
     if let Some(icurves) = ICurves::new(obj) {
         if let Ok(sample) = icurves.get_sample(sample_index) {
-            if let Some(converted) = convert_curves(&sample, icurves.name(), world_transform) {
+            if let Some(converted) = convert_curves(&sample, icurves.name(), icurves.full_name(), world_transform) {
                 curves.push(converted);
             }
         }
@@ -691,7 +682,7 @@ fn collect_samples_recursive(
     // Check if this object is Points
     if let Some(ipoints) = IPoints::new(obj) {
         if let Ok(sample) = ipoints.get_sample(sample_index) {
-            if let Some(converted) = convert_points(&sample, ipoints.name(), world_transform) {
+            if let Some(converted) = convert_points(&sample, ipoints.name(), ipoints.full_name(), world_transform) {
                 points.push(converted);
             }
         }
