@@ -1113,7 +1113,22 @@ impl ViewerApp {
         self.mesh_count = renderer.meshes.len();
         self.vertex_count = vertices.len();
         self.face_count = indices.len() / 3;
+        
+        // Update scene bounds from renderer
+        self.update_bounds_from_renderer();
+        
         self.status_message = "Loaded test cube".into();
+    }
+    
+    /// Update scene_bounds from renderer's computed bounds
+    fn update_bounds_from_renderer(&mut self) {
+        if let Some(renderer) = &self.viewport.renderer {
+            if let Some((min, max)) = renderer.compute_scene_bounds() {
+                self.scene_bounds = Some(mesh_converter::Bounds { min, max });
+            } else {
+                self.scene_bounds = None;
+            }
+        }
     }
 
     fn clear_scene(&mut self) {

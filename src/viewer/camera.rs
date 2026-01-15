@@ -41,17 +41,14 @@ impl OrbitCamera {
         );
     }
 
-    /// Pan camera (shift+drag) - Houdini style: horizontal in view plane, vertical in world Y
+    /// Pan camera (shift+drag) - screen-space pan like Houdini/Maya
     pub fn pan(&mut self, delta_x: f32, delta_y: f32) {
-        // Get camera right vector (for horizontal pan)
-        let cam_right: Vec3 = self.rig.final_transform.right();
-        // Project to XZ plane for horizontal movement
-        let right = Vec3::new(cam_right.x, 0.0, cam_right.z).normalize_or_zero();
-        // Use world up for vertical movement
-        let up = Vec3::Y;
+        // Use camera right and up vectors for screen-space movement
+        let right: Vec3 = self.rig.final_transform.right();
+        let up: Vec3 = self.rig.final_transform.up();
         let dist = self.rig.driver::<Arm>().offset.z;
         
-        let sensitivity = 0.01 * dist;
+        let sensitivity = 0.002 * dist;  // Scale with distance
         let offset = right * (-delta_x * sensitivity) + up * (delta_y * sensitivity);
         
         let look_at = self.rig.driver_mut::<LookAt>();

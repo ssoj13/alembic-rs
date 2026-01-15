@@ -115,6 +115,7 @@ pub struct SceneMesh {
     pub model_buffer: wgpu::Buffer,
     pub transform: Mat4,
     pub vertex_hash: u64,  // Quick hash for change detection
+    pub bounds: (Vec3, Vec3),  // (min, max) in world space
     #[allow(dead_code)]
     pub name: String,
 }
@@ -139,6 +140,42 @@ pub fn compute_vertex_hash(vertices: &[standard_surface::Vertex]) -> u64 {
     hasher.finish()
 }
 
+/// Compute bounding box from vertices in world space
+fn compute_mesh_bounds(vertices: &[standard_surface::Vertex], transform: Mat4) -> (Vec3, Vec3) {
+    if vertices.is_empty() {
+        return (Vec3::ZERO, Vec3::ZERO);
+    }
+    
+    let mut min = Vec3::splat(f32::MAX);
+    let mut max = Vec3::splat(f32::MIN);
+    
+    for v in vertices {
+        let p = transform.transform_point3(Vec3::from(v.position));
+        min = min.min(p);
+        max = max.max(p);
+    }
+    
+    (min, max)
+}
+
+/// Compute bounding box from point positions
+fn compute_points_bounds(positions: &[[f32; 3]], transform: Mat4) -> (Vec3, Vec3) {
+    if positions.is_empty() {
+        return (Vec3::ZERO, Vec3::ZERO);
+    }
+    
+    let mut min = Vec3::splat(f32::MAX);
+    let mut max = Vec3::splat(f32::MIN);
+    
+    for pos in positions {
+        let p = transform.transform_point3(Vec3::from(*pos));
+        min = min.min(p);
+        max = max.max(p);
+    }
+    
+    (min, max)
+}
+
 /// Scene curves (lines) with transform and material
 pub struct SceneCurves {
     pub mesh: Mesh, // vertex + index buffers for LINE_LIST
@@ -148,6 +185,7 @@ pub struct SceneCurves {
     pub model_buffer: wgpu::Buffer,
     #[allow(dead_code)] // kept for potential animation updates
     pub transform: Mat4,
+    pub bounds: (Vec3, Vec3),
     #[allow(dead_code)]
     pub name: String,
 }
@@ -162,6 +200,7 @@ pub struct ScenePoints {
     pub model_buffer: wgpu::Buffer,
     #[allow(dead_code)]
     pub transform: Mat4,
+    pub bounds: (Vec3, Vec3),
     #[allow(dead_code)]
     pub name: String,
 }
@@ -642,6 +681,9 @@ impl Renderer {
             }],
         });
 
+        // Calculate bounds from vertices (in world space)
+        let bounds = compute_mesh_bounds(vertices, transform);
+        
         self.meshes.insert(name.clone(), SceneMesh {
             mesh,
             material_bind_group,
@@ -649,6 +691,7 @@ impl Renderer {
             model_buffer,
             transform,
             vertex_hash: compute_vertex_hash(vertices),
+            bounds,
             name,
         });
     }
@@ -692,12 +735,16 @@ impl Renderer {
             }],
         });
         
+        // Calculate bounds
+        let bounds = compute_mesh_bounds(vertices, transform);
+        
         self.curves.insert(name.clone(), SceneCurves {
             mesh,
             material_bind_group,
             model_bind_group,
             model_buffer,
             transform,
+            bounds,
             name,
         });
     }
@@ -755,6 +802,9 @@ impl Renderer {
             }],
         });
 
+        // Calculate bounds
+        let bounds = compute_points_bounds(positions, transform);
+        
         self.points.insert(name.clone(), ScenePoints {
             vertex_buffer,
             vertex_count: positions.len() as u32,
@@ -762,6 +812,7 @@ impl Renderer {
             model_bind_group,
             model_buffer,
             transform,
+            bounds,
             name,
         });
     }
@@ -772,6 +823,37 @@ impl Renderer {
         self.points.contains_key(name)
     }
 
+    /// Compute combined bounds of all meshes, curves, and points
+    pub fn compute_scene_bounds(&self) -> Option<(Vec3, Vec3)> {
+        let mut min = Vec3::splat(f32::MAX);
+        let mut max = Vec3::splat(f32::MIN);
+        let mut has_any = false;
+        
+        for mesh in self.meshes.values() {
+            min = min.min(mesh.bounds.0);
+            max = max.max(mesh.bounds.1);
+            has_any = true;
+        }
+        
+        for curves in self.curves.values() {
+            min = min.min(curves.bounds.0);
+            max = max.max(curves.bounds.1);
+            has_any = true;
+        }
+        
+        for points in self.points.values() {
+            min = min.min(points.bounds.0);
+            max = max.max(points.bounds.1);
+            has_any = true;
+        }
+        
+        if has_any && min.x <= max.x {
+            Some((min, max))
+        } else {
+            None
+        }
+    }
+    
     /// Clear all scene meshes
     pub fn clear_meshes(&mut self) {
         self.meshes.clear();
