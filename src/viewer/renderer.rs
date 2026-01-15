@@ -73,6 +73,9 @@ pub struct Renderer {
     #[allow(dead_code)]
     env_uniform_buffer: wgpu::Buffer,
     
+    // Floor mesh (rendered before scene, managed separately)
+    floor_mesh: Option<SceneMesh>,
+    
     // Scene meshes (name -> mesh for efficient updates)
     pub meshes: HashMap<String, SceneMesh>,
     
@@ -481,6 +484,7 @@ impl Renderer {
             grid_step: 0.0, // will be set on first render
             env_map,
             env_uniform_buffer,
+            floor_mesh: None,
             meshes: HashMap::new(),
             curves: HashMap::new(),
             points: HashMap::new(),
@@ -1055,11 +1059,8 @@ impl Renderer {
         self.queue.write_buffer(&self.env_map.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
     }
     
-    /// Add floor plane based on scene bounds
-    pub fn add_floor(&mut self, bounds: &Option<super::mesh_converter::Bounds>) {
-        // Remove existing floor first
-        self.remove_floor();
-        
+    /// Set floor plane based on scene bounds (call when checkbox enabled)
+    pub fn set_floor(&mut self, bounds: &Option<super::mesh_converter::Bounds>) {
         // Get scene size, default to reasonable size if no bounds
         let (center, size) = if let Some(b) = bounds {
             let c = b.center();
@@ -1078,24 +1079,70 @@ impl Renderer {
             Vertex { position: [center.x + half, y, center.z + half], normal: [0.0, 1.0, 0.0], uv: [1.0, 1.0] },
             Vertex { position: [center.x - half, y, center.z + half], normal: [0.0, 1.0, 0.0], uv: [0.0, 1.0] },
         ];
-        let indices = vec![0, 1, 2, 0, 2, 3];
+        // Counter-clockwise winding for front-face (viewed from above)
+        let indices: Vec<u32> = vec![0, 2, 1, 0, 3, 2];
         
-        // Dark matte-reflective material (leather-like)
+        // Create GPU buffers
+        let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("floor_vertex_buffer"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("floor_index_buffer"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        
+        // Dark matte material
         let material = StandardSurfaceParams::plastic(Vec3::new(0.08, 0.08, 0.1), 0.6);
-        
-        self.add_mesh(
-            "_FLOOR_".into(),
-            &vertices,
-            &indices,
-            Mat4::IDENTITY,
-            &material,
-            None,
+        let material_buffer = standard_surface::create_material_buffer(&self.device, &material);
+        let material_bind_group = standard_surface::create_material_bind_group(
+            &self.device,
+            &self.layouts.material,
+            &material_buffer,
         );
+        
+        // Model transform (identity)
+        let model_uniform = ModelUniform {
+            model: Mat4::IDENTITY.to_cols_array_2d(),
+            normal_matrix: Mat4::IDENTITY.to_cols_array_2d(),
+        };
+        let model_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("floor_model_buffer"),
+            contents: bytemuck::bytes_of(&model_uniform),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let model_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("floor_model_bind_group"),
+            layout: &self.layouts.model,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: model_buffer.as_entire_binding(),
+            }],
+        });
+        
+        self.floor_mesh = Some(SceneMesh {
+            mesh: Mesh {
+                vertex_buffer,
+                index_buffer,
+                index_count: indices.len() as u32,
+            },
+            material_bind_group,
+            model_bind_group,
+            model_buffer,
+            transform: Mat4::IDENTITY,
+            vertex_hash: 0,
+            bounds: (Vec3::ZERO, Vec3::ZERO),
+            name: "_FLOOR_".into(),
+            smooth_data: None,
+            base_vertices: None,
+        });
     }
     
-    /// Remove floor plane
-    pub fn remove_floor(&mut self) {
-        self.meshes.remove("_FLOOR_");
+    /// Clear floor plane (call when checkbox disabled)
+    pub fn clear_floor(&mut self) {
+        self.floor_mesh = None;
     }
 
     /// Render the scene
@@ -1206,6 +1253,15 @@ impl Renderer {
                     // Restore mesh pipeline
                     render_pass.set_pipeline(pipeline);
                 }
+            }
+            
+            // Draw floor (before scene meshes so it's behind)
+            if let Some(floor) = &self.floor_mesh {
+                render_pass.set_bind_group(1, &floor.material_bind_group, &[]);
+                render_pass.set_bind_group(2, &floor.model_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, floor.mesh.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(floor.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..floor.mesh.index_count, 0, 0..1);
             }
 
             // Draw scene meshes

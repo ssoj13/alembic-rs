@@ -688,13 +688,13 @@ impl ViewerApp {
             self.settings.save();
         }
         
-        // Floor plane
+        // Floor plane - checkbox directly controls floor mesh existence
         if ui.checkbox(&mut self.settings.show_floor, "Floor").changed() {
             if let Some(renderer) = &mut self.viewport.renderer {
                 if self.settings.show_floor {
-                    renderer.add_floor(&self.scene_bounds);
+                    renderer.set_floor(&self.scene_bounds);
                 } else {
-                    renderer.remove_floor();
+                    renderer.clear_floor();
                 }
             }
             self.settings.save();
@@ -1316,9 +1316,9 @@ impl ViewerApp {
         let bounds = mesh_converter::compute_scene_bounds(&scene.meshes, &scene.points);
         self.scene_bounds = if bounds.is_valid() { Some(bounds) } else { None };
         
-        // Add floor if enabled (must be done after scene_bounds is set)
+        // Update floor size if enabled (scene_bounds changed)
         if self.settings.show_floor {
-            renderer.add_floor(&self.scene_bounds);
+            renderer.set_floor(&self.scene_bounds);
         }
         
         // Update scene cameras (always update for animation support)
@@ -1596,6 +1596,10 @@ impl eframe::App for ViewerApp {
                     renderer.double_sided = self.settings.double_sided;
                     renderer.auto_normals = self.settings.auto_normals;
                     renderer.background_color = self.settings.background_color;
+                    // Set floor if enabled (uses scene_bounds for sizing)
+                    if self.settings.show_floor {
+                        renderer.set_floor(&self.scene_bounds);
+                    }
                 }
                 // Ensure settings file exists
                 self.settings.save();
