@@ -162,7 +162,7 @@ pub struct MaterialAssignment {
 }
 
 /// Convert CurvesSample to line strips for GPU
-pub fn convert_curves(sample: &CurvesSample, name: &str, path: &str, transform: Mat4) -> Option<ConvertedCurves> {
+pub fn convert_curves(sample: &CurvesSample, path: &str, transform: Mat4) -> Option<ConvertedCurves> {
     if !sample.is_valid() {
         return None;
     }
@@ -230,7 +230,7 @@ pub fn convert_curves(sample: &CurvesSample, name: &str, path: &str, transform: 
 }
 
 /// Convert PolyMeshSample to triangulated GPU mesh
-pub fn convert_polymesh(sample: &PolyMeshSample, name: &str, transform: Mat4) -> Option<ConvertedMesh> {
+pub fn convert_polymesh(sample: &PolyMeshSample, transform: Mat4) -> Option<ConvertedMesh> {
     if !sample.is_valid() {
         return None;
     }
@@ -368,7 +368,7 @@ pub fn convert_polymesh(sample: &PolyMeshSample, name: &str, transform: Mat4) ->
 }
 
 /// Convert PointsSample to GPU points
-pub fn convert_points(sample: &PointsSample, name: &str, path: &str, transform: Mat4) -> Option<ConvertedPoints> {
+pub fn convert_points(sample: &PointsSample, path: &str, transform: Mat4) -> Option<ConvertedPoints> {
     if !sample.is_valid() {
         return None;
     }
@@ -479,7 +479,7 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
     let converted: Vec<ConvertedMesh> = mesh_tasks
         .into_par_iter()
         .filter_map(|task| {
-            convert_polymesh(&task.sample, &task.name, task.transform).map(|mut converted| {
+            convert_polymesh(&task.sample, task.transform).map(|mut converted| {
                 // Set path from task
                 converted.path = task.path.clone();
                 
@@ -673,7 +673,7 @@ fn collect_samples_recursive(
     // Check if this object is Curves
     if let Some(icurves) = ICurves::new(obj) {
         if let Ok(sample) = icurves.get_sample(sample_index) {
-            if let Some(converted) = convert_curves(&sample, icurves.name(), icurves.full_name(), world_transform) {
+            if let Some(converted) = convert_curves(&sample, icurves.full_name(), world_transform) {
                 curves.push(converted);
             }
         }
@@ -682,7 +682,7 @@ fn collect_samples_recursive(
     // Check if this object is Points
     if let Some(ipoints) = IPoints::new(obj) {
         if let Ok(sample) = ipoints.get_sample(sample_index) {
-            if let Some(converted) = convert_points(&sample, ipoints.name(), ipoints.full_name(), world_transform) {
+            if let Some(converted) = convert_points(&sample, ipoints.full_name(), world_transform) {
                 points.push(converted);
             }
         }
