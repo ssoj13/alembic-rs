@@ -411,17 +411,26 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Ambient / IBL
     if env.enabled > 0.5 {
-        // Diffuse IBL - sample along normal
-        let env_diffuse = sample_env(N) * effective_base * (1.0 - metalness);
-        diffuse_accum += env_diffuse * 0.3;
+        // Diffuse IBL - heavily blurred (approximates irradiance)
+        // Sample 6 axis directions to get average environment color
+        var env_diffuse = sample_env(vec3<f32>(1.0, 0.0, 0.0));
+        env_diffuse += sample_env(vec3<f32>(-1.0, 0.0, 0.0));
+        env_diffuse += sample_env(vec3<f32>(0.0, 1.0, 0.0));
+        env_diffuse += sample_env(vec3<f32>(0.0, -1.0, 0.0));
+        env_diffuse += sample_env(vec3<f32>(0.0, 0.0, 1.0));
+        env_diffuse += sample_env(vec3<f32>(0.0, 0.0, -1.0));
+        env_diffuse = env_diffuse / 6.0; // average color of entire environment
+        diffuse_accum += env_diffuse * effective_base * (1.0 - metalness) * 0.4;
         
         // Specular IBL - sample along reflection
         let R = reflect(-V, N);
-        let env_specular = sample_env(R) * F0;
-        let spec_atten = 1.0 - specular_roughness;
-        specular_accum += env_specular * spec_atten * 0.5;
+        let env_specular = sample_env(R);
+        // Fresnel: more reflection at grazing angles
+        let fresnel = F0 + (vec3<f32>(1.0) - F0) * pow5(1.0 - NdotV);
+        let spec_atten = 1.0 - specular_roughness * specular_roughness; // smoother falloff
+        specular_accum += env_specular * fresnel * spec_atten;
     } else {
-        // Fallback to flat ambient (counts as diffuse)
+        // Fallback to flat ambient
         diffuse_accum += lights.ambient * effective_base;
     }
     
