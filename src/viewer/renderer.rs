@@ -1054,7 +1054,49 @@ impl Renderer {
         };
         self.queue.write_buffer(&self.env_map.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
     }
-
+    
+    /// Add floor plane based on scene bounds
+    pub fn add_floor(&mut self, bounds: &Option<super::mesh_converter::Bounds>) {
+        // Remove existing floor first
+        self.remove_floor();
+        
+        // Get scene size, default to reasonable size if no bounds
+        let (center, size) = if let Some(b) = bounds {
+            let c = b.center();
+            let r = b.radius().max(1.0);
+            (c, r * 4.0)  // 4x scene radius
+        } else {
+            (Vec3::ZERO, 10.0)
+        };
+        
+        // Create floor quad at Y=0
+        let half = size;
+        let y = 0.0;
+        let vertices = vec![
+            Vertex { position: [center.x - half, y, center.z - half], normal: [0.0, 1.0, 0.0], uv: [0.0, 0.0] },
+            Vertex { position: [center.x + half, y, center.z - half], normal: [0.0, 1.0, 0.0], uv: [1.0, 0.0] },
+            Vertex { position: [center.x + half, y, center.z + half], normal: [0.0, 1.0, 0.0], uv: [1.0, 1.0] },
+            Vertex { position: [center.x - half, y, center.z + half], normal: [0.0, 1.0, 0.0], uv: [0.0, 1.0] },
+        ];
+        let indices = vec![0, 1, 2, 0, 2, 3];
+        
+        // Dark matte-reflective material (leather-like)
+        let material = StandardSurfaceParams::plastic(Vec3::new(0.08, 0.08, 0.1), 0.6);
+        
+        self.add_mesh(
+            "_FLOOR_".into(),
+            &vertices,
+            &indices,
+            Mat4::IDENTITY,
+            &material,
+            None,
+        );
+    }
+    
+    /// Remove floor plane
+    pub fn remove_floor(&mut self) {
+        self.meshes.remove("_FLOOR_");
+    }
 
     /// Render the scene
     pub fn render(&mut self, view: &wgpu::TextureView, width: u32, height: u32, camera_distance: f32) {

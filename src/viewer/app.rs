@@ -688,6 +688,18 @@ impl ViewerApp {
             self.settings.save();
         }
         
+        // Floor plane
+        if ui.checkbox(&mut self.settings.show_floor, "Floor").changed() {
+            if let Some(renderer) = &mut self.viewport.renderer {
+                if self.settings.show_floor {
+                    renderer.add_floor(&self.scene_bounds);
+                } else {
+                    renderer.remove_floor();
+                }
+            }
+            self.settings.save();
+        }
+        
         if ui.button("Load HDR/EXR...").clicked() {
             self.load_environment_dialog();
         }

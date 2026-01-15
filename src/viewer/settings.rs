@@ -17,6 +17,7 @@ pub struct Settings {
     pub auto_normals: bool,
     pub smooth_normals: bool,
     pub smooth_angle: f32,  // 0-180 degrees
+    pub show_floor: bool,
     pub background_color: [f32; 4],
     
     // Window
@@ -66,6 +67,7 @@ impl Default for Settings {
             auto_normals: true,  // Auto-flip backface normals by default
             smooth_normals: false,
             smooth_angle: 45.0,  // Default 45 degrees
+            show_floor: false,
             background_color: [0.1, 0.1, 0.12, 1.0],
             window_width: 1280.0,
             window_height: 720.0,
