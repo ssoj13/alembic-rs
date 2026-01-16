@@ -177,7 +177,9 @@ impl<'a> IPoints<'a> {
         if let Some(pos) = geom_util::read_vec3_array(g, "P", index) {
             sample.positions = pos;
         }
-        if let Some(ids) = geom_util::read_u64_array(g, "id", index) {
+        // Try C++ name ".pointIds" first, then fallback to "id"
+        if let Some(ids) = geom_util::read_u64_array(g, ".pointIds", index)
+            .or_else(|| geom_util::read_u64_array(g, "id", index)) {
             sample.ids = ids;
         }
         

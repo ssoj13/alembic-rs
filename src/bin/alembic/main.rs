@@ -765,6 +765,9 @@ fn cmd_copy2(input: &str, output: &str) {
         }
     };
     
+    // Copy archive metadata from source file
+    out_archive.set_archive_metadata(archive.getArchiveMetaData().clone());
+    
     // Copy time samplings
     // TODO: copy time samplings from input archive
     
@@ -880,7 +883,15 @@ fn copy2_xform(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
         }
         return Some(out_obj);
     }
-    None
+    // Schema check passed but IXform::new failed - fallback to generic copy with children
+    debug!("copy2_xform: IXform::new failed for {}, using generic copy", name);
+    let mut out_obj = OObject::new(name);
+    for child in obj.getChildren() {
+        if let Some(out_child) = copy2_object(&child, stats) {
+            out_obj.add_child(out_child);
+        }
+    }
+    Some(out_obj)
 }
 
 fn copy2_polymesh(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
@@ -911,7 +922,15 @@ fn copy2_polymesh(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
         }
         return Some(out_obj);
     }
-    None
+    // Fallback
+    debug!("copy2_polymesh: IPolyMesh::new failed for {}", name);
+    let mut out_obj = OObject::new(name);
+    for child in obj.getChildren() {
+        if let Some(out_child) = copy2_object(&child, stats) {
+            out_obj.add_child(out_child);
+        }
+    }
+    Some(out_obj)
 }
 
 fn copy2_subd(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {

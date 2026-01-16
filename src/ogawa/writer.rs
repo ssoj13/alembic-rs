@@ -252,9 +252,12 @@ impl OArchive {
         self.compression_hint
     }
     
-    /// Set archive metadata.
+    /// Set the archive metadata (e.g. when copying from another file).
+    /// This also clears the application_writer so we don't add our own app name.
     pub fn set_archive_metadata(&mut self, md: MetaData) {
         self.archive_metadata = md;
+        // Clear app name so we don't override the source metadata
+        self.application_writer.clear();
     }
     
     /// Set the application name (stored as _ai_Application in metadata).
@@ -1619,6 +1622,8 @@ impl OPolyMesh {
     
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &OPolyMeshSample) {
+        // C++ order: P → .selfBnds → .faceIndices → .faceCounts
+        
         // Positions (P) with metadata: geoScope=vtx, interpretation=point
         let mut p_meta = MetaData::new();
         p_meta.set("geoScope", "vtx");
@@ -1627,16 +1632,6 @@ impl OPolyMesh {
             DataType::new(PlainOldDataType::Float32, 3), p_meta);
         positions_prop.add_array_pod(&sample.positions);
         
-        // Face counts (.faceCounts)
-        let face_counts_prop = self.get_or_create_array_with_ts(".faceCounts",
-            DataType::new(PlainOldDataType::Int32, 1));
-        face_counts_prop.add_array_pod(&sample.face_counts);
-        
-        // Face indices (.faceIndices)
-        let face_indices_prop = self.get_or_create_array_with_ts(".faceIndices",
-            DataType::new(PlainOldDataType::Int32, 1));
-        face_indices_prop.add_array_pod(&sample.face_indices);
-        
         // Self bounds (.selfBnds) - computed from positions
         let bounds = Self::compute_bounds(&sample.positions);
         let mut bnds_meta = MetaData::new();
@@ -1644,6 +1639,16 @@ impl OPolyMesh {
         let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
             DataType::new(PlainOldDataType::Float64, 6), bnds_meta);
         self_bnds_prop.add_scalar_pod(&bounds);
+        
+        // Face indices (.faceIndices)
+        let face_indices_prop = self.get_or_create_array_with_ts(".faceIndices",
+            DataType::new(PlainOldDataType::Int32, 1));
+        face_indices_prop.add_array_pod(&sample.face_indices);
+        
+        // Face counts (.faceCounts)
+        let face_counts_prop = self.get_or_create_array_with_ts(".faceCounts",
+            DataType::new(PlainOldDataType::Int32, 1));
+        face_counts_prop.add_array_pod(&sample.face_counts);
         
         // Velocities (optional)
         if let Some(ref vels) = sample.velocities {
@@ -2175,21 +2180,23 @@ impl OPoints {
     
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &OPointsSample) {
+        // C++ order: P → .selfBnds → .pointIds
+        
         // Positions (P) with metadata: geoScope=var (varying), interpretation=point
         let p_prop = self.get_or_create_array_with_meta("P", 
             DataType::new(PlainOldDataType::Float32, 3), 
             Self::p_meta());
         p_prop.add_array_pod(&sample.positions);
         
-        // IDs (id)
-        let id_prop = self.geom_compound.get_or_create_array_child("id", DataType::new(PlainOldDataType::Uint64, 1));
-        id_prop.add_array_pod(&sample.ids);
-        
         // Self bounds (.selfBnds)
         let bounds = Self::compute_bounds(&sample.positions);
         let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
             DataType::new(PlainOldDataType::Float64, 6), Self::bnds_meta());
         self_bnds_prop.add_scalar_pod(&bounds);
+        
+        // IDs (.pointIds) - C++ name
+        let id_prop = self.geom_compound.get_or_create_array_child(".pointIds", DataType::new(PlainOldDataType::Uint64, 1));
+        id_prop.add_array_pod(&sample.ids);
         
         // Velocities (optional)
         if let Some(ref vels) = sample.velocities {
@@ -2364,24 +2371,26 @@ impl OSubD {
     
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &OSubDSample) {
+        // C++ order: P → .selfBnds → .faceIndices → .faceCounts
+        
         // Positions (P) with metadata: geoScope=vtx, interpretation=point
         let p_prop = self.get_or_create_array_with_meta("P", 
             DataType::new(PlainOldDataType::Float32, 3), Self::p_meta());
         p_prop.add_array_pod(&sample.positions);
-        
-        // Face counts
-        let fc_prop = self.geom_compound.get_or_create_array_child(".faceCounts", DataType::new(PlainOldDataType::Int32, 1));
-        fc_prop.add_array_pod(&sample.face_counts);
-        
-        // Face indices
-        let fi_prop = self.geom_compound.get_or_create_array_child(".faceIndices", DataType::new(PlainOldDataType::Int32, 1));
-        fi_prop.add_array_pod(&sample.face_indices);
         
         // Self bounds (.selfBnds)
         let bounds = Self::compute_bounds(&sample.positions);
         let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
             DataType::new(PlainOldDataType::Float64, 6), Self::bnds_meta());
         self_bnds_prop.add_scalar_pod(&bounds);
+        
+        // Face indices
+        let fi_prop = self.geom_compound.get_or_create_array_child(".faceIndices", DataType::new(PlainOldDataType::Int32, 1));
+        fi_prop.add_array_pod(&sample.face_indices);
+        
+        // Face counts
+        let fc_prop = self.geom_compound.get_or_create_array_child(".faceCounts", DataType::new(PlainOldDataType::Int32, 1));
+        fc_prop.add_array_pod(&sample.face_counts);
         
         // Scheme
         let scheme_prop = self.geom_compound.get_or_create_scalar_child(".scheme", DataType::new(PlainOldDataType::String, 1));
