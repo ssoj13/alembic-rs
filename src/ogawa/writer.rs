@@ -1621,10 +1621,19 @@ impl OPolyMesh {
     }
     
     /// Add a sample.
+    /// 
+    /// Property creation order follows C++ OPolyMeshSchema::createPositionsProperty():
+    /// 1. P (positions) - created first, adds geoScope=vtx;interpretation=point to indexed metadata
+    /// 2. .selfBnds - created by createSelfBoundsProperty() called after P
+    /// 3. .faceIndices, .faceCounts - created in set() method
+    /// 
+    /// This order is critical for indexed metadata table parity with C++.
     pub fn add_sample(&mut self, sample: &OPolyMeshSample) {
         // C++ order: P → .selfBnds → .faceIndices → .faceCounts
+        // createPositionsProperty() creates P first, then calls createSelfBoundsProperty()
         
         // Positions (P) with metadata: geoScope=vtx, interpretation=point
+        // Created FIRST to match C++ createPositionsProperty() order
         let mut p_meta = MetaData::new();
         p_meta.set("geoScope", "vtx");
         p_meta.set("interpretation", "point");
@@ -1632,7 +1641,7 @@ impl OPolyMesh {
             DataType::new(PlainOldDataType::Float32, 3), p_meta);
         positions_prop.add_array_pod(&sample.positions);
         
-        // Self bounds (.selfBnds) - computed from positions
+        // Self bounds (.selfBnds) - created AFTER P by createSelfBoundsProperty()
         let bounds = Self::compute_bounds(&sample.positions);
         let mut bnds_meta = MetaData::new();
         bnds_meta.set("interpretation", "box");
@@ -1981,13 +1990,21 @@ impl OCurves {
     }
     
     /// Add a sample.
+    /// 
+    /// Property creation order follows C++ OCurvesSchema pattern:
+    /// P is created first, then .selfBnds via createSelfBoundsProperty().
+    /// This order is critical for indexed metadata table parity with C++.
     pub fn add_sample(&mut self, sample: &OCurvesSample) {
+        // C++ order: P → .selfBnds → nVertices → curveBasisAndType
+        // P is created first, then createSelfBoundsProperty() is called
+        
         // Positions (P) with metadata: geoScope=vtx, interpretation=point
+        // Created FIRST to match C++ indexed metadata order
         let p_prop = self.get_or_create_array_with_meta("P", 
             DataType::new(PlainOldDataType::Float32, 3), Self::p_meta());
         p_prop.add_array_pod(&sample.positions);
         
-        // Self bounds (.selfBnds)
+        // Self bounds (.selfBnds) - created AFTER P
         let bounds = Self::compute_bounds(&sample.positions);
         let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
             DataType::new(PlainOldDataType::Float64, 6), Self::bnds_meta());
@@ -2179,16 +2196,22 @@ impl OPoints {
     }
     
     /// Add a sample.
+    /// 
+    /// Property creation order follows C++ OPointsSchema pattern:
+    /// P is created first, then .selfBnds via createSelfBoundsProperty().
+    /// This order is critical for indexed metadata table parity with C++.
     pub fn add_sample(&mut self, sample: &OPointsSample) {
         // C++ order: P → .selfBnds → .pointIds
+        // P is created first, then createSelfBoundsProperty() is called
         
         // Positions (P) with metadata: geoScope=var (varying), interpretation=point
+        // Created FIRST to match C++ indexed metadata order
         let p_prop = self.get_or_create_array_with_meta("P", 
             DataType::new(PlainOldDataType::Float32, 3), 
             Self::p_meta());
         p_prop.add_array_pod(&sample.positions);
         
-        // Self bounds (.selfBnds)
+        // Self bounds (.selfBnds) - created AFTER P
         let bounds = Self::compute_bounds(&sample.positions);
         let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
             DataType::new(PlainOldDataType::Float64, 6), Self::bnds_meta());
@@ -2370,15 +2393,21 @@ impl OSubD {
     }
     
     /// Add a sample.
+    /// 
+    /// Property creation order follows C++ OSubDSchema pattern:
+    /// P is created first, then .selfBnds via createSelfBoundsProperty().
+    /// This order is critical for indexed metadata table parity with C++.
     pub fn add_sample(&mut self, sample: &OSubDSample) {
         // C++ order: P → .selfBnds → .faceIndices → .faceCounts
+        // P is created first, then createSelfBoundsProperty() is called
         
         // Positions (P) with metadata: geoScope=vtx, interpretation=point
+        // Created FIRST to match C++ indexed metadata order
         let p_prop = self.get_or_create_array_with_meta("P", 
             DataType::new(PlainOldDataType::Float32, 3), Self::p_meta());
         p_prop.add_array_pod(&sample.positions);
         
-        // Self bounds (.selfBnds)
+        // Self bounds (.selfBnds) - created AFTER P
         let bounds = Self::compute_bounds(&sample.positions);
         let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
             DataType::new(PlainOldDataType::Float64, 6), Self::bnds_meta());
@@ -2683,12 +2712,16 @@ impl ONuPatch {
     
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &ONuPatchSample) {
+        // C++ order: P → .selfBnds → nu → nv → ...
+        // P is created first, then createSelfBoundsProperty() is called
+        
         // Positions (P) with metadata: geoScope=vtx, interpretation=point
+        // Created FIRST to match C++ indexed metadata order
         let p_prop = self.get_or_create_array_with_meta("P", 
             DataType::new(PlainOldDataType::Float32, 3), Self::p_meta());
         p_prop.add_array_pod(&sample.positions);
         
-        // Self bounds (.selfBnds)
+        // Self bounds (.selfBnds) - created AFTER P
         let bounds = Self::compute_bounds(&sample.positions);
         let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
             DataType::new(PlainOldDataType::Float64, 6), Self::bnds_meta());

@@ -128,9 +128,14 @@ impl MetaData {
 
     /// Serialize to Alembic metadata string format.
     /// Format: "key=value;key2=value2;..."
+    /// Keys are sorted alphabetically to match C++ std::map ordering.
     pub fn serialize(&self) -> String {
+        // Sort entries alphabetically by key (C++ uses std::map which is ordered)
+        let mut sorted: Vec<_> = self.entries.iter().collect();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+        
         let mut result = String::new();
-        for (i, (k, v)) in self.entries.iter().enumerate() {
+        for (i, (k, v)) in sorted.iter().enumerate() {
             if i > 0 {
                 result.push(';');
             }
