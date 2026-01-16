@@ -1798,6 +1798,8 @@ impl OXform {
         let mut object = OObject::new(name);
         let mut meta = MetaData::new();
         meta.set("schema", "AbcGeom_Xform_v3");
+        // Xform has no schemaBaseType (empty string)
+        meta.set("schemaObjTitle", "AbcGeom_Xform_v3:.xform");
         object.meta_data = meta;
         
         Self {
@@ -1827,6 +1829,10 @@ impl OXform {
     pub fn build(mut self) -> OObject {
         if !self.samples.is_empty() {
             let mut geom = OProperty::compound(".xform");
+            // .xform compound metadata
+            let mut geom_meta = MetaData::new();
+            geom_meta.set("schema", "AbcGeom_Xform_v3");
+            geom.meta_data = geom_meta;
             
             // .vals - the matrix values
             // Alembic uses row-major for row-vectors (v' = v * M)
@@ -1946,11 +1952,20 @@ impl OCurves {
         let mut object = OObject::new(name);
         let mut meta = MetaData::new();
         meta.set("schema", "AbcGeom_Curve_v2");
+        meta.set("schemaBaseType", "AbcGeom_GeomBase_v1");
+        meta.set("schemaObjTitle", "AbcGeom_Curve_v2:.geom");
         object.meta_data = meta;
+        
+        // .geom compound with schema metadata
+        let mut geom_meta = MetaData::new();
+        geom_meta.set("schema", "AbcGeom_Curve_v2");
+        geom_meta.set("schemaBaseType", "AbcGeom_GeomBase_v1");
+        let mut geom = OProperty::compound(".geom");
+        geom.meta_data = geom_meta;
         
         Self {
             object,
-            geom_compound: OProperty::compound(".geom"),
+            geom_compound: geom,
             time_sampling_index: 0,
         }
     }
@@ -1962,9 +1977,16 @@ impl OCurves {
     
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &OCurvesSample) {
-        // Positions (P)
-        let p_prop = self.geom_compound.get_or_create_array_child("P", DataType::new(PlainOldDataType::Float32, 3));
+        // Positions (P) with metadata: geoScope=vtx, interpretation=point
+        let p_prop = self.get_or_create_array_with_meta("P", 
+            DataType::new(PlainOldDataType::Float32, 3), Self::p_meta());
         p_prop.add_array_pod(&sample.positions);
+        
+        // Self bounds (.selfBnds)
+        let bounds = Self::compute_bounds(&sample.positions);
+        let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
+            DataType::new(PlainOldDataType::Float64, 6), Self::bnds_meta());
+        self_bnds_prop.add_scalar_pod(&bounds);
         
         // nVertices
         let nv_prop = self.geom_compound.get_or_create_array_child("nVertices", DataType::new(PlainOldDataType::Int32, 1));
@@ -2017,6 +2039,68 @@ impl OCurves {
         }
     }
     
+    /// Create P property metadata.
+    fn p_meta() -> MetaData {
+        let mut meta = MetaData::new();
+        meta.set("geoScope", "vtx");
+        meta.set("interpretation", "point");
+        meta
+    }
+    
+    /// Create bounds metadata.
+    fn bnds_meta() -> MetaData {
+        let mut meta = MetaData::new();
+        meta.set("interpretation", "box");
+        meta
+    }
+    
+    /// Compute bounding box from positions.
+    fn compute_bounds(positions: &[glam::Vec3]) -> [f64; 6] {
+        if positions.is_empty() {
+            return [0.0; 6];
+        }
+        let mut min = glam::DVec3::splat(f64::MAX);
+        let mut max = glam::DVec3::splat(f64::MIN);
+        for p in positions {
+            let p = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
+            min = min.min(p);
+            max = max.max(p);
+        }
+        [min.x, min.y, min.z, max.x, max.y, max.z]
+    }
+    
+    /// Get or create array property with metadata.
+    fn get_or_create_array_with_meta(&mut self, name: &str, dt: DataType, meta: MetaData) -> &mut OProperty {
+        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
+            if let Some(idx) = children.iter().position(|p| p.name == name) {
+                return &mut children[idx];
+            }
+            let mut prop = OProperty::array(name, dt);
+            prop.meta_data = meta;
+            prop.time_sampling_index = self.time_sampling_index;
+            children.push(prop);
+            children.last_mut().unwrap()
+        } else {
+            unreachable!()
+        }
+    }
+    
+    /// Get or create scalar property with metadata.
+    fn get_or_create_scalar_with_meta(&mut self, name: &str, dt: DataType, meta: MetaData) -> &mut OProperty {
+        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
+            if let Some(idx) = children.iter().position(|p| p.name == name) {
+                return &mut children[idx];
+            }
+            let mut prop = OProperty::scalar(name, dt);
+            prop.meta_data = meta;
+            prop.time_sampling_index = self.time_sampling_index;
+            children.push(prop);
+            children.last_mut().unwrap()
+        } else {
+            unreachable!()
+        }
+    }
+    
     /// Build the object.
     pub fn build(mut self) -> OObject {
         self.object.properties.push(self.geom_compound);
@@ -2066,11 +2150,20 @@ impl OPoints {
         let mut object = OObject::new(name);
         let mut meta = MetaData::new();
         meta.set("schema", "AbcGeom_Points_v1");
+        meta.set("schemaBaseType", "AbcGeom_GeomBase_v1");
+        meta.set("schemaObjTitle", "AbcGeom_Points_v1:.geom");
         object.meta_data = meta;
+        
+        // .geom compound with schema metadata
+        let mut geom_meta = MetaData::new();
+        geom_meta.set("schema", "AbcGeom_Points_v1");
+        geom_meta.set("schemaBaseType", "AbcGeom_GeomBase_v1");
+        let mut geom = OProperty::compound(".geom");
+        geom.meta_data = geom_meta;
         
         Self {
             object,
-            geom_compound: OProperty::compound(".geom"),
+            geom_compound: geom,
             time_sampling_index: 0,
         }
     }
@@ -2082,13 +2175,21 @@ impl OPoints {
     
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &OPointsSample) {
-        // Positions (P)
-        let p_prop = self.geom_compound.get_or_create_array_child("P", DataType::new(PlainOldDataType::Float32, 3));
+        // Positions (P) with metadata: geoScope=var (varying), interpretation=point
+        let p_prop = self.get_or_create_array_with_meta("P", 
+            DataType::new(PlainOldDataType::Float32, 3), 
+            Self::p_meta());
         p_prop.add_array_pod(&sample.positions);
         
         // IDs (id)
         let id_prop = self.geom_compound.get_or_create_array_child("id", DataType::new(PlainOldDataType::Uint64, 1));
         id_prop.add_array_pod(&sample.ids);
+        
+        // Self bounds (.selfBnds)
+        let bounds = Self::compute_bounds(&sample.positions);
+        let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
+            DataType::new(PlainOldDataType::Float64, 6), Self::bnds_meta());
+        self_bnds_prop.add_scalar_pod(&bounds);
         
         // Velocities (optional)
         if let Some(ref vels) = sample.velocities {
@@ -2100,6 +2201,68 @@ impl OPoints {
         if let Some(ref widths) = sample.widths {
             let w_prop = self.geom_compound.get_or_create_array_child("width", DataType::new(PlainOldDataType::Float32, 1));
             w_prop.add_array_pod(widths);
+        }
+    }
+    
+    /// Create P property metadata (geoScope=var for varying points).
+    fn p_meta() -> MetaData {
+        let mut meta = MetaData::new();
+        meta.set("geoScope", "var");
+        meta.set("interpretation", "point");
+        meta
+    }
+    
+    /// Create bounds metadata.
+    fn bnds_meta() -> MetaData {
+        let mut meta = MetaData::new();
+        meta.set("interpretation", "box");
+        meta
+    }
+    
+    /// Compute bounding box from positions.
+    fn compute_bounds(positions: &[glam::Vec3]) -> [f64; 6] {
+        if positions.is_empty() {
+            return [0.0; 6];
+        }
+        let mut min = glam::DVec3::splat(f64::MAX);
+        let mut max = glam::DVec3::splat(f64::MIN);
+        for p in positions {
+            let p = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
+            min = min.min(p);
+            max = max.max(p);
+        }
+        [min.x, min.y, min.z, max.x, max.y, max.z]
+    }
+    
+    /// Get or create array property with metadata.
+    fn get_or_create_array_with_meta(&mut self, name: &str, dt: DataType, meta: MetaData) -> &mut OProperty {
+        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
+            if let Some(idx) = children.iter().position(|p| p.name == name) {
+                return &mut children[idx];
+            }
+            let mut prop = OProperty::array(name, dt);
+            prop.meta_data = meta;
+            prop.time_sampling_index = self.time_sampling_index;
+            children.push(prop);
+            children.last_mut().unwrap()
+        } else {
+            unreachable!()
+        }
+    }
+    
+    /// Get or create scalar property with metadata.
+    fn get_or_create_scalar_with_meta(&mut self, name: &str, dt: DataType, meta: MetaData) -> &mut OProperty {
+        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
+            if let Some(idx) = children.iter().position(|p| p.name == name) {
+                return &mut children[idx];
+            }
+            let mut prop = OProperty::scalar(name, dt);
+            prop.meta_data = meta;
+            prop.time_sampling_index = self.time_sampling_index;
+            children.push(prop);
+            children.last_mut().unwrap()
+        } else {
+            unreachable!()
         }
     }
     
@@ -2176,11 +2339,20 @@ impl OSubD {
         let mut object = OObject::new(name);
         let mut meta = MetaData::new();
         meta.set("schema", "AbcGeom_SubD_v1");
+        meta.set("schemaBaseType", "AbcGeom_GeomBase_v1");
+        meta.set("schemaObjTitle", "AbcGeom_SubD_v1:.geom");
         object.meta_data = meta;
+        
+        // .geom compound with schema metadata
+        let mut geom_meta = MetaData::new();
+        geom_meta.set("schema", "AbcGeom_SubD_v1");
+        geom_meta.set("schemaBaseType", "AbcGeom_GeomBase_v1");
+        let mut geom = OProperty::compound(".geom");
+        geom.meta_data = geom_meta;
         
         Self {
             object,
-            geom_compound: OProperty::compound(".geom"),
+            geom_compound: geom,
             time_sampling_index: 0,
         }
     }
@@ -2192,8 +2364,9 @@ impl OSubD {
     
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &OSubDSample) {
-        // Positions (P)
-        let p_prop = self.geom_compound.get_or_create_array_child("P", DataType::new(PlainOldDataType::Float32, 3));
+        // Positions (P) with metadata: geoScope=vtx, interpretation=point
+        let p_prop = self.get_or_create_array_with_meta("P", 
+            DataType::new(PlainOldDataType::Float32, 3), Self::p_meta());
         p_prop.add_array_pod(&sample.positions);
         
         // Face counts
@@ -2203,6 +2376,12 @@ impl OSubD {
         // Face indices
         let fi_prop = self.geom_compound.get_or_create_array_child(".faceIndices", DataType::new(PlainOldDataType::Int32, 1));
         fi_prop.add_array_pod(&sample.face_indices);
+        
+        // Self bounds (.selfBnds)
+        let bounds = Self::compute_bounds(&sample.positions);
+        let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
+            DataType::new(PlainOldDataType::Float64, 6), Self::bnds_meta());
+        self_bnds_prop.add_scalar_pod(&bounds);
         
         // Scheme
         let scheme_prop = self.geom_compound.get_or_create_scalar_child(".scheme", DataType::new(PlainOldDataType::String, 1));
@@ -2255,6 +2434,68 @@ impl OSubD {
         }
     }
     
+    /// Create P property metadata (geoScope=vtx, interpretation=point).
+    fn p_meta() -> MetaData {
+        let mut meta = MetaData::new();
+        meta.set("geoScope", "vtx");
+        meta.set("interpretation", "point");
+        meta
+    }
+    
+    /// Create bounds metadata.
+    fn bnds_meta() -> MetaData {
+        let mut meta = MetaData::new();
+        meta.set("interpretation", "box");
+        meta
+    }
+    
+    /// Compute bounding box from positions.
+    fn compute_bounds(positions: &[glam::Vec3]) -> [f64; 6] {
+        if positions.is_empty() {
+            return [0.0; 6];
+        }
+        let mut min = glam::DVec3::splat(f64::MAX);
+        let mut max = glam::DVec3::splat(f64::MIN);
+        for p in positions {
+            let p = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
+            min = min.min(p);
+            max = max.max(p);
+        }
+        [min.x, min.y, min.z, max.x, max.y, max.z]
+    }
+    
+    /// Get or create array property with metadata.
+    fn get_or_create_array_with_meta(&mut self, name: &str, dt: DataType, meta: MetaData) -> &mut OProperty {
+        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
+            if let Some(idx) = children.iter().position(|p| p.name == name) {
+                return &mut children[idx];
+            }
+            let mut prop = OProperty::array(name, dt);
+            prop.meta_data = meta;
+            prop.time_sampling_index = self.time_sampling_index;
+            children.push(prop);
+            children.last_mut().unwrap()
+        } else {
+            unreachable!()
+        }
+    }
+    
+    /// Get or create scalar property with metadata.
+    fn get_or_create_scalar_with_meta(&mut self, name: &str, dt: DataType, meta: MetaData) -> &mut OProperty {
+        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
+            if let Some(idx) = children.iter().position(|p| p.name == name) {
+                return &mut children[idx];
+            }
+            let mut prop = OProperty::scalar(name, dt);
+            prop.meta_data = meta;
+            prop.time_sampling_index = self.time_sampling_index;
+            children.push(prop);
+            children.last_mut().unwrap()
+        } else {
+            unreachable!()
+        }
+    }
+    
     /// Build the object.
     pub fn build(mut self) -> OObject {
         self.object.properties.push(self.geom_compound);
@@ -2286,6 +2527,8 @@ impl OCamera {
         let mut object = OObject::new(name);
         let mut meta = MetaData::new();
         meta.set("schema", "AbcGeom_Camera_v1");
+        // Camera has no schemaBaseType (empty string in C++)
+        meta.set("schemaObjTitle", "AbcGeom_Camera_v1:.geom");
         object.meta_data = meta;
         
         Self {
@@ -2309,6 +2552,10 @@ impl OCamera {
     pub fn build(mut self) -> OObject {
         if !self.samples.is_empty() {
             let mut geom = OProperty::compound(".geom");
+            // .geom compound metadata (Camera has no schemaBaseType)
+            let mut geom_meta = MetaData::new();
+            geom_meta.set("schema", "AbcGeom_Camera_v1");
+            geom.meta_data = geom_meta;
             
             // Core properties stored as array of 16 f64s
             let mut core = OProperty::array(".core", DataType::new(PlainOldDataType::Float64, 1));
@@ -2402,11 +2649,20 @@ impl ONuPatch {
         let mut object = OObject::new(name);
         let mut meta = MetaData::new();
         meta.set("schema", "AbcGeom_NuPatch_v2");
+        meta.set("schemaBaseType", "AbcGeom_GeomBase_v1");
+        meta.set("schemaObjTitle", "AbcGeom_NuPatch_v2:.geom");
         object.meta_data = meta;
+        
+        // .geom compound with schema metadata
+        let mut geom_meta = MetaData::new();
+        geom_meta.set("schema", "AbcGeom_NuPatch_v2");
+        geom_meta.set("schemaBaseType", "AbcGeom_GeomBase_v1");
+        let mut geom = OProperty::compound(".geom");
+        geom.meta_data = geom_meta;
         
         Self {
             object,
-            geom_compound: OProperty::compound(".geom"),
+            geom_compound: geom,
             time_sampling_index: 0,
         }
     }
@@ -2418,9 +2674,16 @@ impl ONuPatch {
     
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &ONuPatchSample) {
-        // Positions (P)
-        let p_prop = self.geom_compound.get_or_create_array_child("P", DataType::new(PlainOldDataType::Float32, 3));
+        // Positions (P) with metadata: geoScope=vtx, interpretation=point
+        let p_prop = self.get_or_create_array_with_meta("P", 
+            DataType::new(PlainOldDataType::Float32, 3), Self::p_meta());
         p_prop.add_array_pod(&sample.positions);
+        
+        // Self bounds (.selfBnds)
+        let bounds = Self::compute_bounds(&sample.positions);
+        let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
+            DataType::new(PlainOldDataType::Float64, 6), Self::bnds_meta());
+        self_bnds_prop.add_scalar_pod(&bounds);
         
         // numU, numV
         let nu_prop = self.geom_compound.get_or_create_scalar_child("nu", DataType::new(PlainOldDataType::Int32, 1));
@@ -2468,6 +2731,68 @@ impl ONuPatch {
         }
     }
     
+    /// Create P property metadata.
+    fn p_meta() -> MetaData {
+        let mut meta = MetaData::new();
+        meta.set("geoScope", "vtx");
+        meta.set("interpretation", "point");
+        meta
+    }
+    
+    /// Create bounds metadata.
+    fn bnds_meta() -> MetaData {
+        let mut meta = MetaData::new();
+        meta.set("interpretation", "box");
+        meta
+    }
+    
+    /// Compute bounding box from positions.
+    fn compute_bounds(positions: &[glam::Vec3]) -> [f64; 6] {
+        if positions.is_empty() {
+            return [0.0; 6];
+        }
+        let mut min = glam::DVec3::splat(f64::MAX);
+        let mut max = glam::DVec3::splat(f64::MIN);
+        for p in positions {
+            let p = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
+            min = min.min(p);
+            max = max.max(p);
+        }
+        [min.x, min.y, min.z, max.x, max.y, max.z]
+    }
+    
+    /// Get or create array property with metadata.
+    fn get_or_create_array_with_meta(&mut self, name: &str, dt: DataType, meta: MetaData) -> &mut OProperty {
+        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
+            if let Some(idx) = children.iter().position(|p| p.name == name) {
+                return &mut children[idx];
+            }
+            let mut prop = OProperty::array(name, dt);
+            prop.meta_data = meta;
+            prop.time_sampling_index = self.time_sampling_index;
+            children.push(prop);
+            children.last_mut().unwrap()
+        } else {
+            unreachable!()
+        }
+    }
+    
+    /// Get or create scalar property with metadata.
+    fn get_or_create_scalar_with_meta(&mut self, name: &str, dt: DataType, meta: MetaData) -> &mut OProperty {
+        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
+            if let Some(idx) = children.iter().position(|p| p.name == name) {
+                return &mut children[idx];
+            }
+            let mut prop = OProperty::scalar(name, dt);
+            prop.meta_data = meta;
+            prop.time_sampling_index = self.time_sampling_index;
+            children.push(prop);
+            children.last_mut().unwrap()
+        } else {
+            unreachable!()
+        }
+    }
+    
     /// Build the object.
     pub fn build(mut self) -> OObject {
         self.object.properties.push(self.geom_compound);
@@ -2497,6 +2822,8 @@ impl OLight {
         let mut object = OObject::new(name);
         let mut meta = MetaData::new();
         meta.set("schema", "AbcGeom_Light_v1");
+        // Light has no schemaBaseType (empty string in C++)
+        meta.set("schemaObjTitle", "AbcGeom_Light_v1:.geom");
         object.meta_data = meta;
         
         Self {
@@ -2520,6 +2847,10 @@ impl OLight {
     pub fn build(mut self) -> OObject {
         if !self.camera_samples.is_empty() {
             let mut geom = OProperty::compound(".geom");
+            // .geom compound metadata (Light has no schemaBaseType)
+            let mut geom_meta = MetaData::new();
+            geom_meta.set("schema", "AbcGeom_Light_v1");
+            geom.meta_data = geom_meta;
             
             // Camera schema embedded in light
             let mut cam_compound = OProperty::compound(".camera");
@@ -2596,11 +2927,20 @@ impl OFaceSet {
         let mut object = OObject::new(name);
         let mut meta = MetaData::new();
         meta.set("schema", "AbcGeom_FaceSet_v1");
+        meta.set("schemaBaseType", "AbcGeom_GeomBase_v1");
+        meta.set("schemaObjTitle", "AbcGeom_FaceSet_v1:.faceset");
         object.meta_data = meta;
+        
+        // .faceset compound with schema metadata (FaceSet uses .faceset, not .geom)
+        let mut faceset_meta = MetaData::new();
+        faceset_meta.set("schema", "AbcGeom_FaceSet_v1");
+        faceset_meta.set("schemaBaseType", "AbcGeom_GeomBase_v1");
+        let mut faceset = OProperty::compound(".faceset");
+        faceset.meta_data = faceset_meta;
         
         Self {
             object,
-            geom_compound: OProperty::compound(".geom"),
+            geom_compound: faceset,  // Still named geom_compound for consistency
             time_sampling_index: 0,
         }
     }
@@ -2686,6 +3026,8 @@ impl OMaterial {
         let mut object = OObject::new(name);
         let mut meta = MetaData::new();
         meta.set("schema", "AbcMaterial_Material_v1");
+        // Material has no schemaBaseType (empty string in C++)
+        meta.set("schemaObjTitle", "AbcMaterial_Material_v1:.material");
         object.meta_data = meta;
         
         Self {
@@ -2707,6 +3049,10 @@ impl OMaterial {
     /// Build the object.
     pub fn build(mut self) -> OObject {
         let mut mat = OProperty::compound(".material");
+        // .material compound metadata
+        let mut mat_meta = MetaData::new();
+        mat_meta.set("schema", "AbcMaterial_Material_v1");
+        mat.meta_data = mat_meta;
         
         // Write targets
         if !self.sample.targets.is_empty() {

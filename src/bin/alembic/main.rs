@@ -1,8 +1,12 @@
 //! Alembic CLI - Tool for inspecting and manipulating Alembic files.
 
-use alembic::prelude::{IObject, IPolyMesh, ISubD, ICurves, IPoints, ICamera, IXform};
+use alembic::prelude::{IObject, IPolyMesh, ISubD, ICurves, IPoints, ICamera, IXform, INuPatch, ILight, IFaceSet};
 use alembic::abc::IArchive as AbcIArchive;
-use alembic::ogawa::writer::{OArchive, OObject, OPolyMesh, OPolyMeshSample, OXform, OXformSample};
+use alembic::ogawa::writer::{
+    OArchive, OObject, OPolyMesh, OPolyMeshSample, OXform, OXformSample,
+    OSubD, OSubDSample, OCurves, OCurvesSample, OPoints, OPointsSample,
+    OCamera, ONuPatch, ONuPatchSample, OLight, OFaceSet, OFaceSetSample,
+};
 use std::env;
 use std::path::Path;
 
@@ -142,6 +146,16 @@ fn main() {
             cmd_copy(filtered_args[1], filtered_args[2]);
         }
         
+        // Copy2 command - full re-write using our writer (ALL schema types)
+        "copy2" | "c2" => {
+            if filtered_args.len() < 3 {
+                eprintln!("Error: missing arguments");
+                eprintln!("Usage: alembic copy2 <input.abc> <output.abc>");
+                std::process::exit(1);
+            }
+            cmd_copy2(filtered_args[1], filtered_args[2]);
+        }
+        
         // Help
         "help" | "h" | "-h" | "--help" => print_help(),
         
@@ -171,7 +185,8 @@ fn print_help() {
     println!("    t, tree   <file>              Show full object hierarchy");
     println!("    s, stats  <file>              Show detailed statistics with timing info");
     println!("    d, dump   <file> [pattern]    Dump xform transforms (filter by pattern)");
-    println!("    c, copy   <in> <out>          Copy archive (round-trip test)");
+    println!("    c, copy   <in> <out>          Copy archive (Xform + PolyMesh only)");
+    println!("    c2, copy2 <in> <out>          Full re-write using our writer (ALL types)");
     println!("    h, help                       Show this help");
     println!();
     println!("OPTIONS:");
@@ -725,4 +740,372 @@ fn get_object_info(obj: &IObject, schema: &str) -> String {
         }
     }
     String::new()
+}
+
+// ============================================================================
+// copy2 - Full re-write using our writer (ALL schema types)
+// ============================================================================
+
+fn cmd_copy2(input: &str, output: &str) {
+    info!("Full re-write {} -> {} (ALL schema types)", input, output);
+    
+    let archive = match AbcIArchive::open(input) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Failed to open {}: {}", input, e);
+            std::process::exit(1);
+        }
+    };
+    
+    let mut out_archive = match OArchive::create(output) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Failed to create {}: {}", output, e);
+            std::process::exit(1);
+        }
+    };
+    
+    // Copy time samplings
+    // TODO: copy time samplings from input archive
+    
+    let root = archive.getTop();
+    let mut out_root = OObject::new("");
+    
+    let mut stats = CopyStats::default();
+    
+    // Copy children recursively
+    for child in root.getChildren() {
+        if let Some(out_child) = copy2_object(&child, &mut stats) {
+            out_root.add_child(out_child);
+        }
+    }
+    
+    if let Err(e) = out_archive.write_archive(&out_root) {
+        eprintln!("Failed to write archive: {}", e);
+        std::process::exit(1);
+    }
+    
+    println!("Full re-write {} -> {}", input, output);
+    println!("  Xforms:   {}", stats.xform);
+    println!("  PolyMesh: {}", stats.polymesh);
+    println!("  SubD:     {}", stats.subd);
+    println!("  Curves:   {}", stats.curves);
+    println!("  Points:   {}", stats.points);
+    println!("  Camera:   {}", stats.camera);
+    println!("  NuPatch:  {}", stats.nupatch);
+    println!("  Light:    {}", stats.light);
+    println!("  FaceSet:  {}", stats.faceset);
+    println!("  Other:    {}", stats.other);
+    println!("  Total:    {}", stats.total());
+}
+
+#[derive(Default)]
+struct CopyStats {
+    xform: usize,
+    polymesh: usize,
+    subd: usize,
+    curves: usize,
+    points: usize,
+    camera: usize,
+    nupatch: usize,
+    light: usize,
+    faceset: usize,
+    other: usize,
+}
+
+impl CopyStats {
+    fn total(&self) -> usize {
+        self.xform + self.polymesh + self.subd + self.curves + 
+        self.points + self.camera + self.nupatch + self.light + 
+        self.faceset + self.other
+    }
+}
+
+fn copy2_object(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+    let name = obj.getName();
+    let schema = obj.getMetaData().get("schema").unwrap_or_default();
+    
+    debug!("copy2: {} [{}]", name, schema);
+    
+    // Handle different schema types
+    if schema.contains("Xform") {
+        return copy2_xform(obj, stats);
+    } else if schema.contains("PolyMesh") {
+        return copy2_polymesh(obj, stats);
+    } else if schema.contains("SubD") {
+        return copy2_subd(obj, stats);
+    } else if schema.contains("Curve") {
+        return copy2_curves(obj, stats);
+    } else if schema.contains("Points") {
+        return copy2_points(obj, stats);
+    } else if schema.contains("Camera") {
+        return copy2_camera(obj, stats);
+    } else if schema.contains("NuPatch") {
+        return copy2_nupatch(obj, stats);
+    } else if schema.contains("Light") {
+        return copy2_light(obj, stats);
+    } else if schema.contains("FaceSet") {
+        return copy2_faceset(obj, stats);
+    }
+    
+    // Generic object - just copy children
+    stats.other += 1;
+    let mut out_obj = OObject::new(name);
+    for child in obj.getChildren() {
+        if let Some(out_child) = copy2_object(&child, stats) {
+            out_obj.add_child(out_child);
+        }
+    }
+    Some(out_obj)
+}
+
+fn copy2_xform(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+    let name = obj.getName();
+    if let Some(xform) = IXform::new(obj) {
+        stats.xform += 1;
+        let mut out_xform = OXform::new(name);
+        
+        for i in 0..xform.getNumSamples() {
+            if let Ok(sample) = xform.getSample(i) {
+                let matrix = sample.matrix();
+                out_xform.add_sample(OXformSample::from_matrix(matrix, sample.inherits));
+            }
+        }
+        
+        let mut out_obj = out_xform.build();
+        for child in obj.getChildren() {
+            if let Some(out_child) = copy2_object(&child, stats) {
+                out_obj.add_child(out_child);
+            }
+        }
+        return Some(out_obj);
+    }
+    None
+}
+
+fn copy2_polymesh(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+    let name = obj.getName();
+    if let Some(mesh) = IPolyMesh::new(obj) {
+        stats.polymesh += 1;
+        let mut out_mesh = OPolyMesh::new(name);
+        
+        for i in 0..mesh.getNumSamples() {
+            if let Ok(sample) = mesh.getSample(i) {
+                let mut out_sample = OPolyMeshSample::new(
+                    sample.positions.clone(),
+                    sample.face_counts.clone(),
+                    sample.face_indices.clone(),
+                );
+                out_sample.velocities = sample.velocities.clone();
+                out_sample.normals = sample.normals.clone();
+                out_mesh.add_sample(&out_sample);
+            }
+        }
+        
+        let mut out_obj = out_mesh.build();
+        // Copy child FaceSets if any
+        for child in obj.getChildren() {
+            if let Some(out_child) = copy2_object(&child, stats) {
+                out_obj.add_child(out_child);
+            }
+        }
+        return Some(out_obj);
+    }
+    None
+}
+
+fn copy2_subd(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+    let name = obj.getName();
+    if let Some(sd) = ISubD::new(obj) {
+        stats.subd += 1;
+        let mut out_sd = OSubD::new(name);
+        
+        for i in 0..sd.getNumSamples() {
+            if let Ok(sample) = sd.getSample(i) {
+                let mut out_sample = OSubDSample::new(
+                    sample.positions.clone(),
+                    sample.face_counts.clone(),
+                    sample.face_indices.clone(),
+                );
+                // Copy optional fields (velocities already Option, others are plain Vec)
+                out_sample.velocities = sample.velocities.clone();
+                if !sample.crease_indices.is_empty() {
+                    out_sample.crease_indices = Some(sample.crease_indices.clone());
+                }
+                if !sample.crease_lengths.is_empty() {
+                    out_sample.crease_lengths = Some(sample.crease_lengths.clone());
+                }
+                if !sample.crease_sharpnesses.is_empty() {
+                    out_sample.crease_sharpnesses = Some(sample.crease_sharpnesses.clone());
+                }
+                if !sample.corner_indices.is_empty() {
+                    out_sample.corner_indices = Some(sample.corner_indices.clone());
+                }
+                if !sample.corner_sharpnesses.is_empty() {
+                    out_sample.corner_sharpnesses = Some(sample.corner_sharpnesses.clone());
+                }
+                if !sample.holes.is_empty() {
+                    out_sample.holes = Some(sample.holes.clone());
+                }
+                out_sd.add_sample(&out_sample);
+            }
+        }
+        
+        let mut out_obj = out_sd.build();
+        for child in obj.getChildren() {
+            if let Some(out_child) = copy2_object(&child, stats) {
+                out_obj.add_child(out_child);
+            }
+        }
+        return Some(out_obj);
+    }
+    None
+}
+
+fn copy2_curves(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+    let name = obj.getName();
+    if let Some(curves) = ICurves::new(obj) {
+        stats.curves += 1;
+        let mut out_curves = OCurves::new(name);
+        
+        for i in 0..curves.getNumSamples() {
+            if let Ok(sample) = curves.getSample(i) {
+                let mut out_sample = OCurvesSample::new(
+                    sample.positions.clone(),
+                    sample.num_vertices.clone(),
+                );
+                out_sample.curve_type = sample.curve_type;
+                out_sample.wrap = sample.wrap;
+                out_sample.basis = sample.basis;
+                // velocities is Option, others are plain Vec
+                out_sample.velocities = sample.velocities.clone();
+                if !sample.widths.is_empty() {
+                    out_sample.widths = Some(sample.widths.clone());
+                }
+                if !sample.normals.is_empty() {
+                    out_sample.normals = Some(sample.normals.clone());
+                }
+                if !sample.uvs.is_empty() {
+                    out_sample.uvs = Some(sample.uvs.clone());
+                }
+                out_curves.add_sample(&out_sample);
+            }
+        }
+        
+        return Some(out_curves.build());
+    }
+    None
+}
+
+fn copy2_points(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+    let name = obj.getName();
+    if let Some(points) = IPoints::new(obj) {
+        stats.points += 1;
+        let mut out_points = OPoints::new(name);
+        
+        for i in 0..points.getNumSamples() {
+            if let Ok(sample) = points.getSample(i) {
+                let mut out_sample = OPointsSample::new(
+                    sample.positions.clone(),
+                    sample.ids.clone(),
+                );
+                // Wrap in Some if non-empty
+                if !sample.velocities.is_empty() {
+                    out_sample.velocities = Some(sample.velocities.clone());
+                }
+                if !sample.widths.is_empty() {
+                    out_sample.widths = Some(sample.widths.clone());
+                }
+                out_points.add_sample(&out_sample);
+            }
+        }
+        
+        return Some(out_points.build());
+    }
+    None
+}
+
+fn copy2_camera(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+    let name = obj.getName();
+    if let Some(cam) = ICamera::new(obj) {
+        stats.camera += 1;
+        let mut out_cam = OCamera::new(name);
+        
+        for i in 0..cam.getNumSamples() {
+            if let Ok(sample) = cam.getSample(i) {
+                out_cam.add_sample(sample);
+            }
+        }
+        
+        return Some(out_cam.build());
+    }
+    None
+}
+
+fn copy2_nupatch(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+    let name = obj.getName();
+    if let Some(nup) = INuPatch::new(obj) {
+        stats.nupatch += 1;
+        let mut out_nup = ONuPatch::new(name);
+        
+        for i in 0..nup.getNumSamples() {
+            if let Ok(sample) = nup.getSample(i) {
+                // Input uses u_knots/v_knots, output uses u_knot/v_knot
+                let mut out_sample = ONuPatchSample::new(
+                    sample.positions.clone(),
+                    sample.num_u,
+                    sample.num_v,
+                    sample.u_order,
+                    sample.v_order,
+                    sample.u_knots.clone(),
+                    sample.v_knots.clone(),
+                );
+                // Copy optional fields
+                out_sample.position_weights = sample.position_weights.clone();
+                out_sample.velocities = sample.velocities.clone();
+                out_sample.uvs = sample.uvs.clone();
+                out_sample.normals = sample.normals.clone();
+                out_nup.add_sample(&out_sample);
+            }
+        }
+        
+        return Some(out_nup.build());
+    }
+    None
+}
+
+fn copy2_light(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+    let name = obj.getName();
+    if let Some(light) = ILight::new(obj) {
+        stats.light += 1;
+        let mut out_light = OLight::new(name);
+        
+        // Light contains camera-like samples directly
+        for i in 0..light.getNumSamples() {
+            if let Ok(sample) = light.getSample(i) {
+                out_light.add_camera_sample(sample.camera);
+            }
+        }
+        
+        return Some(out_light.build());
+    }
+    None
+}
+
+fn copy2_faceset(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+    let name = obj.getName();
+    if let Some(fs) = IFaceSet::new(obj) {
+        stats.faceset += 1;
+        let mut out_fs = OFaceSet::new(name);
+        
+        for i in 0..fs.getNumSamples() {
+            if let Ok(sample) = fs.getSample(i) {
+                let out_sample = OFaceSetSample::new(sample.faces.clone());
+                out_fs.add_sample(&out_sample);
+            }
+        }
+        
+        return Some(out_fs.build());
+    }
+    None
 }
