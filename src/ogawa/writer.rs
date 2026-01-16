@@ -183,12 +183,12 @@ impl OArchive {
     
     /// Enable or disable deduplication.
     /// Deduplication saves space by storing identical data only once.
-    pub fn set_dedup_enabled(&mut self, enabled: bool) {
+    pub fn setDedupEnabled(&mut self, enabled: bool) {
         self.dedup_enabled = enabled;
     }
     
     /// Check if deduplication is enabled.
-    pub fn dedup_enabled(&self) -> bool {
+    pub fn isDedupEnabled(&self) -> bool {
         self.dedup_enabled
     }
     
@@ -218,12 +218,12 @@ impl OArchive {
     }
     
     /// Set compression hint (-1 = no compression, 0-9 = compression level).
-    pub fn set_compression_hint(&mut self, hint: i32) {
+    pub fn setCompressionHint(&mut self, hint: i32) {
         self.compression_hint = hint.clamp(-1, 9);
     }
     
     /// Get compression hint.
-    pub fn compression_hint(&self) -> i32 {
+    pub fn getCompressionHint(&self) -> i32 {
         self.compression_hint
     }
     
@@ -233,22 +233,22 @@ impl OArchive {
     }
     
     /// Set the application name (stored as _ai_Application in metadata).
-    pub fn set_app_name(&mut self, name: &str) {
+    pub fn setAppName(&mut self, name: &str) {
         self.archive_metadata.set("_ai_Application", name);
     }
     
     /// Set the date written (stored as _ai_DateWritten in metadata).
-    pub fn set_date_written(&mut self, date: &str) {
+    pub fn setDateWritten(&mut self, date: &str) {
         self.archive_metadata.set("_ai_DateWritten", date);
     }
     
     /// Set the user description (stored as _ai_Description in metadata).
-    pub fn set_description(&mut self, desc: &str) {
+    pub fn setUserDescription(&mut self, desc: &str) {
         self.archive_metadata.set("_ai_Description", desc);
     }
     
     /// Set the DCC FPS (stored as _ai_DCC_FPS in metadata).
-    pub fn set_dcc_fps(&mut self, fps: f64) {
+    pub fn setDccFps(&mut self, fps: f64) {
         self.archive_metadata.set("_ai_DCC_FPS", fps.to_string());
     }
     

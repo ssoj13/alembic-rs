@@ -14,7 +14,7 @@ fn find_brake_disc_meshes(obj: &alembic::abc::IObject, path: &str) -> Vec<(Strin
     // Check if this is a brake_disc mesh
     if name == "brake_disc" || name == "brake_discShape" {
         if let Some(mesh) = IPolyMesh::new(obj) {
-            if let Ok(sample) = mesh.get_sample(0) {
+            if let Ok(sample) = mesh.getSample(0) {
                 let positions = &sample.positions;
                 // Get first 5 vertices
                 let verts: Vec<[f64; 3]> = positions.iter().take(5).map(|p| {

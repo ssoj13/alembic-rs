@@ -60,7 +60,7 @@ impl PyOArchive {
     fn setCompressionHint(&self, hint: i32) -> PyResult<()> {
         let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in setCompressionHint(): {}", e)))?;
         let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
-        archive.set_compression_hint(hint);
+        archive.setCompressionHint(hint);
         Ok(())
     }
     
@@ -68,7 +68,7 @@ impl PyOArchive {
     fn setDedupEnabled(&self, enabled: bool) -> PyResult<()> {
         let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in setDedupEnabled(): {}", e)))?;
         let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
-        archive.set_dedup_enabled(enabled);
+        archive.setDedupEnabled(enabled);
         Ok(())
     }
     
@@ -76,7 +76,7 @@ impl PyOArchive {
     fn setAppName(&self, name: &str) -> PyResult<()> {
         let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in setAppName(): {}", e)))?;
         let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
-        archive.set_app_name(name);
+        archive.setAppName(name);
         Ok(())
     }
     
@@ -84,7 +84,7 @@ impl PyOArchive {
     fn setDateWritten(&self, date: &str) -> PyResult<()> {
         let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in setDateWritten(): {}", e)))?;
         let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
-        archive.set_date_written(date);
+        archive.setDateWritten(date);
         Ok(())
     }
     
@@ -92,7 +92,7 @@ impl PyOArchive {
     fn setDescription(&self, desc: &str) -> PyResult<()> {
         let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in setDescription(): {}", e)))?;
         let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
-        archive.set_description(desc);
+        archive.setUserDescription(desc);
         Ok(())
     }
     
@@ -100,7 +100,7 @@ impl PyOArchive {
     fn setDccFps(&self, fps: f64) -> PyResult<()> {
         let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in setDccFps(): {}", e)))?;
         let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
-        archive.set_dcc_fps(fps);
+        archive.setDccFps(fps);
         Ok(())
     }
     
@@ -112,7 +112,7 @@ impl PyOArchive {
         
         let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in addUniformTimeSampling(): {}", e)))?;
         let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
-        Ok(archive.add_time_sampling(ts))
+        Ok(archive.addTimeSampling(ts))
     }
     
     /// Add acyclic time sampling with explicit frame times. Returns time sampling index.
@@ -121,7 +121,7 @@ impl PyOArchive {
         
         let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in addAcyclicTimeSampling(): {}", e)))?;
         let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
-        Ok(archive.add_time_sampling(ts))
+        Ok(archive.addTimeSampling(ts))
     }
     
     /// Add cyclic time sampling. Returns time sampling index.
@@ -130,7 +130,7 @@ impl PyOArchive {
         
         let mut guard = self.archive.lock().map_err(|e| PyValueError::new_err(format!("Archive lock poisoned in addCyclicTimeSampling(): {}", e)))?;
         let archive = guard.as_mut().ok_or_else(|| PyValueError::new_err("Archive already closed"))?;
-        Ok(archive.add_time_sampling(ts))
+        Ok(archive.addTimeSampling(ts))
     }
     
     /// Write the root object hierarchy and finalize.

@@ -229,7 +229,7 @@ impl<'a> ICurves<'a> {
     }
     
     /// Get property names from .geom compound.
-    pub fn property_names(&self) -> Vec<String> {
+    pub fn getPropertyNames(&self) -> Vec<String> {
         geom_util::geom_property_names(self.object)
     }
     
@@ -239,12 +239,12 @@ impl<'a> ICurves<'a> {
     }
     
     /// Check if curves are constant (single sample).
-    pub fn is_constant(&self) -> bool {
+    pub fn isConstant(&self) -> bool {
         self.getNumSamples() <= 1
     }
     
     /// Get time sampling index from positions property.
-    pub fn time_sampling_index(&self) -> u32 {
+    pub fn getTimeSamplingIndex(&self) -> u32 {
         geom_util::positions_time_sampling_index(self.object)
     }
     
@@ -310,7 +310,7 @@ impl<'a> ICurves<'a> {
     }
     
     /// Read a sample at the given index.
-    pub fn get_sample(&self, index: usize) -> Result<CurvesSample> {
+    pub fn getSample(&self, index: usize) -> Result<CurvesSample> {
         use crate::util::Error;
         
         let props = self.object.getProperties();

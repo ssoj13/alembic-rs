@@ -326,12 +326,12 @@ impl<'a> INuPatch<'a> {
     }
     
     /// Check if this patch is constant (single sample).
-    pub fn is_constant(&self) -> bool {
+    pub fn isConstant(&self) -> bool {
         self.getNumSamples() <= 1
     }
     
     /// Get time sampling index from positions property.
-    pub fn time_sampling_index(&self) -> u32 {
+    pub fn getTimeSamplingIndex(&self) -> u32 {
         geom_util::positions_time_sampling_index(self.object)
     }
     
@@ -368,7 +368,7 @@ impl<'a> INuPatch<'a> {
     }
     
     /// Read a sample at the given index.
-    pub fn get_sample(&self, index: usize) -> Result<NuPatchSample> {
+    pub fn getSample(&self, index: usize) -> Result<NuPatchSample> {
         let mut sample = NuPatchSample::new();
         
         let props = self.object.getProperties();

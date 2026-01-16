@@ -637,7 +637,7 @@ fn collect_samples_recursive(
 ) {
     // Check if this object is an Xform
     let (local_transform, inherits) = if let Some(xform) = crate::geom::IXform::new(obj) {
-        if let Ok(sample) = xform.get_sample(sample_index) {
+        if let Ok(sample) = xform.getSample(sample_index) {
             (sample.matrix(), sample.inherits)
         } else {
             (Mat4::IDENTITY, true)
@@ -655,7 +655,7 @@ fn collect_samples_recursive(
     // Check if this object is a PolyMesh
     if let Some(polymesh) = IPolyMesh::new(obj) {
         let mesh_path = polymesh.getFullName().to_string();
-        let is_constant = polymesh.is_constant();
+        let is_constant = polymesh.isConstant();
         
         // Try cache first for constant meshes
         // IMPORTANT: Use mesh_path as key, not mesh_name - different objects may have same name
@@ -674,7 +674,7 @@ fn collect_samples_recursive(
                 transform: world_transform,
                 local_bounds: cached_mesh.local_bounds,
             });
-        } else if let Ok(sample) = polymesh.get_sample(sample_index) {
+        } else if let Ok(sample) = polymesh.getSample(sample_index) {
             mesh_tasks.push(MeshTask {
                 path: mesh_path,
                 sample,
@@ -687,7 +687,7 @@ fn collect_samples_recursive(
     // Check if this object is a SubD (treat as polymesh)
     if let Some(subd) = ISubD::new(obj) {
         let mesh_path = subd.getFullName().to_string();
-        let is_constant = subd.is_constant();
+        let is_constant = subd.isConstant();
         
         // Use mesh_path as key for SubD too
         let cached = if is_constant {
@@ -704,7 +704,7 @@ fn collect_samples_recursive(
                 transform: world_transform,
                 local_bounds: cached_mesh.local_bounds,
             });
-        } else if let Ok(sample) = subd.get_sample(sample_index) {
+        } else if let Ok(sample) = subd.getSample(sample_index) {
             // Convert SubD sample to PolyMesh sample for the task
             let poly_sample = PolyMeshSample {
                 positions: sample.positions,
@@ -726,7 +726,7 @@ fn collect_samples_recursive(
     
     // Check if this object is Curves
     if let Some(icurves) = ICurves::new(obj) {
-        if let Ok(sample) = icurves.get_sample(sample_index) {
+        if let Ok(sample) = icurves.getSample(sample_index) {
             if let Some(converted) = convert_curves(&sample, icurves.getFullName(), world_transform) {
                 curves.push(converted);
             }
@@ -735,7 +735,7 @@ fn collect_samples_recursive(
     
     // Check if this object is Points
     if let Some(ipoints) = IPoints::new(obj) {
-        if let Ok(sample) = ipoints.get_sample(sample_index) {
+        if let Ok(sample) = ipoints.getSample(sample_index) {
             if let Some(converted) = convert_points(&sample, ipoints.getFullName(), world_transform) {
                 points.push(converted);
             }
@@ -744,7 +744,7 @@ fn collect_samples_recursive(
     
     // Check if this object is a Camera
     if let Some(icamera) = ICamera::new(obj) {
-        if let Ok(sample) = icamera.get_sample(sample_index) {
+        if let Ok(sample) = icamera.getSample(sample_index) {
             cameras.push(SceneCamera {
                 name: icamera.getName().to_string(),
                 transform: world_transform,

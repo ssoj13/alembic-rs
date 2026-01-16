@@ -256,16 +256,16 @@ impl<'a> IXform<'a> {
     }
     
     /// Check if this xform is constant (single sample).
-    pub fn is_constant(&self) -> bool {
+    pub fn isConstant(&self) -> bool {
         self.getNumSamples() <= 1
     }
     
     /// Check if this xform is constant AND identity transform.
-    pub fn is_constant_identity(&self) -> bool {
-        if !self.is_constant() {
+    pub fn isConstantIdentity(&self) -> bool {
+        if !self.isConstant() {
             return false;
         }
-        if let Ok(sample) = self.get_sample(0) {
+        if let Ok(sample) = self.getSample(0) {
             // Check if ops are empty (identity) or matrix is identity
             sample.ops.is_empty() || sample.matrix() == glam::Mat4::IDENTITY
         } else {
@@ -274,7 +274,7 @@ impl<'a> IXform<'a> {
     }
     
     /// Read a sample at the given index.
-    pub fn get_sample(&self, index: usize) -> Result<XformSample> {
+    pub fn getSample(&self, index: usize) -> Result<XformSample> {
         use crate::util::Error;
         
         let props = self.object.getProperties();
@@ -409,7 +409,7 @@ impl<'a> IXform<'a> {
     }
     
     /// Get time sampling index from inherits property.
-    pub fn time_sampling_index(&self) -> u32 {
+    pub fn getTimeSamplingIndex(&self) -> u32 {
         let props = self.object.getProperties();
         let Some(xform_prop) = props.getPropertyByName(".xform") else { return 0 };
         let Some(xform) = xform_prop.asCompound() else { return 0 };

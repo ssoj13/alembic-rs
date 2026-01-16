@@ -126,13 +126,13 @@ impl PyIPolyMeshSchema {
     /// Get sample at index (default 0).
     #[pyo3(signature = (index=0))]
     fn getValue(&self, index: usize) -> PyResult<PyPolyMeshSample> {
-        self.with_mesh(|m| m.get_sample(index).ok().map(|s| s.into()))
+        self.with_mesh(|m| m.getSample(index).ok().map(|s| s.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
     /// Get time sampling index.
     fn getTimeSamplingIndex(&self) -> u32 {
-        self.with_mesh(|m| Some(m.time_sampling_index())).unwrap_or(0)
+        self.with_mesh(|m| Some(m.getTimeSamplingIndex())).unwrap_or(0)
     }
     
     fn __repr__(&self) -> String {
@@ -255,18 +255,18 @@ impl PyIXformSchema {
     
     #[pyo3(signature = (index=0))]
     fn getValue(&self, index: usize) -> PyResult<PyXformSample> {
-        self.with_xform(|x| x.get_sample(index).ok().map(|s| s.into()))
+        self.with_xform(|x| x.getSample(index).ok().map(|s| s.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
     fn getTimeSamplingIndex(&self) -> u32 {
-        self.with_xform(|x| Some(x.time_sampling_index())).unwrap_or(0)
+        self.with_xform(|x| Some(x.getTimeSamplingIndex())).unwrap_or(0)
     }
     
     /// Check if this transform inherits from parent.
     #[pyo3(signature = (index=0))]
     fn getInheritsXforms(&self, index: usize) -> bool {
-        self.with_xform(|x| x.get_sample(index).ok().map(|s| s.inherits)).unwrap_or(true)
+        self.with_xform(|x| x.getSample(index).ok().map(|s| s.inherits)).unwrap_or(true)
     }
     
     fn __repr__(&self) -> String {
@@ -355,11 +355,11 @@ impl PyISubDSchema {
     
     #[pyo3(signature = (index=0))]
     fn getValue(&self, index: usize) -> PyResult<PySubDSample> {
-        self.with_subd(|s| s.get_sample(index).ok().map(|v| v.into()))
+        self.with_subd(|s| s.getSample(index).ok().map(|v| v.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
-    fn getTimeSamplingIndex(&self) -> u32 { self.with_subd(|s| Some(s.time_sampling_index())).unwrap_or(0) }
+    fn getTimeSamplingIndex(&self) -> u32 { self.with_subd(|s| Some(s.getTimeSamplingIndex())).unwrap_or(0) }
     fn __repr__(&self) -> String { format!("<ISubDSchema {} samples>", self.getNumSamples()) }
 }
 
@@ -433,11 +433,11 @@ impl PyICurvesSchema {
     
     #[pyo3(signature = (index=0))]
     fn getValue(&self, index: usize) -> PyResult<PyCurvesSample> {
-        self.with_curves(|c| c.get_sample(index).ok().map(|v| v.into()))
+        self.with_curves(|c| c.getSample(index).ok().map(|v| v.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
-    fn getTimeSamplingIndex(&self) -> u32 { self.with_curves(|c| Some(c.time_sampling_index())).unwrap_or(0) }
+    fn getTimeSamplingIndex(&self) -> u32 { self.with_curves(|c| Some(c.getTimeSamplingIndex())).unwrap_or(0) }
     fn __repr__(&self) -> String { format!("<ICurvesSchema {} samples>", self.getNumSamples()) }
 }
 
@@ -511,11 +511,11 @@ impl PyIPointsSchema {
     
     #[pyo3(signature = (index=0))]
     fn getValue(&self, index: usize) -> PyResult<PyPointsSample> {
-        self.with_points(|p| p.get_sample(index).ok().map(|v| v.into()))
+        self.with_points(|p| p.getSample(index).ok().map(|v| v.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
-    fn getTimeSamplingIndex(&self) -> u32 { self.with_points(|p| Some(p.time_sampling_index())).unwrap_or(0) }
+    fn getTimeSamplingIndex(&self) -> u32 { self.with_points(|p| Some(p.getTimeSamplingIndex())).unwrap_or(0) }
     fn __repr__(&self) -> String { format!("<IPointsSchema {} samples>", self.getNumSamples()) }
 }
 
@@ -589,11 +589,11 @@ impl PyICameraSchema {
     
     #[pyo3(signature = (index=0))]
     fn getValue(&self, index: usize) -> PyResult<PyCameraSample> {
-        self.with_camera(|c| c.get_sample(index).ok().map(|v| v.into()))
+        self.with_camera(|c| c.getSample(index).ok().map(|v| v.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
-    fn getTimeSamplingIndex(&self) -> u32 { self.with_camera(|c| Some(c.time_sampling_index())).unwrap_or(0) }
+    fn getTimeSamplingIndex(&self) -> u32 { self.with_camera(|c| Some(c.getTimeSamplingIndex())).unwrap_or(0) }
     fn __repr__(&self) -> String { format!("<ICameraSchema {} samples>", self.getNumSamples()) }
 }
 
@@ -667,11 +667,11 @@ impl PyILightSchema {
     
     #[pyo3(signature = (index=0))]
     fn getValue(&self, index: usize) -> PyResult<PyLightSample> {
-        self.with_light(|l| l.get_sample(index).ok().map(|v| v.into()))
+        self.with_light(|l| l.getSample(index).ok().map(|v| v.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
-    fn getTimeSamplingIndex(&self) -> u32 { self.with_light(|l| Some(l.time_sampling_index())).unwrap_or(0) }
+    fn getTimeSamplingIndex(&self) -> u32 { self.with_light(|l| Some(l.getTimeSamplingIndex())).unwrap_or(0) }
     fn __repr__(&self) -> String { format!("<ILightSchema {} samples>", self.getNumSamples()) }
 }
 
@@ -745,11 +745,11 @@ impl PyINuPatchSchema {
     
     #[pyo3(signature = (index=0))]
     fn getValue(&self, index: usize) -> PyResult<PyNuPatchSample> {
-        self.with_nupatch(|n| n.get_sample(index).ok().map(|v| v.into()))
+        self.with_nupatch(|n| n.getSample(index).ok().map(|v| v.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
-    fn getTimeSamplingIndex(&self) -> u32 { self.with_nupatch(|n| Some(n.time_sampling_index())).unwrap_or(0) }
+    fn getTimeSamplingIndex(&self) -> u32 { self.with_nupatch(|n| Some(n.getTimeSamplingIndex())).unwrap_or(0) }
     fn __repr__(&self) -> String { format!("<INuPatchSchema {} samples>", self.getNumSamples()) }
 }
 
@@ -782,11 +782,11 @@ impl PyIFaceSetSchema {
     
     #[pyo3(signature = (index=0))]
     fn getValue(&self, index: usize) -> PyResult<PyFaceSetSample> {
-        self.with_faceset(|f| f.get_sample(index).ok().map(|v| v.into()))
+        self.with_faceset(|f| f.getSample(index).ok().map(|v| v.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
-    fn getTimeSamplingIndex(&self) -> u32 { self.with_faceset(|f| Some(f.time_sampling_index())).unwrap_or(0) }
+    fn getTimeSamplingIndex(&self) -> u32 { self.with_faceset(|f| Some(f.getTimeSamplingIndex())).unwrap_or(0) }
     
     /// Get face exclusivity setting.
     fn getFaceExclusivity(&self) -> String {

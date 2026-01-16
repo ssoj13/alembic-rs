@@ -75,7 +75,7 @@ impl IArchive {
     /// * `path` - Full path like "/parent/child" or "parent/child"
     /// 
     /// Returns None if the object is not found.
-    pub fn find_object(&self, path: &str) -> Option<IObject<'_>> {
+    pub fn findObject(&self, path: &str) -> Option<IObject<'_>> {
         self.reader.findObject(path).map(IObject::from_owned)
     }
     
@@ -91,7 +91,7 @@ impl IArchive {
     /// 
     /// Returns None if the index is invalid or the information isn't available
     /// (for archives created before version 1.1.3).
-    pub fn max_num_samples_for_time_sampling(&self, index: usize) -> Option<usize> {
+    pub fn getMaxNumSamplesForTimeSamplingIndex(&self, index: usize) -> Option<usize> {
         self.reader.getMaxNumSamplesForTimeSamplingIndex(index)
     }
     
@@ -107,7 +107,7 @@ impl IArchive {
     /// Check if an object exists at the given path.
     /// 
     /// Path format: "/parent/child/grandchild"
-    pub fn has_object(&self, path: &str) -> bool {
+    pub fn hasObject(&self, path: &str) -> bool {
         let path = path.trim_start_matches('/');
         if path.is_empty() {
             return true;
@@ -131,31 +131,39 @@ impl IArchive {
     
     /// Get the application name that created this archive.
     /// Returns None if not available.
-    pub fn app_name(&self) -> Option<&str> {
+    /// 
+    /// Reference: GetArchiveInfo() (Abc/ArchiveInfo.h)
+    pub fn getAppName(&self) -> Option<&str> {
         self.reader.getArchiveMetaData().get("_ai_Application")
     }
     
     /// Get the date the archive was written.
     /// Returns None if not available.
-    pub fn date_written(&self) -> Option<&str> {
+    /// 
+    /// Reference: GetArchiveInfo() (Abc/ArchiveInfo.h)
+    pub fn getDateWritten(&self) -> Option<&str> {
         self.reader.getArchiveMetaData().get("_ai_DateWritten")
     }
     
     /// Get the user description.
     /// Returns None if not available.
-    pub fn user_description(&self) -> Option<&str> {
+    /// 
+    /// Reference: GetArchiveInfo() (Abc/ArchiveInfo.h)
+    pub fn getUserDescription(&self) -> Option<&str> {
         self.reader.getArchiveMetaData().get("_ai_Description")
     }
     
     /// Get the DCC FPS setting.
     /// Returns None if not available.
-    pub fn dcc_fps(&self) -> Option<f64> {
+    /// 
+    /// Reference: GetArchiveInfo() (Abc/ArchiveInfo.h)
+    pub fn getDccFps(&self) -> Option<f64> {
         self.reader.getArchiveMetaData().get("_ai_DCC_FPS")
             .and_then(|s: &str| s.parse().ok())
     }
     
     /// Get raw archive metadata.
-    pub fn archive_metadata(&self) -> &MetaData {
+    pub fn getArchiveMetaData(&self) -> &MetaData {
         self.reader.getArchiveMetaData()
     }
     
@@ -166,7 +174,7 @@ impl IArchive {
     /// 
     /// # Arguments
     /// * `sample_index` - The sample index to query bounds at (0 for static)
-    pub fn archive_bounds(&self, sample_index: usize) -> Option<crate::util::BBox3d> {
+    pub fn getArchiveBounds(&self, sample_index: usize) -> Option<crate::util::BBox3d> {
         let root = self.getTop();
         let mut combined = None;
         collect_bounds_recursive(&root, BoundsSelector::Index(sample_index), &mut combined);
@@ -176,7 +184,7 @@ impl IArchive {
     /// Get the combined bounding box at time.
     /// 
     /// Computes bounds using time-based sampling interpolation.
-    pub fn archive_bounds_at_time(&self, time: f64) -> Option<crate::util::BBox3d> {
+    pub fn getArchiveBoundsAtTime(&self, time: f64) -> Option<crate::util::BBox3d> {
         // For now, find nearest sample index from default time sampling
         let root = self.getTop();
         let mut combined = None;
@@ -235,27 +243,27 @@ fn collect_bounds_recursive(obj: &IObject<'_>, sel: BoundsSelector, combined: &m
     // Check for geometry schemas and get their bounds
     if let Some(mesh) = IPolyMesh::new(obj) {
         let idx = sel.resolve(mesh.getNumSamples());
-        if let Ok(sample) = mesh.get_sample(idx) {
+        if let Ok(sample) = mesh.getSample(idx) {
             merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     } else if let Some(subd) = ISubD::new(obj) {
         let idx = sel.resolve(subd.getNumSamples());
-        if let Ok(sample) = subd.get_sample(idx) {
+        if let Ok(sample) = subd.getSample(idx) {
             merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     } else if let Some(points) = IPoints::new(obj) {
         let idx = sel.resolve(points.getNumSamples());
-        if let Ok(sample) = points.get_sample(idx) {
+        if let Ok(sample) = points.getSample(idx) {
             merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     } else if let Some(curves) = ICurves::new(obj) {
         let idx = sel.resolve(curves.getNumSamples());
-        if let Ok(sample) = curves.get_sample(idx) {
+        if let Ok(sample) = curves.getSample(idx) {
             merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     } else if let Some(nupatch) = INuPatch::new(obj) {
         let idx = sel.resolve(nupatch.getNumSamples());
-        if let Ok(sample) = nupatch.get_sample(idx) {
+        if let Ok(sample) = nupatch.getSample(idx) {
             merge_sample_bounds(sample.self_bounds, sample.compute_bounds(), combined);
         }
     }
@@ -300,7 +308,7 @@ impl OArchive {
     /// 
     /// If an equivalent time sampling already exists, returns its index.
     /// Index 0 is always identity (static) time sampling.
-    pub fn add_time_sampling(&mut self, ts: crate::core::TimeSampling) -> u32 {
+    pub fn addTimeSampling(&mut self, ts: crate::core::TimeSampling) -> u32 {
         self.inner.addTimeSampling(ts)
     }
     
@@ -310,18 +318,18 @@ impl OArchive {
     }
     
     /// Get a time sampling by index.
-    pub fn time_sampling(&self, index: u32) -> Option<&crate::core::TimeSampling> {
+    pub fn getTimeSampling(&self, index: u32) -> Option<&crate::core::TimeSampling> {
         self.inner.getTimeSampling(index as usize)
     }
     
     /// Set compression hint (-1 = no compression, 0-9 = compression level).
-    pub fn set_compression_hint(&mut self, hint: i32) {
-        self.inner.set_compression_hint(hint);
+    pub fn setCompressionHint(&mut self, hint: i32) {
+        self.inner.setCompressionHint(hint);
     }
     
     /// Get compression hint.
-    pub fn compression_hint(&self) -> i32 {
-        self.inner.compression_hint()
+    pub fn getCompressionHint(&self) -> i32 {
+        self.inner.getCompressionHint()
     }
 
     /// Write the object hierarchy to the archive.
@@ -349,28 +357,33 @@ impl OArchive {
     }
     
     /// Set application name metadata.
-    pub fn set_app_name(&mut self, name: &str) {
-        self.inner.set_app_name(name);
+    pub fn setAppName(&mut self, name: &str) {
+        self.inner.setAppName(name);
     }
     
     /// Set date written metadata.
-    pub fn set_date_written(&mut self, date: &str) {
-        self.inner.set_date_written(date);
+    pub fn setDateWritten(&mut self, date: &str) {
+        self.inner.setDateWritten(date);
     }
     
     /// Set user description metadata.
-    pub fn set_description(&mut self, desc: &str) {
-        self.inner.set_description(desc);
+    pub fn setUserDescription(&mut self, desc: &str) {
+        self.inner.setUserDescription(desc);
+    }
+    
+    /// Set DCC FPS metadata.
+    pub fn setDccFps(&mut self, fps: f64) {
+        self.inner.setDccFps(fps);
     }
     
     /// Enable or disable sample deduplication.
-    pub fn set_dedup_enabled(&mut self, enabled: bool) {
-        self.inner.set_dedup_enabled(enabled);
+    pub fn setDedupEnabled(&mut self, enabled: bool) {
+        self.inner.setDedupEnabled(enabled);
     }
     
     /// Check if deduplication is enabled.
-    pub fn dedup_enabled(&self) -> bool {
-        self.inner.dedup_enabled()
+    pub fn isDedupEnabled(&self) -> bool {
+        self.inner.isDedupEnabled()
     }
     
     /// Check if this archive is valid.
@@ -754,8 +767,9 @@ impl<'a> IProperty<'a> {
     }
     
     /// Get the time sampling index for this property.
-    /// Use this with IArchive::time_sampling() to get the actual TimeSampling.
-    pub fn time_sampling_index(&self) -> u32 {
+    /// 
+    /// Reference: ICompoundProperty::getTimeSamplingIndex() (Abc/ICompoundProperty.h)
+    pub fn getTimeSamplingIndex(&self) -> u32 {
         self.reader.getHeader().time_sampling_index
     }
 }
@@ -777,7 +791,9 @@ impl<'a> IScalarProperty<'a> {
     }
 
     /// Check if this property is constant.
-    pub fn is_constant(&self) -> bool {
+    /// 
+    /// Reference: IScalarProperty::isConstant() (Abc/IScalarProperty.h)
+    pub fn isConstant(&self) -> bool {
         self.reader.isConstant()
     }
 
@@ -796,14 +812,16 @@ impl<'a> IScalarProperty<'a> {
     
     /// Read a sample with proper time-based selection.
     /// 
-    /// Pass the TimeSampling from `archive.time_sampling(prop.time_sampling_index())`.
+    /// Pass the TimeSampling from `archive.getTimeSampling(prop.getTimeSamplingIndex())`.
     pub fn read_sample_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling, out: &mut [u8]) -> Result<()> {
         let index = sel.into().get_index(ts, self.getNumSamples());
         self.reader.getSample(index, out)
     }
     
     /// Get the time sampling index.
-    pub fn time_sampling_index(&self) -> u32 {
+    /// 
+    /// Reference: IScalarProperty::getTimeSamplingIndex() (Abc/IScalarProperty.h)
+    pub fn getTimeSamplingIndex(&self) -> u32 {
         self.reader.getHeader().time_sampling_index
     }
     
@@ -863,7 +881,9 @@ impl<'a, T: bytemuck::Pod + Default> ITypedScalarProperty<'a, T> {
     }
     
     /// Check if this property is constant.
-    pub fn is_constant(&self) -> bool {
+    /// 
+    /// Reference: IScalarProperty::isConstant() (Abc/IScalarProperty.h)
+    pub fn isConstant(&self) -> bool {
         self.reader.isConstant()
     }
     
@@ -892,7 +912,9 @@ impl<'a, T: bytemuck::Pod + Default> ITypedScalarProperty<'a, T> {
     }
     
     /// Get the time sampling index.
-    pub fn time_sampling_index(&self) -> u32 {
+    /// 
+    /// Reference: IScalarProperty::getTimeSamplingIndex() (Abc/IScalarProperty.h)
+    pub fn getTimeSamplingIndex(&self) -> u32 {
         self.reader.getHeader().time_sampling_index
     }
     
@@ -964,7 +986,9 @@ impl<'a> IArrayProperty<'a> {
     }
 
     /// Check if this property is constant.
-    pub fn is_constant(&self) -> bool {
+    /// 
+    /// Reference: IArrayProperty::isConstant() (Abc/IArrayProperty.h)
+    pub fn isConstant(&self) -> bool {
         self.reader.isConstant()
     }
 
@@ -1000,14 +1024,16 @@ impl<'a> IArrayProperty<'a> {
     
     /// Read a sample as bytes with time-based selection.
     /// 
-    /// Pass the TimeSampling from `archive.time_sampling(prop.time_sampling_index())`.
+    /// Pass the TimeSampling from `archive.getTimeSampling(prop.getTimeSamplingIndex())`.
     pub fn read_sample_vec_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<Vec<u8>> {
         let index = sel.into().get_index(ts, self.getNumSamples());
         self.reader.getSampleVec(index)
     }
     
     /// Get the time sampling index.
-    pub fn time_sampling_index(&self) -> u32 {
+    /// 
+    /// Reference: IArrayProperty::getTimeSamplingIndex() (Abc/IArrayProperty.h)
+    pub fn getTimeSamplingIndex(&self) -> u32 {
         self.reader.getHeader().time_sampling_index
     }
     
@@ -1109,7 +1135,7 @@ impl<'a> IArrayProperty<'a> {
     }
     
     /// Read sample as f32 array.
-    pub fn readF32Array(&self, index: usize) -> Result<Vec<f32>> {
+    pub fn getAsFloat32Array(&self, index: usize) -> Result<Vec<f32>> {
         let data = self.reader.getSampleVec(index)?;
         let slice: &[f32] = bytemuck::try_cast_slice(&data)
             .map_err(|_| crate::util::Error::invalid("cannot cast to f32"))?;
@@ -1117,7 +1143,7 @@ impl<'a> IArrayProperty<'a> {
     }
     
     /// Read sample as i32 array.
-    pub fn readI32Array(&self, index: usize) -> Result<Vec<i32>> {
+    pub fn getAsInt32Array(&self, index: usize) -> Result<Vec<i32>> {
         let data = self.reader.getSampleVec(index)?;
         let slice: &[i32] = bytemuck::try_cast_slice(&data)
             .map_err(|_| crate::util::Error::invalid("cannot cast to i32"))?;
@@ -1127,7 +1153,7 @@ impl<'a> IArrayProperty<'a> {
     /// Read sample as string array.
     /// 
     /// Alembic stores string arrays as null-terminated strings concatenated together.
-    pub fn readStringArray(&self, index: usize) -> Result<Vec<String>> {
+    pub fn getAsStringArray(&self, index: usize) -> Result<Vec<String>> {
         let data = self.reader.getSampleVec(index)?;
         let mut strings = Vec::new();
         let mut start = 0;

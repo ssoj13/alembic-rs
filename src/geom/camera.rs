@@ -379,7 +379,7 @@ impl<'a> ICamera<'a> {
     }
     
     /// Get property names.
-    pub fn property_names(&self) -> Vec<String> {
+    pub fn getPropertyNames(&self) -> Vec<String> {
         let props = self.object.getProperties();
         if let Some(cam_prop) = props.getPropertyByName(".camera") {
             if let Some(cam) = cam_prop.asCompound() {
@@ -400,12 +400,12 @@ impl<'a> ICamera<'a> {
     }
     
     /// Check if camera is constant.
-    pub fn is_constant(&self) -> bool {
+    pub fn isConstant(&self) -> bool {
         self.getNumSamples() <= 1
     }
     
     /// Read a sample at the given index.
-    pub fn get_sample(&self, index: usize) -> Result<CameraSample> {
+    pub fn getSample(&self, index: usize) -> Result<CameraSample> {
         use crate::util::Error;
         
         let props = self.object.getProperties();
@@ -496,7 +496,7 @@ impl<'a> ICamera<'a> {
     }
     
     /// Get time sampling index from core properties.
-    pub fn time_sampling_index(&self) -> u32 {
+    pub fn getTimeSamplingIndex(&self) -> u32 {
         let props = self.object.getProperties();
         let Some(cam_prop) = props.getPropertyByName(".camera") else { return 0 };
         let Some(cam) = cam_prop.asCompound() else { return 0 };

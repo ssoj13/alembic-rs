@@ -167,12 +167,12 @@ impl<'a> IFaceSet<'a> {
     }
     
     /// Check if this face set is constant (single sample).
-    pub fn is_constant(&self) -> bool {
+    pub fn isConstant(&self) -> bool {
         self.getNumSamples() <= 1
     }
     
     /// Get time sampling index from faces property.
-    pub fn time_sampling_index(&self) -> u32 {
+    pub fn getTimeSamplingIndex(&self) -> u32 {
         let props = self.object.as_ref().getProperties();
         let Some(geom_prop) = props.getPropertyByName(".geom") else { return 0 };
         let Some(geom) = geom_prop.asCompound() else { return 0 };
@@ -190,7 +190,7 @@ impl<'a> IFaceSet<'a> {
     }
     
     /// Read a sample at the given index.
-    pub fn get_sample(&self, index: usize) -> Result<FaceSetSample> {
+    pub fn getSample(&self, index: usize) -> Result<FaceSetSample> {
         let mut sample = FaceSetSample::new();
         
         let props = self.object.as_ref().getProperties();

@@ -153,12 +153,12 @@ impl<'a> IPolyMesh<'a> {
     }
     
     /// Check if this mesh is constant (single sample).
-    pub fn is_constant(&self) -> bool {
+    pub fn isConstant(&self) -> bool {
         self.getNumSamples() <= 1
     }
     
     /// Get time sampling index from positions property.
-    pub fn time_sampling_index(&self) -> u32 {
+    pub fn getTimeSamplingIndex(&self) -> u32 {
         geom_util::positions_time_sampling_index(self.object)
     }
     
@@ -205,7 +205,7 @@ impl<'a> IPolyMesh<'a> {
     }
     
     /// Get property names available on this mesh.
-    pub fn property_names(&self) -> Vec<String> {
+    pub fn getPropertyNames(&self) -> Vec<String> {
         self.object.getProperties().getPropertyNames()
     }
     
@@ -354,7 +354,7 @@ impl<'a> IPolyMesh<'a> {
     }
     
     /// Read a sample at the given index.
-    pub fn get_sample(&self, index: usize) -> Result<PolyMeshSample> {
+    pub fn getSample(&self, index: usize) -> Result<PolyMeshSample> {
         use crate::util::Error;
         
         let mut sample = PolyMeshSample::new();

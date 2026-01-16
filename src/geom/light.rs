@@ -91,13 +91,13 @@ impl<'a> ILight<'a> {
     }
     
     /// Check if this light is constant (single sample).
-    pub fn is_constant(&self) -> bool {
+    pub fn isConstant(&self) -> bool {
         self.getNumSamples() <= 1
     }
     
     /// Get time sampling index (from child bounds or camera schema).
     /// Follows original Alembic: checks childBounds first, then camera schema.
-    pub fn time_sampling_index(&self) -> u32 {
+    pub fn getTimeSamplingIndex(&self) -> u32 {
         let props = self.object.getProperties();
         let Some(geom_prop) = props.getPropertyByName(".geom") else { return 0 };
         let Some(geom) = geom_prop.asCompound() else { return 0 };
@@ -132,12 +132,12 @@ impl<'a> ILight<'a> {
     }
     
     /// Get available property names.
-    pub fn property_names(&self) -> Vec<String> {
+    pub fn getPropertyNames(&self) -> Vec<String> {
         self.object.getProperties().getPropertyNames()
     }
     
     /// Read a sample at the given index.
-    pub fn get_sample(&self, index: usize) -> Result<LightSample> {
+    pub fn getSample(&self, index: usize) -> Result<LightSample> {
         let mut sample = LightSample::new();
         
         let props = self.object.getProperties();

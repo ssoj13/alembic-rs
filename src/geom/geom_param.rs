@@ -249,12 +249,12 @@ impl<'a> IGeomParam<'a> {
     }
     
     /// Check if this parameter is constant (single sample).
-    pub fn is_constant(&self) -> bool {
+    pub fn isConstant(&self) -> bool {
         self.getNumSamples() <= 1
     }
     
     /// Read a sample at the given index.
-    pub fn get_sample(&self, sel: impl Into<SampleSelector>) -> Result<GeomParamSample> {
+    pub fn getSample(&self, sel: impl Into<SampleSelector>) -> Result<GeomParamSample> {
         let sel = sel.into();
         let index = match sel {
             SampleSelector::Index(i) => i,
@@ -310,7 +310,7 @@ impl<'a> IGeomParam<'a> {
     
     /// Read sample and expand indexed data to per-element.
     pub fn get_expanded_sample(&self, sel: impl Into<SampleSelector>) -> Result<GeomParamSample> {
-        let mut sample = self.get_sample(sel)?;
+        let mut sample = self.getSample(sel)?;
         
         if sample.is_indexed && sample.indices.is_some() {
             // Expand the values
@@ -352,13 +352,13 @@ impl<'a> IGeomParam<'a> {
     
     /// Get number of unique values in the sample.
     pub fn num_vals(&self, sel: impl Into<SampleSelector>) -> Result<usize> {
-        let sample = self.get_sample(sel)?;
+        let sample = self.getSample(sel)?;
         Ok(sample.num_values())
     }
     
     /// Get number of indices (or elements if non-indexed).
     pub fn num_indices(&self, sel: impl Into<SampleSelector>) -> Result<usize> {
-        let sample = self.get_sample(sel)?;
+        let sample = self.getSample(sel)?;
         if sample.is_indexed {
             Ok(sample.num_indices())
         } else {
@@ -372,7 +372,7 @@ impl<'a> IGeomParam<'a> {
     }
     
     /// Get time sampling index.
-    pub fn time_sampling_index(&self) -> u32 {
+    pub fn getTimeSamplingIndex(&self) -> u32 {
         let Some(prop) = self.parent.getPropertyByName(&self.name) else {
             return 0;
         };
@@ -620,7 +620,7 @@ impl OGeomParam {
     }
     
     /// Get time sampling index.
-    pub fn time_sampling_index(&self) -> u32 {
+    pub fn getTimeSamplingIndex(&self) -> u32 {
         self.time_sampling_index
     }
 }

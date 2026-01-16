@@ -217,7 +217,7 @@ impl PyIObject {
     fn getPolyMeshSample(&self, index: usize) -> PyResult<PyPolyMeshSample> {
         self.with_object(|obj| {
             let mesh = IPolyMesh::new(obj)?;
-            mesh.get_sample(index).ok().map(|s| s.into())
+            mesh.getSample(index).ok().map(|s| s.into())
         }).ok_or_else(|| PyValueError::new_err("Not a PolyMesh or failed to get sample"))
     }
     
@@ -226,7 +226,7 @@ impl PyIObject {
     fn getSubDSample(&self, index: usize) -> PyResult<PySubDSample> {
         self.with_object(|obj| {
             let subd = ISubD::new(obj)?;
-            subd.get_sample(index).ok().map(|s| s.into())
+            subd.getSample(index).ok().map(|s| s.into())
         }).ok_or_else(|| PyValueError::new_err("Not a SubD or failed to get sample"))
     }
     
@@ -235,7 +235,7 @@ impl PyIObject {
     fn getCurvesSample(&self, index: usize) -> PyResult<PyCurvesSample> {
         self.with_object(|obj| {
             let curves = ICurves::new(obj)?;
-            curves.get_sample(index).ok().map(|s| s.into())
+            curves.getSample(index).ok().map(|s| s.into())
         }).ok_or_else(|| PyValueError::new_err("Not a Curves or failed to get sample"))
     }
     
@@ -244,7 +244,7 @@ impl PyIObject {
     fn getPointsSample(&self, index: usize) -> PyResult<PyPointsSample> {
         self.with_object(|obj| {
             let points = IPoints::new(obj)?;
-            points.get_sample(index).ok().map(|s| s.into())
+            points.getSample(index).ok().map(|s| s.into())
         }).ok_or_else(|| PyValueError::new_err("Not a Points or failed to get sample"))
     }
     
@@ -253,7 +253,7 @@ impl PyIObject {
     fn getCameraSample(&self, index: usize) -> PyResult<PyCameraSample> {
         self.with_object(|obj| {
             let camera = ICamera::new(obj)?;
-            camera.get_sample(index).ok().map(|s| s.into())
+            camera.getSample(index).ok().map(|s| s.into())
         }).ok_or_else(|| PyValueError::new_err("Not a Camera or failed to get sample"))
     }
     
@@ -262,7 +262,7 @@ impl PyIObject {
     fn getXformSample(&self, index: usize) -> PyResult<PyXformSample> {
         self.with_object(|obj| {
             let xform = IXform::new(obj)?;
-            xform.get_sample(index).ok().map(|s| s.into())
+            xform.getSample(index).ok().map(|s| s.into())
         }).ok_or_else(|| PyValueError::new_err("Not an Xform or failed to get sample"))
     }
     
@@ -271,7 +271,7 @@ impl PyIObject {
     fn getLightSample(&self, index: usize) -> PyResult<PyLightSample> {
         self.with_object(|obj| {
             let light = ILight::new(obj)?;
-            light.get_sample(index).ok().map(|s| s.into())
+            light.getSample(index).ok().map(|s| s.into())
         }).ok_or_else(|| PyValueError::new_err("Not a Light or failed to get sample"))
     }
     
@@ -280,7 +280,7 @@ impl PyIObject {
     fn getNuPatchSample(&self, index: usize) -> PyResult<PyNuPatchSample> {
         self.with_object(|obj| {
             let nupatch = INuPatch::new(obj)?;
-            nupatch.get_sample(index).ok().map(|s| s.into())
+            nupatch.getSample(index).ok().map(|s| s.into())
         }).ok_or_else(|| PyValueError::new_err("Not a NuPatch or failed to get sample"))
     }
     
@@ -289,7 +289,7 @@ impl PyIObject {
     fn getFaceSetSample(&self, index: usize) -> PyResult<PyFaceSetSample> {
         self.with_object(|obj| {
             let faceset = IFaceSet::new(obj)?;
-            faceset.get_sample(index).ok().map(|s| s.into())
+            faceset.getSample(index).ok().map(|s| s.into())
         }).ok_or_else(|| PyValueError::new_err("Not a FaceSet or failed to get sample"))
     }
     

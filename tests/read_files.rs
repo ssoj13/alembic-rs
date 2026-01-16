@@ -83,7 +83,7 @@ fn test_bmw_geometry() {
         // Check for polymesh
         if let Some(mesh) = IPolyMesh::new(obj) {
             *meshes += 1;
-            if let Ok(sample) = mesh.get_sample(0) {
+            if let Ok(sample) = mesh.getSample(0) {
                 *verts += sample.num_vertices();
                 *faces += sample.num_faces();
                 if depth < 3 {
@@ -116,7 +116,7 @@ fn test_bmw_geometry() {
     // Check bounds of first mesh to verify data is reasonable
     fn find_first_mesh(obj: &alembic::abc::IObject) -> Option<(glam::Vec3, glam::Vec3, String)> {
         if let Some(mesh) = IPolyMesh::new(obj) {
-            if let Ok(sample) = mesh.get_sample(0) {
+            if let Ok(sample) = mesh.getSample(0) {
                 if sample.num_vertices() > 0 {
                     let (min, max) = sample.compute_bounds();
                     return Some((min, max, mesh.getName().to_string()));
@@ -308,8 +308,8 @@ fn test_polymesh_schema() {
                         println!("  - IPolyMesh created successfully");
                         println!("  - Name: {}", mesh.getName());
                         println!("  - Full name: {}", mesh.getFullName());
-                        println!("  - Constant: {}", mesh.is_constant());
-                        println!("  - Properties: {:?}", mesh.property_names());
+                        println!("  - Constant: {}", mesh.isConstant());
+                        println!("  - Properties: {:?}", mesh.getPropertyNames());
                     }
                 }
             }
@@ -341,7 +341,7 @@ fn test_xform_schema() {
                     println!("  - Name: {}", xform.getName());
                     println!("  - Full name: {}", xform.getFullName());
                     println!("  - Inheriting: {}", xform.is_inheriting());
-                    println!("  - Constant: {}", xform.is_constant());
+                    println!("  - Constant: {}", xform.isConstant());
                 }
             }
         }
@@ -427,7 +427,7 @@ fn test_xform_get_sample() {
             println!("  properties: {:?}", xform.object().getProperties().getPropertyNames());
             println!("  num_samples: {}", xform.getNumSamples());
             println!("  is_inheriting: {}", xform.is_inheriting());
-            println!("  is_constant: {}", xform.is_constant());
+            println!("  is_constant: {}", xform.isConstant());
             
             // Check .xform compound contents
             let props = xform.object().getProperties();
@@ -438,7 +438,7 @@ fn test_xform_get_sample() {
             }
             
             // Read sample 0
-            match xform.get_sample(0) {
+            match xform.getSample(0) {
                 Ok(sample) => {
                     println!("  Sample 0:");
                     println!("    ops count: {}", sample.ops.len());
@@ -488,7 +488,7 @@ fn test_polymesh_get_sample() {
                 println!("  num_samples: {}", mesh.getNumSamples());
                 
                 // Read sample 0
-                match mesh.get_sample(0) {
+                match mesh.getSample(0) {
                     Ok(sample) => {
                         println!("  Sample 0:");
                         println!("    vertices: {}", sample.num_vertices());

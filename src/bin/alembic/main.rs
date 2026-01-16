@@ -283,7 +283,7 @@ fn cmd_stats(path: &str) {
                 format!("Acyclic ({} times)", ts.num_stored_times())
             };
             
-            let max_samples = archive.max_num_samples_for_time_sampling(i).unwrap_or(0);
+            let max_samples = archive.getMaxNumSamplesForTimeSamplingIndex(i).unwrap_or(0);
             println!("  [{}] {} - {} samples", i, type_str, max_samples);
         }
     }
@@ -327,7 +327,7 @@ fn count_objects(obj: &IObject, counts: &mut ObjectCounts) {
     } else if schema_str.contains("PolyMesh") {
         counts.mesh += 1;
         if let Some(poly) = IPolyMesh::new(obj) {
-            if let Ok(sample) = poly.get_sample(0) {
+            if let Ok(sample) = poly.getSample(0) {
                 counts.total_verts += sample.positions.len();
                 counts.total_faces += sample.face_counts.len();
             }
@@ -335,7 +335,7 @@ fn count_objects(obj: &IObject, counts: &mut ObjectCounts) {
     } else if schema_str.contains("SubD") {
         counts.subd += 1;
         if let Some(sd) = ISubD::new(obj) {
-            if let Ok(sample) = sd.get_sample(0) {
+            if let Ok(sample) = sd.getSample(0) {
                 counts.total_verts += sample.positions.len();
                 counts.total_faces += sample.face_counts.len();
             }
@@ -453,7 +453,7 @@ fn dump_xforms(obj: &IObject, depth: usize, parent_world: glam::Mat4, pattern: O
     
     // Get local transform
     let local_matrix = if let Some(xform) = IXform::new(obj) {
-        if let Ok(sample) = xform.get_sample(0) {
+        if let Ok(sample) = xform.getSample(0) {
             let m = sample.matrix();
             let inherits = sample.inherits;
             
@@ -523,7 +523,7 @@ fn collect_dump_json(
     let matches = pattern.map(|p| full_name.contains(p) || name.contains(p)).unwrap_or(true);
     
     let local_matrix = if let Some(xform) = IXform::new(obj) {
-        if let Ok(sample) = xform.get_sample(0) {
+        if let Ok(sample) = xform.getSample(0) {
             let m = sample.matrix();
             let world = if sample.inherits { parent_world * m } else { m };
             
@@ -629,7 +629,7 @@ fn copy_object(obj: &IObject) -> Option<OObject> {
             
             // Copy all samples - convert ops to matrix
             for i in 0..xform.getNumSamples() {
-                if let Ok(sample) = xform.get_sample(i) {
+                if let Ok(sample) = xform.getSample(i) {
                     let matrix = sample.matrix();
                     out_xform.add_sample(OXformSample::from_matrix(matrix, sample.inherits));
                 }
@@ -652,7 +652,7 @@ fn copy_object(obj: &IObject) -> Option<OObject> {
             
             // Copy all samples
             for i in 0..mesh.getNumSamples() {
-                if let Ok(sample) = mesh.get_sample(i) {
+                if let Ok(sample) = mesh.getSample(i) {
                     let out_sample = OPolyMeshSample::new(
                         sample.positions.clone(),
                         sample.face_counts.clone(),
@@ -680,7 +680,7 @@ fn get_object_info(obj: &IObject, schema: &str) -> String {
     if schema.contains("PolyMesh") {
         if let Some(poly) = IPolyMesh::new(obj) {
             let samples = poly.getNumSamples();
-            if let Ok(sample) = poly.get_sample(0) {
+            if let Ok(sample) = poly.getSample(0) {
                 return format!("- {} verts, {} faces, {} samples", 
                     sample.positions.len(), sample.face_counts.len(), samples);
             }
@@ -688,7 +688,7 @@ fn get_object_info(obj: &IObject, schema: &str) -> String {
     } else if schema.contains("SubD") {
         if let Some(sd) = ISubD::new(obj) {
             let samples = sd.getNumSamples();
-            if let Ok(sample) = sd.get_sample(0) {
+            if let Ok(sample) = sd.getSample(0) {
                 return format!("- {} verts, {} faces, {} samples",
                     sample.positions.len(), sample.face_counts.len(), samples);
             }
@@ -696,7 +696,7 @@ fn get_object_info(obj: &IObject, schema: &str) -> String {
     } else if schema.contains("Curves") {
         if let Some(curves) = ICurves::new(obj) {
             let samples = curves.getNumSamples();
-            if let Ok(sample) = curves.get_sample(0) {
+            if let Ok(sample) = curves.getSample(0) {
                 return format!("- {} curves, {} samples",
                     sample.num_vertices.len(), samples);
             }
@@ -704,7 +704,7 @@ fn get_object_info(obj: &IObject, schema: &str) -> String {
     } else if schema.contains("Points") {
         if let Some(points) = IPoints::new(obj) {
             let samples = points.getNumSamples();
-            if let Ok(sample) = points.get_sample(0) {
+            if let Ok(sample) = points.getSample(0) {
                 return format!("- {} points, {} samples",
                     sample.positions.len(), samples);
             }
@@ -712,7 +712,7 @@ fn get_object_info(obj: &IObject, schema: &str) -> String {
     } else if schema.contains("Camera") {
         if let Some(cam) = ICamera::new(obj) {
             let samples = cam.getNumSamples();
-            if let Ok(sample) = cam.get_sample(0) {
+            if let Ok(sample) = cam.getSample(0) {
                 return format!("- focal={:.1}mm, {} samples",
                     sample.focal_length, samples);
             }
@@ -720,7 +720,7 @@ fn get_object_info(obj: &IObject, schema: &str) -> String {
     } else if schema.contains("Xform") {
         if let Some(xf) = IXform::new(obj) {
             let samples = xf.getNumSamples();
-            let constant = if xf.is_constant() { "static" } else { "animated" };
+            let constant = if xf.isConstant() { "static" } else { "animated" };
             return format!("- {}, {} samples", constant, samples);
         }
     }

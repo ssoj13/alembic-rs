@@ -99,7 +99,7 @@ fn test_roundtrip_polymesh_triangle() {
         println!("Created IPolyMesh successfully");
         println!("  num_samples: {}", mesh.getNumSamples());
         
-        match mesh.get_sample(0) {
+        match mesh.getSample(0) {
             Ok(sample) => {
                 println!("  vertices: {}", sample.num_vertices());
                 println!("  faces: {}", sample.num_faces());
@@ -190,7 +190,7 @@ fn test_roundtrip_polymesh_cube() {
     let mesh_obj = root.getChildByName("cube").expect("Should find cube");
     
     if let Some(mesh) = IPolyMesh::new(&mesh_obj) {
-        match mesh.get_sample(0) {
+        match mesh.getSample(0) {
             Ok(sample) => {
                 assert_eq!(sample.num_vertices(), 8, "Cube should have 8 vertices");
                 assert_eq!(sample.num_faces(), 6, "Cube should have 6 faces");
@@ -247,7 +247,7 @@ fn test_roundtrip_xform() {
         println!("Created IXform successfully");
         println!("  num_samples: {}", xform.getNumSamples());
         
-        match xform.get_sample(0) {
+        match xform.getSample(0) {
             Ok(sample) => {
                 let _read_matrix = sample.matrix();
                 let read_translation = sample.translation();
@@ -323,7 +323,7 @@ fn test_roundtrip_animated_mesh() {
         // Note: num_samples might report differently depending on how constant detection works
         if num_samples >= 2 {
             // Read both samples and compare
-            if let (Ok(s0), Ok(s1)) = (mesh.get_sample(0), mesh.get_sample(1)) {
+            if let (Ok(s0), Ok(s1)) = (mesh.getSample(0), mesh.getSample(1)) {
                 let p0 = &s0.positions;
                 let p1 = &s1.positions;
                 
@@ -502,7 +502,7 @@ fn convert_object_with_ts(
             oxform.set_time_sampling(dst_ts_idx);
             
             for i in 0..num_samples {
-                if let Ok(sample) = xform.get_sample(i) {
+                if let Ok(sample) = xform.getSample(i) {
                     let matrix = sample.matrix();
                     oxform.add_sample(OXformSample::from_matrix(matrix, sample.inherits));
                 }
@@ -525,7 +525,7 @@ fn convert_object_with_ts(
             omesh.set_time_sampling(dst_ts_idx);
             
             for i in 0..num_samples {
-                if let Ok(sample) = mesh.get_sample(i) {
+                if let Ok(sample) = mesh.getSample(i) {
                     if sample.num_vertices() > 0 {
                         let mut out_sample = OPolyMeshSample::new(
                             sample.positions.clone(),
@@ -569,7 +569,7 @@ fn convert_object(obj: &alembic::abc::IObject) -> OObject {
             let num_samples = xform.getNumSamples();
             let mut oxform = OXform::new(obj.getName());
             for i in 0..num_samples {
-                if let Ok(sample) = xform.get_sample(i) {
+                if let Ok(sample) = xform.getSample(i) {
                     let matrix = sample.matrix();
                     oxform.add_sample(OXformSample::from_matrix(matrix, sample.inherits));
                 }
@@ -586,7 +586,7 @@ fn convert_object(obj: &alembic::abc::IObject) -> OObject {
             let num_samples = mesh.getNumSamples();
             let mut omesh = OPolyMesh::new(obj.getName());
             for i in 0..num_samples {
-                if let Ok(sample) = mesh.get_sample(i) {
+                if let Ok(sample) = mesh.getSample(i) {
                     if sample.num_vertices() > 0 {
                         let mut out_sample = OPolyMeshSample::new(
                             sample.positions.clone(),
@@ -640,7 +640,7 @@ fn test_bmw_roundtrip() {
         if obj.matchesSchema(XFORM_SCHEMA) { xforms += 1; }
         if let Some(mesh) = IPolyMesh::new(obj) {
             meshes += 1;
-            if let Ok(sample) = mesh.get_sample(0) {
+            if let Ok(sample) = mesh.getSample(0) {
                 verts += sample.num_vertices();
             }
         }
@@ -804,7 +804,7 @@ fn test_deduplication() {
     // Write with deduplication disabled
     {
         let mut archive = OArchive::create(path_no_dedup).expect("Failed to create");
-        archive.set_dedup_enabled(false);
+        archive.setDedupEnabled(false);
         let mut root = OObject::new("");
         
         for i in 0..5 {
@@ -988,10 +988,10 @@ fn test_roundtrip_archive_metadata() {
         let mut archive = OArchive::create(path).expect("Failed to create");
         
         // Set various metadata
-        archive.set_app_name("Test Application v1.0");
-        archive.set_date_written("2025-01-09");
-        archive.set_description("A test archive with metadata");
-        archive.set_dcc_fps(24.0);
+        archive.setAppName("Test Application v1.0");
+        archive.setDateWritten("2025-01-09");
+        archive.setUserDescription("A test archive with metadata");
+        archive.setDccFps(24.0);
         
         let root = OObject::new("");
         archive.write_archive(&root).expect("Failed to write");
@@ -1001,14 +1001,14 @@ fn test_roundtrip_archive_metadata() {
     {
         let archive = IArchive::open(path).expect("Failed to open");
         
-        assert_eq!(archive.app_name(), Some("Test Application v1.0"));
-        assert_eq!(archive.date_written(), Some("2025-01-09"));
-        assert_eq!(archive.user_description(), Some("A test archive with metadata"));
-        assert_eq!(archive.dcc_fps(), Some(24.0));
+        assert_eq!(archive.getAppName(), Some("Test Application v1.0"));
+        assert_eq!(archive.getDateWritten(), Some("2025-01-09"));
+        assert_eq!(archive.getUserDescription(), Some("A test archive with metadata"));
+        assert_eq!(archive.getDccFps(), Some(24.0));
         
         // Also test raw metadata access
         assert_eq!(
-            archive.archive_metadata().get("_ai_Application"),
+            archive.getArchiveMetaData().get("_ai_Application"),
             Some("Test Application v1.0")
         );
     }

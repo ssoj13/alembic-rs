@@ -158,7 +158,7 @@ pub fn is_visible_in_archive(
     sel: impl Into<SampleSelector> + Copy,
 ) -> bool {
     // Find the object
-    let Some(obj) = archive.find_object(obj_path) else {
+    let Some(obj) = archive.findObject(obj_path) else {
         return true; // Object not found, default visible
     };
     

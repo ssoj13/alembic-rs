@@ -204,7 +204,7 @@ impl PyIFaceSet {
     #[pyo3(signature = (index=0))]
     fn getSample(&self, index: usize) -> PyResult<PyFaceSetSample> {
         self.with_faceset(|fs| {
-            fs.get_sample(index).ok().map(|s| s.into())
+            fs.getSample(index).ok().map(|s| s.into())
         })
         .flatten()
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Failed to read sample"))
@@ -365,7 +365,7 @@ impl PyIGeomParam {
     #[pyo3(signature = (index=0))]
     fn getSample(&self, index: usize) -> PyResult<PyGeomParamSample> {
         self.with_geomparam(|gp| {
-            gp.get_sample(index).ok().map(|s| s.into())
+            gp.getSample(index).ok().map(|s| s.into())
         })
         .flatten()
         .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("Failed to read sample"))

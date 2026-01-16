@@ -138,7 +138,7 @@ fn debug_brake_disc_xform() {
     // Also check what our IXform produces
     println!("\n=== IXform interpretation ===");
     if let Some(ixform) = alembic::geom::IXform::new(&brake_disc) {
-        let sample = ixform.get_sample(0).expect("get_sample");
+        let sample = ixform.getSample(0).expect("get_sample");
         println!("Inherits: {}", sample.inherits);
         println!("Ops count: {}", sample.ops.len());
         for (i, op) in sample.ops.iter().enumerate() {
