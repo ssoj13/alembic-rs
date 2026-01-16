@@ -131,6 +131,25 @@ const DATA_KEY_SIZE: usize = 16;
 // OArchive - Main Archive Writer
 // ============================================================================
 
+/// Deferred group for bottom-up writing.
+/// Matches C++ OGroup freeze behavior.
+#[derive(Debug)]
+struct DeferredGroup {
+    /// Children of this group (data positions have MSB set, group indices don't)
+    children: Vec<u64>,
+    /// Final position after writing (set during flush)
+    final_pos: Option<u64>,
+}
+
+impl DeferredGroup {
+    fn new(children: Vec<u64>) -> Self {
+        Self {
+            children,
+            final_pos: None,
+        }
+    }
+}
+
 /// Ogawa archive writer.
 pub struct OArchive {
     name: String,
@@ -147,6 +166,10 @@ pub struct OArchive {
     dedup_map: HashMap<ArraySampleContentKey, u64>,
     /// Enable/disable deduplication (enabled by default)
     dedup_enabled: bool,
+    /// Deferred groups for bottom-up writing
+    deferred_groups: Vec<DeferredGroup>,
+    /// Use deferred group writing (C++ compatible mode)
+    deferred_mode: bool,
 }
 
 impl OArchive {
@@ -178,6 +201,8 @@ impl OArchive {
             compression_hint: -1,
             dedup_map: HashMap::new(),
             dedup_enabled: true,
+            deferred_groups: Vec::new(),
+            deferred_mode: true,  // Enable C++ compatible mode by default
         })
     }
     
@@ -405,6 +430,113 @@ impl OArchive {
         Ok(pos)
     }
     
+    // =========================================================================
+    // Deferred Group Writing (C++ compatible mode)
+    // =========================================================================
+    
+    /// Marker constant for deferred group placeholders (uses high bits that won't conflict with real positions)
+    const DEFERRED_GROUP_MARKER: u64 = 0x4000_0000_0000_0000; // Bit 62 set
+    
+    /// Add a deferred group and return a placeholder reference.
+    /// The placeholder can be used as a child reference in parent groups.
+    /// Actual position is resolved when flush_deferred_groups is called.
+    fn add_deferred_group(&mut self, children: Vec<u64>) -> u64 {
+        if children.is_empty() {
+            return 0; // Empty group marker
+        }
+        let idx = self.deferred_groups.len();
+        self.deferred_groups.push(DeferredGroup::new(children));
+        // Return placeholder: marker | index
+        Self::DEFERRED_GROUP_MARKER | (idx as u64)
+    }
+    
+    /// Check if a value is a deferred group placeholder.
+    #[inline]
+    fn is_deferred_placeholder(value: u64) -> bool {
+        // Check if marker bit is set and MSB (data marker) is not
+        (value & Self::DEFERRED_GROUP_MARKER) != 0 && !is_data_offset(value)
+    }
+    
+    /// Extract deferred group index from placeholder.
+    #[inline]
+    fn deferred_group_index(placeholder: u64) -> usize {
+        (placeholder & !Self::DEFERRED_GROUP_MARKER) as usize
+    }
+    
+    /// Flush all deferred groups, writing them in bottom-up order.
+    /// Returns the position of the last (root) group.
+    fn flush_deferred_groups(&mut self) -> Result<u64> {
+        if self.deferred_groups.is_empty() {
+            return Ok(0);
+        }
+        
+        // Build dependency graph to determine write order
+        // Groups must be written after all their child groups
+        let mut group_deps: Vec<Vec<usize>> = vec![Vec::new(); self.deferred_groups.len()];
+        
+        for (i, group) in self.deferred_groups.iter().enumerate() {
+            for &child in &group.children {
+                if Self::is_deferred_placeholder(child) {
+                    let child_idx = Self::deferred_group_index(child);
+                    group_deps[i].push(child_idx);
+                }
+            }
+        }
+        
+        // Topological sort: process groups with no unprocessed dependencies first
+        let mut written: Vec<bool> = vec![false; self.deferred_groups.len()];
+        let mut order: Vec<usize> = Vec::with_capacity(self.deferred_groups.len());
+        
+        while order.len() < self.deferred_groups.len() {
+            let mut found = false;
+            for i in 0..self.deferred_groups.len() {
+                if written[i] {
+                    continue;
+                }
+                // Check if all dependencies are satisfied
+                let deps_ok = group_deps[i].iter().all(|&d| written[d]);
+                if deps_ok {
+                    order.push(i);
+                    written[i] = true;
+                    found = true;
+                }
+            }
+            if !found {
+                // Circular dependency - shouldn't happen
+                return Err(Error::invalid("Circular dependency in deferred groups"));
+            }
+        }
+        
+        // Write groups in topological order (leaves first)
+        let mut last_pos = 0u64;
+        for &idx in &order {
+            // Resolve children: replace deferred placeholders with actual positions
+            let mut resolved_children = Vec::new();
+            for &child in &self.deferred_groups[idx].children {
+                if Self::is_deferred_placeholder(child) {
+                    let child_idx = Self::deferred_group_index(child);
+                    let child_pos = self.deferred_groups[child_idx].final_pos
+                        .ok_or_else(|| Error::invalid("Deferred group not yet written"))?;
+                    resolved_children.push(make_group_offset(child_pos));
+                } else {
+                    resolved_children.push(child);
+                }
+            }
+            
+            // Write the group
+            let pos = self.stream.pos();
+            self.stream.write_u64(resolved_children.len() as u64)?;
+            for &child in &resolved_children {
+                self.stream.write_u64(child)?;
+            }
+            
+            self.deferred_groups[idx].final_pos = Some(pos);
+            last_pos = pos;
+        }
+        
+        Ok(last_pos)
+    }
+    
     /// Serialize time samplings to bytes.
     fn serialize_time_samplings(&self) -> Vec<u8> {
         let mut buf = Vec::new();
@@ -496,6 +628,24 @@ impl OArchive {
             self.write_data(&idx_meta_data)?
         };
 
+        // In deferred mode, flush all collected groups first
+        // This writes groups bottom-up like C++
+        let final_root_obj_pos = if self.deferred_mode {
+            // If root_obj_pos is a deferred placeholder, flush and resolve
+            if Self::is_deferred_placeholder(root_obj_pos) {
+                // Flush all deferred groups - this writes them bottom-up
+                self.flush_deferred_groups()?;
+                // Now resolve the placeholder
+                let idx = Self::deferred_group_index(root_obj_pos);
+                self.deferred_groups[idx].final_pos
+                    .ok_or_else(|| Error::invalid("Root object group not written"))?
+            } else {
+                root_obj_pos
+            }
+        } else {
+            root_obj_pos
+        };
+
         // Build root group:
         // Child 0: version (data)
         // Child 1: file version (data)
@@ -506,12 +656,13 @@ impl OArchive {
         let root_children = vec![
             make_data_offset(version_pos),
             make_data_offset(file_version_pos),
-            make_group_offset(root_obj_pos),
+            make_group_offset(final_root_obj_pos),
             make_data_offset(archive_meta_pos),
             make_data_offset(ts_pos),
             make_data_offset(idx_meta_pos),
         ];
 
+        // Archive root group is always written immediately (not deferred)
         let root_pos = self.write_group(&root_children)?;
 
         // Finalize
@@ -586,15 +737,31 @@ impl OArchive {
         // Children 1..n-1: child objects (groups)
         // Child n-1: object headers (data)
         let mut children = Vec::new();
-        children.push(make_group_offset(props_pos));
-        for pos in child_positions {
-            children.push(make_group_offset(pos));
+        
+        // In deferred mode, props_pos might be a placeholder, so check
+        if Self::is_deferred_placeholder(props_pos) {
+            children.push(props_pos); // Keep placeholder as-is
+        } else {
+            children.push(make_group_offset(props_pos));
         }
+        
+        for pos in child_positions {
+            if Self::is_deferred_placeholder(pos) {
+                children.push(pos); // Keep placeholder as-is
+            } else {
+                children.push(make_group_offset(pos));
+            }
+        }
+        
         if !headers_data.is_empty() {
             children.push(make_data_offset(headers_pos));
         }
         
-        let pos = self.write_group(&children)?;
+        let pos = if self.deferred_mode {
+            self.add_deferred_group(children)
+        } else {
+            self.write_group(&children)?
+        };
         
         // Compute the final hash returned to parent.
         // C++ in OwImpl::~OwImpl() does:
@@ -645,8 +812,12 @@ impl OArchive {
     /// - Updates hash with all child hashes
     fn write_properties_with_data(&mut self, props: &[OProperty]) -> Result<(u64, u64, u64)> {
         if props.is_empty() {
-            // Write empty compound
-            let pos = self.write_group(&[])?;
+            // Empty compound - use deferred or immediate depending on mode
+            let pos = if self.deferred_mode {
+                self.add_deferred_group(Vec::new())
+            } else {
+                self.write_group(&[])?
+            };
             // C++ calls dataHash.Final() even for empty compound, which returns non-zero
             // SpookyHash::new(0,0).finalize() matches C++ SpookyHash::Final() with no updates
             let hasher = SpookyHash::new(0, 0);
@@ -673,11 +844,19 @@ impl OArchive {
         // Build compound group
         let mut children = Vec::new();
         for pos in prop_positions {
-            children.push(make_group_offset(pos));
+            if Self::is_deferred_placeholder(pos) {
+                children.push(pos); // Keep placeholder as-is
+            } else {
+                children.push(make_group_offset(pos));
+            }
         }
         children.push(make_data_offset(headers_pos));
         
-        let pos = self.write_group(&children)?;
+        let pos = if self.deferred_mode {
+            self.add_deferred_group(children)
+        } else {
+            self.write_group(&children)?
+        };
         
         // Compute compound hash matching C++ CpwData::computeHash()
         // hash.Update(&m_hashes.front(), m_hashes.size() * 8)
@@ -743,7 +922,11 @@ impl OArchive {
                     let pos = self.write_keyed_data(sample)?;
                     children.push(make_data_offset(pos));
                 }
-                let pos = self.write_group(&children)?;
+                let pos = if self.deferred_mode {
+                    self.add_deferred_group(children)
+                } else {
+                    self.write_group(&children)?
+                };
                 
                 // Final hash: HashPropertyHeader + sample hash
                 let mut hasher = SpookyHash::new(0, 0);
@@ -797,7 +980,11 @@ impl OArchive {
                     children.push(make_data_offset(data_pos));
                     children.push(make_data_offset(dims_pos));
                 }
-                let pos = self.write_group(&children)?;
+                let pos = if self.deferred_mode {
+                    self.add_deferred_group(children)
+                } else {
+                    self.write_group(&children)?
+                };
                 
                 // Final hash: HashPropertyHeader + sample hash
                 let mut hasher = SpookyHash::new(0, 0);
@@ -1400,11 +1587,20 @@ impl OPolyMesh {
         let mut object = OObject::new(name);
         let mut meta = MetaData::new();
         meta.set("schema", "AbcGeom_PolyMesh_v1");
+        meta.set("schemaBaseType", "AbcGeom_GeomBase_v1");
+        meta.set("schemaObjTitle", "AbcGeom_PolyMesh_v1:.geom");
         object.meta_data = meta;
+        
+        // .geom compound with schema metadata
+        let mut geom_meta = MetaData::new();
+        geom_meta.set("schema", "AbcGeom_PolyMesh_v1");
+        geom_meta.set("schemaBaseType", "AbcGeom_GeomBase_v1");
+        let mut geom = OProperty::compound(".geom");
+        geom.meta_data = geom_meta;
         
         Self {
             object,
-            geom_compound: OProperty::compound(".geom"),
+            geom_compound: geom,
             arb_geom_compound: None,
             time_sampling_index: 0,
         }
@@ -1423,9 +1619,12 @@ impl OPolyMesh {
     
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &OPolyMeshSample) {
-        // Positions (P)
-        let positions_prop = self.get_or_create_array_with_ts("P", 
-            DataType::new(PlainOldDataType::Float32, 3));
+        // Positions (P) with metadata: geoScope=vtx, interpretation=point
+        let mut p_meta = MetaData::new();
+        p_meta.set("geoScope", "vtx");
+        p_meta.set("interpretation", "point");
+        let positions_prop = self.get_or_create_array_with_meta("P", 
+            DataType::new(PlainOldDataType::Float32, 3), p_meta);
         positions_prop.add_array_pod(&sample.positions);
         
         // Face counts (.faceCounts)
@@ -1437,6 +1636,14 @@ impl OPolyMesh {
         let face_indices_prop = self.get_or_create_array_with_ts(".faceIndices",
             DataType::new(PlainOldDataType::Int32, 1));
         face_indices_prop.add_array_pod(&sample.face_indices);
+        
+        // Self bounds (.selfBnds) - computed from positions
+        let bounds = Self::compute_bounds(&sample.positions);
+        let mut bnds_meta = MetaData::new();
+        bnds_meta.set("interpretation", "box");
+        let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
+            DataType::new(PlainOldDataType::Float64, 6), bnds_meta);
+        self_bnds_prop.add_scalar_pod(&bounds);
         
         // Velocities (optional)
         if let Some(ref vels) = sample.velocities {
@@ -1463,6 +1670,21 @@ impl OPolyMesh {
         }
     }
     
+    /// Compute bounding box from positions (returns [minX, minY, minZ, maxX, maxY, maxZ]).
+    fn compute_bounds(positions: &[glam::Vec3]) -> [f64; 6] {
+        if positions.is_empty() {
+            return [0.0; 6];
+        }
+        let mut min = glam::DVec3::splat(f64::MAX);
+        let mut max = glam::DVec3::splat(f64::MIN);
+        for p in positions {
+            let p = glam::DVec3::new(p.x as f64, p.y as f64, p.z as f64);
+            min = min.min(p);
+            max = max.max(p);
+        }
+        [min.x, min.y, min.z, max.x, max.y, max.z]
+    }
+    
     /// Get or create array property with time sampling index set.
     fn get_or_create_array_with_ts(&mut self, prop_name: &str, data_type: DataType) -> &mut OProperty {
         let ts_idx = self.time_sampling_index;
@@ -1474,6 +1696,40 @@ impl OPolyMesh {
             // Create new with time sampling
             let mut prop = OProperty::array(prop_name, data_type);
             prop.time_sampling_index = ts_idx;
+            children.push(prop);
+            children.last_mut().unwrap()
+        } else {
+            unreachable!()
+        }
+    }
+    
+    /// Get or create array property with metadata and time sampling.
+    fn get_or_create_array_with_meta(&mut self, prop_name: &str, data_type: DataType, meta: MetaData) -> &mut OProperty {
+        let ts_idx = self.time_sampling_index;
+        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
+            if let Some(idx) = children.iter().position(|p| p.name == prop_name) {
+                return &mut children[idx];
+            }
+            let mut prop = OProperty::array(prop_name, data_type);
+            prop.time_sampling_index = ts_idx;
+            prop.meta_data = meta;
+            children.push(prop);
+            children.last_mut().unwrap()
+        } else {
+            unreachable!()
+        }
+    }
+    
+    /// Get or create scalar property with metadata and time sampling.
+    fn get_or_create_scalar_with_meta(&mut self, prop_name: &str, data_type: DataType, meta: MetaData) -> &mut OProperty {
+        let ts_idx = self.time_sampling_index;
+        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
+            if let Some(idx) = children.iter().position(|p| p.name == prop_name) {
+                return &mut children[idx];
+            }
+            let mut prop = OProperty::scalar(prop_name, data_type);
+            prop.time_sampling_index = ts_idx;
+            prop.meta_data = meta;
             children.push(prop);
             children.last_mut().unwrap()
         } else {
@@ -1681,6 +1937,7 @@ impl OCurvesSample {
 pub struct OCurves {
     object: OObject,
     geom_compound: OProperty,
+    time_sampling_index: u32,
 }
 
 impl OCurves {
@@ -1694,7 +1951,13 @@ impl OCurves {
         Self {
             object,
             geom_compound: OProperty::compound(".geom"),
+            time_sampling_index: 0,
         }
+    }
+    
+    /// Set time sampling index for animated properties.
+    pub fn set_time_sampling(&mut self, index: u32) {
+        self.time_sampling_index = index;
     }
     
     /// Add a sample.
@@ -1794,6 +2057,7 @@ impl OPointsSample {
 pub struct OPoints {
     object: OObject,
     geom_compound: OProperty,
+    time_sampling_index: u32,
 }
 
 impl OPoints {
@@ -1807,7 +2071,13 @@ impl OPoints {
         Self {
             object,
             geom_compound: OProperty::compound(".geom"),
+            time_sampling_index: 0,
         }
+    }
+    
+    /// Set time sampling index for animated properties.
+    pub fn set_time_sampling(&mut self, index: u32) {
+        self.time_sampling_index = index;
     }
     
     /// Add a sample.
@@ -1897,6 +2167,7 @@ impl OSubDSample {
 pub struct OSubD {
     object: OObject,
     geom_compound: OProperty,
+    time_sampling_index: u32,
 }
 
 impl OSubD {
@@ -1910,7 +2181,13 @@ impl OSubD {
         Self {
             object,
             geom_compound: OProperty::compound(".geom"),
+            time_sampling_index: 0,
         }
+    }
+    
+    /// Set time sampling index for animated properties.
+    pub fn set_time_sampling(&mut self, index: u32) {
+        self.time_sampling_index = index;
     }
     
     /// Add a sample.
@@ -2000,6 +2277,7 @@ use crate::geom::CameraSample;
 pub struct OCamera {
     object: OObject,
     samples: Vec<CameraSample>,
+    time_sampling_index: u32,
 }
 
 impl OCamera {
@@ -2013,7 +2291,13 @@ impl OCamera {
         Self {
             object,
             samples: Vec::new(),
+            time_sampling_index: 0,
         }
+    }
+    
+    /// Set time sampling index for animated properties.
+    pub fn set_time_sampling(&mut self, index: u32) {
+        self.time_sampling_index = index;
     }
     
     /// Add a sample.
@@ -2109,6 +2393,7 @@ impl ONuPatchSample {
 pub struct ONuPatch {
     object: OObject,
     geom_compound: OProperty,
+    time_sampling_index: u32,
 }
 
 impl ONuPatch {
@@ -2122,7 +2407,13 @@ impl ONuPatch {
         Self {
             object,
             geom_compound: OProperty::compound(".geom"),
+            time_sampling_index: 0,
         }
+    }
+    
+    /// Set time sampling index for animated properties.
+    pub fn set_time_sampling(&mut self, index: u32) {
+        self.time_sampling_index = index;
     }
     
     /// Add a sample.
@@ -2197,6 +2488,7 @@ impl ONuPatch {
 pub struct OLight {
     object: OObject,
     camera_samples: Vec<CameraSample>,
+    time_sampling_index: u32,
 }
 
 impl OLight {
@@ -2210,7 +2502,13 @@ impl OLight {
         Self {
             object,
             camera_samples: Vec::new(),
+            time_sampling_index: 0,
         }
+    }
+    
+    /// Set time sampling index for animated properties.
+    pub fn set_time_sampling(&mut self, index: u32) {
+        self.time_sampling_index = index;
     }
     
     /// Add a camera sample (light parameters stored as camera).
@@ -2289,6 +2587,7 @@ impl OFaceSetSample {
 pub struct OFaceSet {
     object: OObject,
     geom_compound: OProperty,
+    time_sampling_index: u32,
 }
 
 impl OFaceSet {
@@ -2302,7 +2601,13 @@ impl OFaceSet {
         Self {
             object,
             geom_compound: OProperty::compound(".geom"),
+            time_sampling_index: 0,
         }
+    }
+    
+    /// Set time sampling index for animated properties.
+    pub fn set_time_sampling(&mut self, index: u32) {
+        self.time_sampling_index = index;
     }
     
     /// Add a sample.

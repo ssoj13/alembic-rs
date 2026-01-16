@@ -1,8 +1,16 @@
 //! Integration tests for writing Alembic files and verifying round-trip.
 
 use alembic::abc::IArchive;
-use alembic::geom::{IXform, IPolyMesh, XFORM_SCHEMA, POLYMESH_SCHEMA};
-use alembic::ogawa::writer::{OArchive, OObject, OPolyMesh, OPolyMeshSample, OXform, OXformSample};
+use alembic::geom::{
+    IXform, IPolyMesh, ICurves, IPoints, ISubD, ICamera, ILight, INuPatch, IFaceSet,
+    XFORM_SCHEMA, POLYMESH_SCHEMA, CURVES_SCHEMA, POINTS_SCHEMA, SUBD_SCHEMA,
+    CAMERA_SCHEMA, LIGHT_SCHEMA, NUPATCH_SCHEMA, FACESET_SCHEMA,
+};
+use alembic::ogawa::writer::{
+    OArchive, OObject, OPolyMesh, OPolyMeshSample, OXform, OXformSample,
+    OCurves, OCurvesSample, OPoints, OPointsSample, OSubD, OSubDSample,
+    OCamera, ONuPatch, ONuPatchSample, OLight, OFaceSet, OFaceSetSample,
+};
 
 use tempfile::NamedTempFile;
 
@@ -478,8 +486,16 @@ fn copy_time_samplings(src: &alembic::abc::IArchive, dst: &mut OArchive) -> std:
     mapping
 }
 
-/// Convert IObject hierarchy to OObject hierarchy with time sampling preservation.
-fn convert_object_with_ts(
+/// Helper: convert Vec to Option (None if empty, Some otherwise).
+#[inline]
+fn vec_to_opt<T: Clone>(v: &Vec<T>) -> Option<Vec<T>> {
+    if v.is_empty() { None } else { Some(v.clone()) }
+}
+
+/// Convert IObject hierarchy to OObject hierarchy with full data preservation.
+/// Copies ALL schemas: Xform, PolyMesh, Curves, Points, SubD, Camera, Light, NuPatch, FaceSet.
+/// Preserves time sampling via ts_map.
+fn convert_object(
     obj: &alembic::abc::IObject,
     src_archive: &alembic::abc::IArchive,
     ts_map: &std::collections::HashMap<u32, u32>,
@@ -490,14 +506,13 @@ fn convert_object_with_ts(
     let header = obj.getHeader();
     out.meta_data = header.meta_data.clone();
     
-    // Check if it's an Xform - copy ALL transform samples with time sampling
+    // === XFORM ===
     if obj.matchesSchema(XFORM_SCHEMA) {
         if let Some(xform) = IXform::new(obj) {
             let num_samples = xform.getNumSamples();
             let mut oxform = OXform::new(obj.getName());
             
-            // Get and map time sampling index
-            let src_ts_idx = xform.child_bounds_time_sampling_index();
+            let src_ts_idx = xform.getTimeSamplingIndex();
             let dst_ts_idx = *ts_map.get(&src_ts_idx).unwrap_or(&0);
             oxform.set_time_sampling(dst_ts_idx);
             
@@ -513,14 +528,13 @@ fn convert_object_with_ts(
         }
     }
     
-    // Check if it's a PolyMesh - copy ALL geometry samples with time sampling
+    // === POLYMESH ===
     if obj.matchesSchema(POLYMESH_SCHEMA) {
         if let Some(mesh) = IPolyMesh::new(obj) {
             let num_samples = mesh.getNumSamples();
             let mut omesh = OPolyMesh::new(obj.getName());
             
-            // Get and map time sampling index
-            let src_ts_idx = mesh.child_bounds_time_sampling_index();
+            let src_ts_idx = mesh.getTimeSamplingIndex();
             let dst_ts_idx = *ts_map.get(&src_ts_idx).unwrap_or(&0);
             omesh.set_time_sampling(dst_ts_idx);
             
@@ -532,7 +546,6 @@ fn convert_object_with_ts(
                             sample.face_counts.clone(),
                             sample.face_indices.clone(),
                         );
-                        // Copy optional attributes
                         out_sample.velocities = sample.velocities.clone();
                         out_sample.normals = sample.normals.clone();
                         out_sample.uvs = sample.uvs.clone();
@@ -546,62 +559,194 @@ fn convert_object_with_ts(
         }
     }
     
-    // Recurse children
-    for child in obj.getChildren() {
-        let child_out = convert_object_with_ts(&child, src_archive, ts_map);
-        out.children.push(child_out);
-    }
-    
-    out
-}
-
-/// Convert IObject hierarchy to OObject hierarchy (legacy, no time sampling).
-fn convert_object(obj: &alembic::abc::IObject) -> OObject {
-    let mut out = OObject::new(obj.getName());
-    
-    // Copy metadata
-    let header = obj.getHeader();
-    out.meta_data = header.meta_data.clone();
-    
-    // Check if it's an Xform - copy ALL transform samples
-    if obj.matchesSchema(XFORM_SCHEMA) {
-        if let Some(xform) = IXform::new(obj) {
-            let num_samples = xform.getNumSamples();
-            let mut oxform = OXform::new(obj.getName());
+    // === CURVES ===
+    if obj.matchesSchema(CURVES_SCHEMA) {
+        if let Some(curves) = ICurves::new(obj) {
+            let num_samples = curves.getNumSamples();
+            let mut ocurves = OCurves::new(obj.getName());
+            
+            let src_ts_idx = curves.getTimeSamplingIndex();
+            let dst_ts_idx = *ts_map.get(&src_ts_idx).unwrap_or(&0);
+            ocurves.set_time_sampling(dst_ts_idx);
+            
             for i in 0..num_samples {
-                if let Ok(sample) = xform.getSample(i) {
-                    let matrix = sample.matrix();
-                    oxform.add_sample(OXformSample::from_matrix(matrix, sample.inherits));
+                if let Ok(sample) = curves.getSample(i) {
+                    let out_sample = OCurvesSample {
+                        positions: sample.positions.clone(),
+                        num_vertices: sample.num_vertices.clone(),
+                        curve_type: sample.curve_type,
+                        wrap: sample.wrap,
+                        basis: sample.basis,
+                        velocities: sample.velocities.clone(),
+                        widths: vec_to_opt(&sample.widths),
+                        uvs: vec_to_opt(&sample.uvs),
+                        normals: vec_to_opt(&sample.normals),
+                        orders: vec_to_opt(&sample.orders),
+                        knots: vec_to_opt(&sample.knots),
+                    };
+                    ocurves.add_sample(&out_sample);
                 }
             }
-            let built = oxform.build();
+            let built = ocurves.build();
             out.meta_data = built.meta_data;
             out.properties = built.properties;
         }
     }
     
-    // Check if it's a PolyMesh - copy ALL geometry samples with all attributes
-    if obj.matchesSchema(POLYMESH_SCHEMA) {
-        if let Some(mesh) = IPolyMesh::new(obj) {
-            let num_samples = mesh.getNumSamples();
-            let mut omesh = OPolyMesh::new(obj.getName());
+    // === POINTS ===
+    if obj.matchesSchema(POINTS_SCHEMA) {
+        if let Some(points) = IPoints::new(obj) {
+            let num_samples = points.getNumSamples();
+            let mut opoints = OPoints::new(obj.getName());
+            
+            let src_ts_idx = points.getTimeSamplingIndex();
+            let dst_ts_idx = *ts_map.get(&src_ts_idx).unwrap_or(&0);
+            opoints.set_time_sampling(dst_ts_idx);
+            
             for i in 0..num_samples {
-                if let Ok(sample) = mesh.getSample(i) {
-                    if sample.num_vertices() > 0 {
-                        let mut out_sample = OPolyMeshSample::new(
-                            sample.positions.clone(),
-                            sample.face_counts.clone(),
-                            sample.face_indices.clone(),
-                        );
-                        // Copy optional attributes
-                        out_sample.velocities = sample.velocities.clone();
-                        out_sample.normals = sample.normals.clone();
-                        out_sample.uvs = sample.uvs.clone();
-                        omesh.add_sample(&out_sample);
-                    }
+                if let Ok(sample) = points.getSample(i) {
+                    let out_sample = OPointsSample {
+                        positions: sample.positions.clone(),
+                        ids: sample.ids.clone(),
+                        velocities: vec_to_opt(&sample.velocities),
+                        widths: vec_to_opt(&sample.widths),
+                    };
+                    opoints.add_sample(&out_sample);
                 }
             }
-            let built = omesh.build();
+            let built = opoints.build();
+            out.meta_data = built.meta_data;
+            out.properties = built.properties;
+        }
+    }
+    
+    // === SUBD ===
+    if obj.matchesSchema(SUBD_SCHEMA) {
+        if let Some(subd) = ISubD::new(obj) {
+            let num_samples = subd.getNumSamples();
+            let mut osubd = OSubD::new(obj.getName());
+            
+            let src_ts_idx = subd.getTimeSamplingIndex();
+            let dst_ts_idx = *ts_map.get(&src_ts_idx).unwrap_or(&0);
+            osubd.set_time_sampling(dst_ts_idx);
+            
+            for i in 0..num_samples {
+                if let Ok(sample) = subd.getSample(i) {
+                    // Convert SubDScheme enum to string
+                    let scheme_str = match sample.scheme {
+                        alembic::geom::SubDScheme::CatmullClark => "catmullClark",
+                        alembic::geom::SubDScheme::Loop => "loop",
+                        alembic::geom::SubDScheme::Bilinear => "bilinear",
+                    };
+                    let out_sample = OSubDSample {
+                        positions: sample.positions.clone(),
+                        face_counts: sample.face_counts.clone(),
+                        face_indices: sample.face_indices.clone(),
+                        subdivision_scheme: scheme_str.to_string(),
+                        velocities: sample.velocities.clone(),
+                        uvs: sample.uvs.clone(),
+                        uv_indices: sample.uv_indices.clone(),
+                        crease_indices: vec_to_opt(&sample.crease_indices),
+                        crease_lengths: vec_to_opt(&sample.crease_lengths),
+                        crease_sharpnesses: vec_to_opt(&sample.crease_sharpnesses),
+                        corner_indices: vec_to_opt(&sample.corner_indices),
+                        corner_sharpnesses: vec_to_opt(&sample.corner_sharpnesses),
+                        holes: vec_to_opt(&sample.holes),
+                    };
+                    osubd.add_sample(&out_sample);
+                }
+            }
+            let built = osubd.build();
+            out.meta_data = built.meta_data;
+            out.properties = built.properties;
+        }
+    }
+    
+    // === CAMERA ===
+    if obj.matchesSchema(CAMERA_SCHEMA) {
+        if let Some(camera) = ICamera::new(obj) {
+            let num_samples = camera.getNumSamples();
+            let mut ocamera = OCamera::new(obj.getName());
+            
+            let src_ts_idx = camera.getTimeSamplingIndex();
+            let dst_ts_idx = *ts_map.get(&src_ts_idx).unwrap_or(&0);
+            ocamera.set_time_sampling(dst_ts_idx);
+            
+            for i in 0..num_samples {
+                if let Ok(sample) = camera.getSample(i) {
+                    ocamera.add_sample(sample);
+                }
+            }
+            let built = ocamera.build();
+            out.meta_data = built.meta_data;
+            out.properties = built.properties;
+        }
+    }
+    
+    // === LIGHT ===
+    if obj.matchesSchema(LIGHT_SCHEMA) {
+        if let Some(_light) = ILight::new(obj) {
+            // Light has no specific sample data, just metadata
+            let olight = OLight::new(obj.getName());
+            let built = olight.build();
+            out.meta_data = built.meta_data;
+            out.properties = built.properties;
+        }
+    }
+    
+    // === NUPATCH ===
+    if obj.matchesSchema(NUPATCH_SCHEMA) {
+        if let Some(nupatch) = INuPatch::new(obj) {
+            let num_samples = nupatch.getNumSamples();
+            let mut onupatch = ONuPatch::new(obj.getName());
+            
+            let src_ts_idx = nupatch.getTimeSamplingIndex();
+            let dst_ts_idx = *ts_map.get(&src_ts_idx).unwrap_or(&0);
+            onupatch.set_time_sampling(dst_ts_idx);
+            
+            for i in 0..num_samples {
+                if let Ok(sample) = nupatch.getSample(i) {
+                    let out_sample = ONuPatchSample {
+                        positions: sample.positions.clone(),
+                        num_u: sample.num_u,
+                        num_v: sample.num_v,
+                        u_order: sample.u_order,
+                        v_order: sample.v_order,
+                        u_knot: sample.u_knots.clone(),
+                        v_knot: sample.v_knots.clone(),
+                        velocities: sample.velocities.clone(),
+                        position_weights: sample.position_weights.clone(),
+                        normals: sample.normals.clone(),
+                        uvs: sample.uvs.clone(),
+                    };
+                    onupatch.add_sample(&out_sample);
+                }
+            }
+            let built = onupatch.build();
+            out.meta_data = built.meta_data;
+            out.properties = built.properties;
+        }
+    }
+    
+    // === FACESET ===
+    if obj.matchesSchema(FACESET_SCHEMA) {
+        if let Some(faceset) = IFaceSet::new(obj) {
+            let num_samples = faceset.getNumSamples();
+            let mut ofaceset = OFaceSet::new(obj.getName());
+            
+            let src_ts_idx = faceset.getTimeSamplingIndex();
+            let dst_ts_idx = *ts_map.get(&src_ts_idx).unwrap_or(&0);
+            ofaceset.set_time_sampling(dst_ts_idx);
+            
+            for i in 0..num_samples {
+                if let Ok(sample) = faceset.getSample(i) {
+                    let out_sample = OFaceSetSample {
+                        faces: sample.faces.clone(),
+                    };
+                    ofaceset.add_sample(&out_sample);
+                }
+            }
+            let built = ofaceset.build();
             out.meta_data = built.meta_data;
             out.properties = built.properties;
         }
@@ -609,7 +754,7 @@ fn convert_object(obj: &alembic::abc::IObject) -> OObject {
     
     // Recurse children
     for child in obj.getChildren() {
-        let child_out = convert_object(&child);
+        let child_out = convert_object(&child, src_archive, ts_map);
         out.children.push(child_out);
     }
     
@@ -658,17 +803,21 @@ fn test_bmw_roundtrip() {
     let (orig_xforms, orig_meshes, orig_verts) = count_objects(&orig_root);
     println!("Original BMW: {} xforms, {} meshes, {} vertices", orig_xforms, orig_meshes, orig_verts);
     
-    // Convert to OObject hierarchy
-    let mut out_root = OObject::new("");
-    for child in orig_root.getChildren() {
-        out_root.children.push(convert_object(&child));
-    }
-    
-    println!("Converted {} top-level children", out_root.children.len());
-    
-    // Write to new file
+    // Write to new file with full conversion
     {
         let mut archive = OArchive::create(output_path).expect("Failed to create archive");
+        
+        // Copy time samplings first for animation preservation
+        let ts_map = copy_time_samplings(&original, &mut archive);
+        
+        // Convert hierarchy with full schema support
+        let mut out_root = OObject::new("");
+        for child in orig_root.getChildren() {
+            out_root.children.push(convert_object(&child, &original, &ts_map));
+        }
+        
+        println!("Converted {} top-level children", out_root.children.len());
+        println!("Root properties count: {}", out_root.properties.len());
         archive.write_archive(&out_root).expect("Failed to write archive");
     }
     
@@ -1037,15 +1186,15 @@ fn test_bmw_binary_comparison() {
     let original = IArchive::open(BMW_PATH).expect("Failed to open BMW");
     let orig_root = original.getTop();
     
-    // Convert to OObject hierarchy
-    let mut out_root = OObject::new("");
-    for child in orig_root.getChildren() {
-        out_root.children.push(convert_object(&child));
-    }
-    
-    // Write to new file
+    // Write with full schema conversion
     {
         let mut archive = OArchive::create(&output_path).expect("Failed to create archive");
+        let ts_map = copy_time_samplings(&original, &mut archive);
+        
+        let mut out_root = OObject::new("");
+        for child in orig_root.getChildren() {
+            out_root.children.push(convert_object(&child, &original, &ts_map));
+        }
         archive.write_archive(&out_root).expect("Failed to write archive");
     }
     
@@ -1269,12 +1418,13 @@ fn test_format_self_consistency() {
         let original = IArchive::open(&source_path).expect("Failed to open source");
         let orig_root = original.getTop();
         
+        let mut archive = OArchive::create(&path1).expect("Failed to create archive 1");
+        let ts_map = copy_time_samplings(&original, &mut archive);
+        
         let mut out_root = OObject::new("");
         for child in orig_root.getChildren() {
-            out_root.children.push(convert_object(&child));
+            out_root.children.push(convert_object(&child, &original, &ts_map));
         }
-        
-        let mut archive = OArchive::create(&path1).expect("Failed to create archive 1");
         archive.write_archive(&out_root).expect("Failed to write archive 1");
     }
     
@@ -1283,12 +1433,13 @@ fn test_format_self_consistency() {
         let pass1 = IArchive::open(&path1).expect("Failed to open pass1");
         let pass1_root = pass1.getTop();
         
+        let mut archive = OArchive::create(&path2).expect("Failed to create archive 2");
+        let ts_map = copy_time_samplings(&pass1, &mut archive);
+        
         let mut out_root = OObject::new("");
         for child in pass1_root.getChildren() {
-            out_root.children.push(convert_object(&child));
+            out_root.children.push(convert_object(&child, &pass1, &ts_map));
         }
-        
-        let mut archive = OArchive::create(&path2).expect("Failed to create archive 2");
         archive.write_archive(&out_root).expect("Failed to write archive 2");
     }
     
@@ -1353,7 +1504,7 @@ fn test_binary_diff_analysis() {
         // Convert with time sampling mapping
         let mut out_root = OObject::new("");
         for child in orig_root.getChildren() {
-            out_root.children.push(convert_object_with_ts(&child, &original, &ts_map));
+            out_root.children.push(convert_object(&child, &original, &ts_map));
         }
         
         archive.write_archive(&out_root).expect("Failed to write archive");

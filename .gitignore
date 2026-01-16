@@ -1,6 +1,7 @@
-/target
 /_ref/
 /docs/book/
+/tools
+/target
 /test_output/
 cdxx.cmd
 tmpclaude-*-cwd
