@@ -159,11 +159,11 @@ impl<'a> IFaceSet<'a> {
     /// Get number of samples.
     pub fn getNumSamples(&self) -> usize {
         let props = self.object.as_ref().getProperties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return 1 };
-        let Some(geom) = geom_prop.as_compound() else { return 1 };
-        let Some(faces_prop) = geom.property_by_name(".faces") else { return 1 };
-        let Some(array_reader) = faces_prop.as_array() else { return 1 };
-        array_reader.num_samples()
+        let Some(geom_prop) = props.getPropertyByName(".geom") else { return 1 };
+        let Some(geom) = geom_prop.asCompound() else { return 1 };
+        let Some(faces_prop) = geom.getPropertyByName(".faces") else { return 1 };
+        let Some(array_reader) = faces_prop.asArray() else { return 1 };
+        array_reader.getNumSamples()
     }
     
     /// Check if this face set is constant (single sample).
@@ -174,18 +174,18 @@ impl<'a> IFaceSet<'a> {
     /// Get time sampling index from faces property.
     pub fn time_sampling_index(&self) -> u32 {
         let props = self.object.as_ref().getProperties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
-        let Some(geom) = geom_prop.as_compound() else { return 0 };
-        let Some(faces_prop) = geom.property_by_name(".faces") else { return 0 };
+        let Some(geom_prop) = props.getPropertyByName(".geom") else { return 0 };
+        let Some(geom) = geom_prop.asCompound() else { return 0 };
+        let Some(faces_prop) = geom.getPropertyByName(".faces") else { return 0 };
         faces_prop.getHeader().time_sampling_index
     }
     
     /// Get the time sampling index for child bounds property.
     pub fn child_bounds_time_sampling_index(&self) -> u32 {
         let props = self.object.as_ref().getProperties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
-        let Some(geom) = geom_prop.as_compound() else { return 0 };
-        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
+        let Some(geom_prop) = props.getPropertyByName(".geom") else { return 0 };
+        let Some(geom) = geom_prop.asCompound() else { return 0 };
+        let Some(bnds_prop) = geom.getPropertyByName(".childBnds") else { return 0 };
         bnds_prop.getHeader().time_sampling_index
     }
     
@@ -194,25 +194,25 @@ impl<'a> IFaceSet<'a> {
         let mut sample = FaceSetSample::new();
         
         let props = self.object.as_ref().getProperties();
-        let geom_prop = props.property_by_name(".geom")
+        let geom_prop = props.getPropertyByName(".geom")
             .ok_or_else(|| Error::invalid("No .geom property"))?;
-        let geom = geom_prop.as_compound()
+        let geom = geom_prop.asCompound()
             .ok_or_else(|| Error::invalid(".geom is not compound"))?;
         
         // Read .faces
-        if let Some(faces_prop) = geom.property_by_name(".faces") {
-            if let Some(array_reader) = faces_prop.as_array() {
-                let data = array_reader.read_sample_vec(index)?;
+        if let Some(faces_prop) = geom.getPropertyByName(".faces") {
+            if let Some(array_reader) = faces_prop.asArray() {
+                let data = array_reader.getSampleVec(index)?;
                 sample.faces = bytemuck::try_cast_slice::<_, i32>(&data).unwrap_or(&[]).to_vec();
             }
         }
         
         // Read .selfBnds if present
-        if let Some(bnds_prop) = geom.property_by_name(".selfBnds") {
-            if let Some(scalar) = bnds_prop.as_scalar() {
+        if let Some(bnds_prop) = geom.getPropertyByName(".selfBnds") {
+            if let Some(scalar) = bnds_prop.asScalar() {
                 // BBox3d is 6 f64 values: min_x, min_y, min_z, max_x, max_y, max_z
                 let mut buf = [0u8; 48];
-                if scalar.read_sample(index, &mut buf).is_ok() {
+                if scalar.getSample(index, &mut buf).is_ok() {
                     let values: &[f64] = bytemuck::try_cast_slice(&buf).unwrap_or(&[]);
                     if values.len() >= 6 {
                         sample.self_bounds = Some(BBox3d::new(

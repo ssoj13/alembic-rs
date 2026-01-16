@@ -342,6 +342,107 @@ graph BT
     STDSRF --> UTIL
 ```
 
+## 11. Output Schema Architecture (Fixed)
+
+```mermaid
+graph LR
+    subgraph "geom/mod.rs - Re-exports"
+        GOM[OPolyMesh<br/>re-export]
+        GOX[OXform<br/>re-export]
+        GOC[OCurves<br/>re-export]
+    end
+
+    subgraph "ogawa/writer.rs - Implementations"
+        WOM[OPolyMesh<br/>object + geom_compound]
+        WOX[OXform<br/>object + samples]
+        WOC[OCurves<br/>object + geom_compound]
+    end
+
+    subgraph "User API"
+        U[use geom::OPolyMesh]
+    end
+
+    GOM -->|"re-exports"| WOM
+    GOX -->|"re-exports"| WOX
+    GOC -->|"re-exports"| WOC
+    U -->|"uses"| GOM
+
+    style GOM fill:#9f9
+    style GOX fill:#9f9
+    style GOC fill:#9f9
+    style WOM fill:#9f9
+    style WOX fill:#9f9
+    style WOC fill:#9f9
+```
+
+**Status**: ✅ FIXED - geom/mod.rs now re-exports types from ogawa/writer.rs.
+
+## 12. Code Deduplication (Fixed)
+
+```mermaid
+flowchart TB
+    subgraph "Schema Writers"
+        OPM["OPolyMesh<br/>uses get_or_create_array_with_ts()"]
+        OCR["OCurves"]
+        OPT["OPoints"]
+        OSD["OSubD"]
+        OFS["OFaceSet"]
+    end
+
+    subgraph "Shared Helper - OProperty"
+        IMPL["get_or_create_array_child()<br/>get_or_create_scalar_child()"]
+    end
+
+    OCR -->|"uses"| IMPL
+    OPT -->|"uses"| IMPL
+    OSD -->|"uses"| IMPL
+    OFS -->|"uses"| IMPL
+    OPM -.->|"special version"| OPM
+
+    style IMPL fill:#9f9
+```
+
+**Status**: ✅ FIXED - Shared helpers added to OProperty. ~60 lines of duplicate code removed.
+
+## 13. Read vs Write API (Fixed)
+
+```mermaid
+flowchart LR
+    subgraph "READ PATH"
+        R1[abc::IArchive]
+        R2[abc::IObject]
+        R3[geom::IPolyMesh]
+        R4[ogawa::reader]
+    end
+
+    subgraph "WRITE PATH"
+        W1["abc::OArchive<br/>write_archive()"]
+        W2["ogawa::OArchive<br/>(implementation)"]
+        W3["geom::OPolyMesh<br/>(re-exported)"]
+    end
+
+    R1 --> R2 --> R3 --> R4
+
+    W1 -->|"delegates"| W2
+    W2 --> W3
+
+    style W1 fill:#9f9
+    style R1 fill:#9f9
+```
+
+**Status**: ✅ FIXED - abc::OArchive now has write_archive() that delegates to ogawa.
+
+## 14. Remaining Dead Code (Intentional)
+
+```mermaid
+pie title Dead Code Analysis (31 #[allow(dead_code)])
+    "GPU Resources (held alive)" : 12
+    "Future Features (planned)" : 8
+    "API Wrappers (intentional)" : 5
+    "Unused Fields (refactor)" : 4
+    "Reference Code (kept)" : 2
+```
+
 ## Legend
 
 | Symbol | Meaning |
@@ -351,3 +452,6 @@ graph BT
 | Box | Module/Component |
 | Diamond | Decision point |
 | Cylinder | Data storage |
+| Red fill | Problem/Issue |
+| Green fill | Working/Correct |
+| Yellow fill | Warning/Stub |

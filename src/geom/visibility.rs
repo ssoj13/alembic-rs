@@ -85,12 +85,12 @@ pub fn get_visibility_property(obj: &IObject<'_>) -> Option<ObjectVisibility> {
     let props = obj.getProperties();
     
     // Look for "visible" property
-    if let Some(prop) = props.property_by_name(VISIBILITY_PROPERTY_NAME) {
-        if prop.is_scalar() {
-            if let Some(scalar) = prop.as_scalar() {
+    if let Some(prop) = props.getPropertyByName(VISIBILITY_PROPERTY_NAME) {
+        if prop.isScalar() {
+            if let Some(scalar) = prop.asScalar() {
                 // Read as i8 (char in C++)
                 let mut buf = [0u8; 1];
-                if scalar.read_sample(0, &mut buf).is_ok() {
+                if scalar.getSample(0, &mut buf).is_ok() {
                     return Some(ObjectVisibility::from_i8(buf[0] as i8));
                 }
             }
@@ -107,15 +107,15 @@ pub fn get_visibility(obj: &IObject<'_>, sel: impl Into<SampleSelector>) -> Obje
     let props = obj.getProperties();
     let sel = sel.into();
     
-    if let Some(prop) = props.property_by_name(VISIBILITY_PROPERTY_NAME) {
-        if prop.is_scalar() {
-            if let Some(scalar) = prop.as_scalar() {
+    if let Some(prop) = props.getPropertyByName(VISIBILITY_PROPERTY_NAME) {
+        if prop.isScalar() {
+            if let Some(scalar) = prop.asScalar() {
                 let mut buf = [0u8; 1];
                 let index = match sel {
                     SampleSelector::Index(i) => i,
                     _ => 0,
                 };
-                if scalar.read_sample(index, &mut buf).is_ok() {
+                if scalar.getSample(index, &mut buf).is_ok() {
                     return ObjectVisibility::from_i8(buf[0] as i8);
                 }
             }
@@ -345,7 +345,7 @@ mod tests {
         
         let prop = vis.into_property();
         assert_eq!(prop.name, "visible");
-        assert_eq!(prop.num_samples(), 1);
+        assert_eq!(prop.getNumSamples(), 1);
     }
     
     #[test]
@@ -356,6 +356,6 @@ mod tests {
         vis.set_deferred();
         
         let prop = vis.into_property();
-        assert_eq!(prop.num_samples(), 3);
+        assert_eq!(prop.getNumSamples(), 3);
     }
 }

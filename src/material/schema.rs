@@ -392,13 +392,13 @@ impl<'a> IMaterial<'a> {
     /// Parse .shaderNames array into shader_names map.
     fn parse_shader_names(&mut self) {
         let props = self.object.getProperties();
-        let Some(mat_prop) = props.property_by_name(".material") else { return };
-        let Some(mat) = mat_prop.as_compound() else { return };
-        let Some(names_prop) = mat.property_by_name(".shaderNames") else { return };
-        let Some(arr) = names_prop.as_array() else { return };
+        let Some(mat_prop) = props.getPropertyByName(".material") else { return };
+        let Some(mat) = mat_prop.asCompound() else { return };
+        let Some(names_prop) = mat.getPropertyByName(".shaderNames") else { return };
+        let Some(arr) = names_prop.asArray() else { return };
         
         // Read string array - pairs of ["target.shaderType", "shaderName", ...]
-        if let Ok(strings) = arr.read_string_array(0) {
+        if let Ok(strings) = arr.getAsStringArray(0) {
             for chunk in strings.chunks(2) {
                 if chunk.len() == 2 {
                     self.shader_names.insert(chunk[0].clone(), chunk[1].clone());
@@ -457,24 +457,24 @@ impl<'a> IMaterial<'a> {
     /// Read all parameters for a shader into ShaderParam list.
     pub fn read_shader_params(&self, target: &str, shader_type: &str) -> Vec<ShaderParam> {
         let props = self.object.getProperties();
-        let Some(mat_prop) = props.property_by_name(".material") else {
+        let Some(mat_prop) = props.getPropertyByName(".material") else {
             return Vec::new();
         };
-        let Some(mat) = mat_prop.as_compound() else {
+        let Some(mat) = mat_prop.asCompound() else {
             return Vec::new();
         };
         
         // Property name is "target.shaderType.params"
         let prop_name = format!("{}.{}.params", target, shader_type);
-        let Some(params_prop) = mat.property_by_name(&prop_name) else {
+        let Some(params_prop) = mat.getPropertyByName(&prop_name) else {
             return Vec::new();
         };
-        let Some(params) = params_prop.as_compound() else {
+        let Some(params) = params_prop.asCompound() else {
             return Vec::new();
         };
         
         let mut result = Vec::new();
-        for name in params.property_names() {
+        for name in params.getPropertyNames() {
             if let Some(value) = Self::read_param_value(&params, &name) {
                 result.push(ShaderParam::new(&name, value));
             }
@@ -484,11 +484,11 @@ impl<'a> IMaterial<'a> {
     
     /// Read a single parameter value from a compound.
     fn read_param_value(params: &crate::abc::ICompoundProperty<'_>, name: &str) -> Option<ShaderParamValue> {
-        let prop = params.property_by_name(name)?;
+        let prop = params.getPropertyByName(name)?;
         
         // Try scalar first
-        if let Some(scalar) = prop.as_scalar() {
-            let header = scalar.header();
+        if let Some(scalar) = prop.asScalar() {
+            let header = scalar.getHeader();
             let dtype = header.data_type;
             
             return match dtype.pod {
@@ -497,19 +497,19 @@ impl<'a> IMaterial<'a> {
                     match extent {
                         1 => {
                             let mut buf = [0u8; 4];
-                            scalar.read_sample(0, &mut buf).ok()?;
+                            scalar.getSample(0, &mut buf).ok()?;
                             Some(ShaderParamValue::Float(f32::from_le_bytes(buf)))
                         }
                         2 => {
                             let mut buf = [0u8; 8];
-                            scalar.read_sample(0, &mut buf).ok()?;
+                            scalar.getSample(0, &mut buf).ok()?;
                             let x = f32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
                             let y = f32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
                             Some(ShaderParamValue::Vec2(glam::vec2(x, y)))
                         }
                         3 => {
                             let mut buf = [0u8; 12];
-                            scalar.read_sample(0, &mut buf).ok()?;
+                            scalar.getSample(0, &mut buf).ok()?;
                             let x = f32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
                             let y = f32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
                             let z = f32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
@@ -522,7 +522,7 @@ impl<'a> IMaterial<'a> {
                         }
                         4 => {
                             let mut buf = [0u8; 16];
-                            scalar.read_sample(0, &mut buf).ok()?;
+                            scalar.getSample(0, &mut buf).ok()?;
                             let vals: [f32; 4] = bytemuck::cast(buf);
                             if header.meta_data.get("interpretation") == Some("rgba") {
                                 Some(ShaderParamValue::Color4(glam::vec4(vals[0], vals[1], vals[2], vals[3])))
@@ -535,22 +535,22 @@ impl<'a> IMaterial<'a> {
                 }
                 crate::util::PlainOldDataType::Float64 => {
                     let mut buf = [0u8; 8];
-                    scalar.read_sample(0, &mut buf).ok()?;
+                    scalar.getSample(0, &mut buf).ok()?;
                     Some(ShaderParamValue::Double(f64::from_le_bytes(buf)))
                 }
                 crate::util::PlainOldDataType::Int32 => {
                     let mut buf = [0u8; 4];
-                    scalar.read_sample(0, &mut buf).ok()?;
+                    scalar.getSample(0, &mut buf).ok()?;
                     Some(ShaderParamValue::Int(i32::from_le_bytes(buf)))
                 }
                 crate::util::PlainOldDataType::Boolean => {
                     let mut buf = [0u8; 1];
-                    scalar.read_sample(0, &mut buf).ok()?;
+                    scalar.getSample(0, &mut buf).ok()?;
                     Some(ShaderParamValue::Bool(buf[0] != 0))
                 }
                 crate::util::PlainOldDataType::String => {
                     let mut buf = [0u8; 256];
-                    scalar.read_sample(0, &mut buf).ok()?;
+                    scalar.getSample(0, &mut buf).ok()?;
                     let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
                     String::from_utf8(buf[..len].to_vec()).ok()
                         .map(ShaderParamValue::String)
@@ -560,19 +560,19 @@ impl<'a> IMaterial<'a> {
         }
         
         // Try array
-        if let Some(arr) = prop.as_array() {
-            let header = arr.header();
+        if let Some(arr) = prop.asArray() {
+            let header = arr.getHeader();
             let dtype = header.data_type;
             
             return match dtype.pod {
                 crate::util::PlainOldDataType::Float32 => {
-                    arr.read_f32_array(0).ok().map(ShaderParamValue::FloatArray)
+                    arr.getAsFloat32Array(0).ok().map(ShaderParamValue::FloatArray)
                 }
                 crate::util::PlainOldDataType::Int32 => {
-                    arr.read_i32_array(0).ok().map(ShaderParamValue::IntArray)
+                    arr.getAsInt32Array(0).ok().map(ShaderParamValue::IntArray)
                 }
                 crate::util::PlainOldDataType::String => {
-                    arr.read_string_array(0).ok().map(ShaderParamValue::StringArray)
+                    arr.getAsStringArray(0).ok().map(ShaderParamValue::StringArray)
                 }
                 _ => None
             };
@@ -599,14 +599,14 @@ pub fn get_material_assignment(object: &IObject) -> Option<String> {
     let props = object.getProperties();
     
     // Look for .material.assign property
-    let mat_prop = props.property_by_name(".material")?;
-    let mat = mat_prop.as_compound()?;
-    let assign_prop = mat.property_by_name("assign")?;
-    let scalar = assign_prop.as_scalar()?;
+    let mat_prop = props.getPropertyByName(".material")?;
+    let mat = mat_prop.asCompound()?;
+    let assign_prop = mat.getPropertyByName("assign")?;
+    let scalar = assign_prop.asScalar()?;
     
     // Read assignment path
     let mut buf = [0u8; 512];
-    scalar.read_sample(0, &mut buf).ok()?;
+    scalar.getSample(0, &mut buf).ok()?;
     
     let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     String::from_utf8(buf[..len].to_vec()).ok()
@@ -616,9 +616,9 @@ pub fn get_material_assignment(object: &IObject) -> Option<String> {
 pub fn has_material_assignment(object: &IObject) -> bool {
     let props = object.getProperties();
     
-    if let Some(mat_prop) = props.property_by_name(".material") {
-        if let Some(mat) = mat_prop.as_compound() {
-            return mat.has_property("assign");
+    if let Some(mat_prop) = props.getPropertyByName(".material") {
+        if let Some(mat) = mat_prop.asCompound() {
+            return mat.hasProperty("assign");
         }
     }
     false
@@ -729,13 +729,13 @@ impl IMaterial<'_> {
     /// Get the inherits path if this material inherits from another.
     pub fn inherits_path(&self) -> Option<String> {
         let props = self.object.getProperties();
-        let mat_prop = props.property_by_name(".material")?;
-        let mat = mat_prop.as_compound()?;
-        let inherits_prop = mat.property_by_name(".inherits")?;
-        let scalar = inherits_prop.as_scalar()?;
+        let mat_prop = props.getPropertyByName(".material")?;
+        let mat = mat_prop.asCompound()?;
+        let inherits_prop = mat.getPropertyByName(".inherits")?;
+        let scalar = inherits_prop.asScalar()?;
         
         let mut buf = [0u8; 512];
-        scalar.read_sample(0, &mut buf).ok()?;
+        scalar.getSample(0, &mut buf).ok()?;
         
         let len = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
         String::from_utf8(buf[..len].to_vec()).ok()

@@ -86,10 +86,10 @@ impl<'a> ICollections<'a> {
     /// Get the number of collections.
     pub fn num_collections(&self) -> usize {
         let props = self.object.getProperties();
-        let Some(coll_prop) = props.property_by_name(".collections") else {
+        let Some(coll_prop) = props.getPropertyByName(".collections") else {
             return 0;
         };
-        let Some(coll) = coll_prop.as_compound() else {
+        let Some(coll) = coll_prop.asCompound() else {
             return 0;
         };
         coll.getNumProperties()
@@ -98,25 +98,25 @@ impl<'a> ICollections<'a> {
     /// Get collection names.
     pub fn collection_names(&self) -> Vec<String> {
         let props = self.object.getProperties();
-        let Some(coll_prop) = props.property_by_name(".collections") else {
+        let Some(coll_prop) = props.getPropertyByName(".collections") else {
             return Vec::new();
         };
-        let Some(coll) = coll_prop.as_compound() else {
+        let Some(coll) = coll_prop.asCompound() else {
             return Vec::new();
         };
-        coll.property_names()
+        coll.getPropertyNames()
     }
     
     /// Get a collection by name.
     pub fn get(&self, name: &str) -> Option<Collection> {
         let props = self.object.getProperties();
-        let coll_prop = props.property_by_name(".collections")?;
-        let coll = coll_prop.as_compound()?;
-        let col_prop = coll.property_by_name(name)?;
-        let array = col_prop.as_array()?;
+        let coll_prop = props.getPropertyByName(".collections")?;
+        let coll = coll_prop.asCompound()?;
+        let col_prop = coll.getPropertyByName(name)?;
+        let array = col_prop.asArray()?;
         
         // Read the array of strings (paths)
-        let data = array.read_sample_vec(0).ok()?;
+        let data = array.getSampleVec(0).ok()?;
         
         let mut collection = Collection::new(name);
         
@@ -154,13 +154,13 @@ impl<'a> ICollections<'a> {
     /// Check if a collection exists.
     pub fn has_collection(&self, name: &str) -> bool {
         let props = self.object.getProperties();
-        let Some(coll_prop) = props.property_by_name(".collections") else {
+        let Some(coll_prop) = props.getPropertyByName(".collections") else {
             return false;
         };
-        let Some(coll) = coll_prop.as_compound() else {
+        let Some(coll) = coll_prop.asCompound() else {
             return false;
         };
-        coll.has_property(name)
+        coll.hasProperty(name)
     }
     
     /// Get all collections.

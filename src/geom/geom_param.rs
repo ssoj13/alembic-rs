@@ -152,11 +152,11 @@ impl<'a> IGeomParam<'a> {
     /// Create a new IGeomParam from a compound property and parameter name.
     /// Returns None if the parameter doesn't exist.
     pub fn new(parent: &'a ICompoundProperty<'a>, name: &str) -> Option<Self> {
-        let prop = parent.property_by_name(name)?;
+        let prop = parent.getPropertyByName(name)?;
         let header = prop.getHeader();
         
         // Check if indexed (compound) or non-indexed (array)
-        let is_indexed = prop.is_compound();
+        let is_indexed = prop.isCompound();
         
         // Get scope from metadata
         let scope = Self::extract_scope(header);
@@ -164,8 +164,8 @@ impl<'a> IGeomParam<'a> {
         // Get data type
         let data_type = if is_indexed {
             // For indexed, we need to look at .vals
-            if let Some(compound) = prop.as_compound() {
-                if let Some(vals_prop) = compound.property_by_name(VALS_PROPERTY_NAME) {
+            if let Some(compound) = prop.asCompound() {
+                if let Some(vals_prop) = compound.getPropertyByName(VALS_PROPERTY_NAME) {
                     vals_prop.getHeader().data_type
                 } else {
                     DataType::UNKNOWN
@@ -217,32 +217,32 @@ impl<'a> IGeomParam<'a> {
     
     /// Get number of samples.
     pub fn getNumSamples(&self) -> usize {
-        let Some(prop) = self.parent.property_by_name(&self.name) else {
+        let Some(prop) = self.parent.getPropertyByName(&self.name) else {
             return 0;
         };
         
         if self.is_indexed {
             // For indexed, check both vals and indices
-            if let Some(compound) = prop.as_compound() {
+            if let Some(compound) = prop.asCompound() {
                 let mut vals_count = 0usize;
                 let mut indices_count = 0usize;
                 
-                if let Some(vals_prop) = compound.property_by_name(VALS_PROPERTY_NAME) {
-                    if let Some(array) = vals_prop.as_array() {
-                        vals_count = array.num_samples();
+                if let Some(vals_prop) = compound.getPropertyByName(VALS_PROPERTY_NAME) {
+                    if let Some(array) = vals_prop.asArray() {
+                        vals_count = array.getNumSamples();
                     }
                 }
-                if let Some(indices_prop) = compound.property_by_name(INDICES_PROPERTY_NAME) {
-                    if let Some(array) = indices_prop.as_array() {
-                        indices_count = array.num_samples();
+                if let Some(indices_prop) = compound.getPropertyByName(INDICES_PROPERTY_NAME) {
+                    if let Some(array) = indices_prop.asArray() {
+                        indices_count = array.getNumSamples();
                     }
                 }
                 vals_count.max(indices_count)
             } else {
                 0
             }
-        } else if let Some(array) = prop.as_array() {
-            array.num_samples()
+        } else if let Some(array) = prop.asArray() {
+            array.getNumSamples()
         } else {
             0
         }
@@ -261,7 +261,7 @@ impl<'a> IGeomParam<'a> {
             _ => 0,
         };
         
-        let prop = self.parent.property_by_name(&self.name)
+        let prop = self.parent.getPropertyByName(&self.name)
             .ok_or_else(|| Error::invalid(format!("Property {} not found", self.name)))?;
         
         let mut sample = GeomParamSample {
@@ -273,21 +273,21 @@ impl<'a> IGeomParam<'a> {
         
         if self.is_indexed {
             // Read from compound with .vals and .indices
-            let compound = prop.as_compound()
+            let compound = prop.asCompound()
                 .ok_or_else(|| Error::invalid("Expected compound for indexed param"))?;
             
             // Read values
-            if let Some(vals_prop) = compound.property_by_name(VALS_PROPERTY_NAME) {
-                if let Some(array) = vals_prop.as_array() {
-                    sample.values = array.read_sample_vec(index)?;
+            if let Some(vals_prop) = compound.getPropertyByName(VALS_PROPERTY_NAME) {
+                if let Some(array) = vals_prop.asArray() {
+                    sample.values = array.getSampleVec(index)?;
                 }
             }
             
             // Read indices - must be done after vals_prop goes out of scope
             let indices_data: Option<Vec<u8>> = {
-                if let Some(indices_prop) = compound.property_by_name(INDICES_PROPERTY_NAME) {
-                    if let Some(array) = indices_prop.as_array() {
-                        Some(array.read_sample_vec(index)?)
+                if let Some(indices_prop) = compound.getPropertyByName(INDICES_PROPERTY_NAME) {
+                    if let Some(array) = indices_prop.asArray() {
+                        Some(array.getSampleVec(index)?)
                     } else {
                         None
                     }
@@ -300,8 +300,8 @@ impl<'a> IGeomParam<'a> {
             }
         } else {
             // Non-indexed - just read the array
-            if let Some(array) = prop.as_array() {
-                sample.values = array.read_sample_vec(index)?;
+            if let Some(array) = prop.asArray() {
+                sample.values = array.getSampleVec(index)?;
             }
         }
         
@@ -339,7 +339,7 @@ impl<'a> IGeomParam<'a> {
     
     /// Get array extent from metadata (for multi-component values).
     pub fn array_extent(&self) -> usize {
-        let Some(prop) = self.parent.property_by_name(&self.name) else {
+        let Some(prop) = self.parent.getPropertyByName(&self.name) else {
             return 1;
         };
         
@@ -368,19 +368,19 @@ impl<'a> IGeomParam<'a> {
     
     /// Check if this param is valid.
     pub fn valid(&self) -> bool {
-        self.parent.property_by_name(&self.name).is_some()
+        self.parent.getPropertyByName(&self.name).is_some()
     }
     
     /// Get time sampling index.
     pub fn time_sampling_index(&self) -> u32 {
-        let Some(prop) = self.parent.property_by_name(&self.name) else {
+        let Some(prop) = self.parent.getPropertyByName(&self.name) else {
             return 0;
         };
         
         if self.is_indexed {
-            if let Some(compound) = prop.as_compound() {
+            if let Some(compound) = prop.asCompound() {
                 // Get from .vals property
-                if let Some(vals_prop) = compound.property_by_name(VALS_PROPERTY_NAME) {
+                if let Some(vals_prop) = compound.getPropertyByName(VALS_PROPERTY_NAME) {
                     return vals_prop.getHeader().time_sampling_index;
                 }
             }

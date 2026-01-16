@@ -372,9 +372,9 @@ impl<'a> INuPatch<'a> {
         let mut sample = NuPatchSample::new();
         
         let props = self.object.getProperties();
-        let geom_prop = props.property_by_name(".geom")
+        let geom_prop = props.getPropertyByName(".geom")
             .ok_or_else(|| Error::invalid("No .geom property"))?;
-        let geom = geom_prop.as_compound()
+        let geom = geom_prop.asCompound()
             .ok_or_else(|| Error::invalid(".geom is not compound"))?;
         let g = geom.as_reader();
         
@@ -425,10 +425,10 @@ impl<'a> INuPatch<'a> {
         let mut trim = TrimCurveData::default();
         
         // Read trim_nloops
-        if let Some(prop) = geom.property_by_name("trim_nloops") {
-            if let Some(scalar) = prop.as_scalar() {
+        if let Some(prop) = geom.getPropertyByName("trim_nloops") {
+            if let Some(scalar) = prop.asScalar() {
                 let mut buf = [0u8; 4];
-                if scalar.read_sample(index, &mut buf).is_ok() {
+                if scalar.getSample(index, &mut buf).is_ok() {
                     trim.num_loops = i32::from_le_bytes(buf);
                 }
             }
@@ -440,81 +440,81 @@ impl<'a> INuPatch<'a> {
         }
         
         // Read trim_ncurves
-        if let Some(prop) = geom.property_by_name("trim_ncurves") {
-            if let Some(array) = prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
+        if let Some(prop) = geom.getPropertyByName("trim_ncurves") {
+            if let Some(array) = prop.asArray() {
+                if let Ok(data) = array.getSampleVec(index) {
                     trim.num_curves = bytemuck::try_cast_slice::<_, i32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
         
         // Read trim_n
-        if let Some(prop) = geom.property_by_name("trim_n") {
-            if let Some(array) = prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
+        if let Some(prop) = geom.getPropertyByName("trim_n") {
+            if let Some(array) = prop.asArray() {
+                if let Ok(data) = array.getSampleVec(index) {
                     trim.num_vertices = bytemuck::try_cast_slice::<_, i32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
         
         // Read trim_order
-        if let Some(prop) = geom.property_by_name("trim_order") {
-            if let Some(array) = prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
+        if let Some(prop) = geom.getPropertyByName("trim_order") {
+            if let Some(array) = prop.asArray() {
+                if let Ok(data) = array.getSampleVec(index) {
                     trim.orders = bytemuck::try_cast_slice::<_, i32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
         
         // Read trim_knot
-        if let Some(prop) = geom.property_by_name("trim_knot") {
-            if let Some(array) = prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
+        if let Some(prop) = geom.getPropertyByName("trim_knot") {
+            if let Some(array) = prop.asArray() {
+                if let Ok(data) = array.getSampleVec(index) {
                     trim.knots = bytemuck::try_cast_slice::<_, f32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
         
         // Read trim_min
-        if let Some(prop) = geom.property_by_name("trim_min") {
-            if let Some(array) = prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
+        if let Some(prop) = geom.getPropertyByName("trim_min") {
+            if let Some(array) = prop.asArray() {
+                if let Ok(data) = array.getSampleVec(index) {
                     trim.mins = bytemuck::try_cast_slice::<_, f32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
         
         // Read trim_max
-        if let Some(prop) = geom.property_by_name("trim_max") {
-            if let Some(array) = prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
+        if let Some(prop) = geom.getPropertyByName("trim_max") {
+            if let Some(array) = prop.asArray() {
+                if let Ok(data) = array.getSampleVec(index) {
                     trim.maxes = bytemuck::try_cast_slice::<_, f32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
         
         // Read trim_u
-        if let Some(prop) = geom.property_by_name("trim_u") {
-            if let Some(array) = prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
+        if let Some(prop) = geom.getPropertyByName("trim_u") {
+            if let Some(array) = prop.asArray() {
+                if let Ok(data) = array.getSampleVec(index) {
                     trim.u = bytemuck::try_cast_slice::<_, f32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
         
         // Read trim_v
-        if let Some(prop) = geom.property_by_name("trim_v") {
-            if let Some(array) = prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
+        if let Some(prop) = geom.getPropertyByName("trim_v") {
+            if let Some(array) = prop.asArray() {
+                if let Ok(data) = array.getSampleVec(index) {
                     trim.v = bytemuck::try_cast_slice::<_, f32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
         }
         
         // Read trim_w
-        if let Some(prop) = geom.property_by_name("trim_w") {
-            if let Some(array) = prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
+        if let Some(prop) = geom.getPropertyByName("trim_w") {
+            if let Some(array) = prop.asArray() {
+                if let Ok(data) = array.getSampleVec(index) {
                     trim.w = bytemuck::try_cast_slice::<_, f32>(&data).map(|s| s.to_vec()).unwrap_or_default();
                 }
             }
@@ -526,9 +526,9 @@ impl<'a> INuPatch<'a> {
     /// Check if this patch has trim curves.
     pub fn has_trim_curve(&self) -> bool {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return false };
-        let Some(geom) = geom_prop.as_compound() else { return false };
-        geom.has_property("trim_nloops")
+        let Some(geom_prop) = props.getPropertyByName(".geom") else { return false };
+        let Some(geom) = geom_prop.asCompound() else { return false };
+        geom.hasProperty("trim_nloops")
     }
 }
 

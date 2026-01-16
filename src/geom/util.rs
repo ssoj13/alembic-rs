@@ -13,11 +13,11 @@ use crate::util::BBox3d;
 /// Get number of samples from an array property in .geom.
 pub fn num_samples_from_property(object: &IObject<'_>, prop_name: &str) -> usize {
     let props = object.getProperties();
-    let Some(geom_prop) = props.property_by_name(".geom") else { return 1 };
-    let Some(geom) = geom_prop.as_compound() else { return 1 };
-    let Some(prop) = geom.property_by_name(prop_name) else { return 1 };
-    let Some(array) = prop.as_array() else { return 1 };
-    array.num_samples()
+    let Some(geom_prop) = props.getPropertyByName(".geom") else { return 1 };
+    let Some(geom) = geom_prop.asCompound() else { return 1 };
+    let Some(prop) = geom.getPropertyByName(prop_name) else { return 1 };
+    let Some(array) = prop.asArray() else { return 1 };
+    array.getNumSamples()
 }
 
 /// Get number of samples from P (positions) property.
@@ -33,19 +33,19 @@ pub fn num_samples_from_positions(object: &IObject<'_>) -> usize {
 /// Check if the schema has arbitrary geometry parameters.
 pub fn has_arb_geom_params(object: &IObject<'_>) -> bool {
     let props = object.getProperties();
-    let Some(geom_prop) = props.property_by_name(".geom") else { return false };
-    let Some(geom) = geom_prop.as_compound() else { return false };
-    geom.has_property(".arbGeomParams")
+    let Some(geom_prop) = props.getPropertyByName(".geom") else { return false };
+    let Some(geom) = geom_prop.asCompound() else { return false };
+    geom.hasProperty(".arbGeomParams")
 }
 
 /// Get names of arbitrary geometry parameters.
 pub fn arb_geom_param_names(object: &IObject<'_>) -> Vec<String> {
     let props = object.getProperties();
-    let Some(geom_prop) = props.property_by_name(".geom") else { return Vec::new() };
-    let Some(geom) = geom_prop.as_compound() else { return Vec::new() };
-    let Some(arb_prop) = geom.property_by_name(".arbGeomParams") else { return Vec::new() };
-    let Some(arb) = arb_prop.as_compound() else { return Vec::new() };
-    arb.property_names()
+    let Some(geom_prop) = props.getPropertyByName(".geom") else { return Vec::new() };
+    let Some(geom) = geom_prop.asCompound() else { return Vec::new() };
+    let Some(arb_prop) = geom.getPropertyByName(".arbGeomParams") else { return Vec::new() };
+    let Some(arb) = arb_prop.asCompound() else { return Vec::new() };
+    arb.getPropertyNames()
 }
 
 // ============================================================================
@@ -55,19 +55,19 @@ pub fn arb_geom_param_names(object: &IObject<'_>) -> Vec<String> {
 /// Check if the schema has user properties.
 pub fn has_user_properties(object: &IObject<'_>) -> bool {
     let props = object.getProperties();
-    let Some(geom_prop) = props.property_by_name(".geom") else { return false };
-    let Some(geom) = geom_prop.as_compound() else { return false };
-    geom.has_property(".userProperties")
+    let Some(geom_prop) = props.getPropertyByName(".geom") else { return false };
+    let Some(geom) = geom_prop.asCompound() else { return false };
+    geom.hasProperty(".userProperties")
 }
 
 /// Get names of user properties.
 pub fn user_property_names(object: &IObject<'_>) -> Vec<String> {
     let props = object.getProperties();
-    let Some(geom_prop) = props.property_by_name(".geom") else { return Vec::new() };
-    let Some(geom) = geom_prop.as_compound() else { return Vec::new() };
-    let Some(user_prop) = geom.property_by_name(".userProperties") else { return Vec::new() };
-    let Some(user) = user_prop.as_compound() else { return Vec::new() };
-    user.property_names()
+    let Some(geom_prop) = props.getPropertyByName(".geom") else { return Vec::new() };
+    let Some(geom) = geom_prop.asCompound() else { return Vec::new() };
+    let Some(user_prop) = geom.getPropertyByName(".userProperties") else { return Vec::new() };
+    let Some(user) = user_prop.asCompound() else { return Vec::new() };
+    user.getPropertyNames()
 }
 
 // ============================================================================
@@ -77,29 +77,29 @@ pub fn user_property_names(object: &IObject<'_>) -> Vec<String> {
 /// Check if the schema has self bounds (.selfBnds).
 pub fn has_self_bounds(object: &IObject<'_>) -> bool {
     let props = object.getProperties();
-    let Some(geom_prop) = props.property_by_name(".geom") else { return false };
-    let Some(geom) = geom_prop.as_compound() else { return false };
-    geom.has_property(".selfBnds")
+    let Some(geom_prop) = props.getPropertyByName(".geom") else { return false };
+    let Some(geom) = geom_prop.asCompound() else { return false };
+    geom.hasProperty(".selfBnds")
 }
 
 /// Check if the schema has child bounds (.childBnds).
 pub fn has_child_bounds(object: &IObject<'_>) -> bool {
     let props = object.getProperties();
-    let Some(geom_prop) = props.property_by_name(".geom") else { return false };
-    let Some(geom) = geom_prop.as_compound() else { return false };
-    geom.has_property(".childBnds")
+    let Some(geom_prop) = props.getPropertyByName(".geom") else { return false };
+    let Some(geom) = geom_prop.asCompound() else { return false };
+    geom.hasProperty(".childBnds")
 }
 
 /// Read child bounds at a given sample index.
 pub fn read_child_bounds(object: &IObject<'_>, index: usize) -> Option<BBox3d> {
     let props = object.getProperties();
-    let geom_prop = props.property_by_name(".geom")?;
-    let geom = geom_prop.as_compound()?;
-    let bnds_prop = geom.property_by_name(".childBnds")?;
-    let scalar = bnds_prop.as_scalar()?;
+    let geom_prop = props.getPropertyByName(".geom")?;
+    let geom = geom_prop.asCompound()?;
+    let bnds_prop = geom.getPropertyByName(".childBnds")?;
+    let scalar = bnds_prop.asScalar()?;
     
     let mut buf = [0u8; 48]; // 6 x f64
-    scalar.read_sample(index, &mut buf).ok()?;
+    scalar.getSample(index, &mut buf).ok()?;
     
     let doubles: &[f64] = bytemuck::try_cast_slice(&buf).ok()?;
     if doubles.len() >= 6 {
@@ -115,19 +115,19 @@ pub fn read_child_bounds(object: &IObject<'_>, index: usize) -> Option<BBox3d> {
 /// Get number of child bounds samples.
 pub fn child_bounds_num_samples(object: &IObject<'_>) -> usize {
     let props = object.getProperties();
-    let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
-    let Some(geom) = geom_prop.as_compound() else { return 0 };
-    let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
-    let Some(scalar) = bnds_prop.as_scalar() else { return 0 };
-    scalar.num_samples()
+    let Some(geom_prop) = props.getPropertyByName(".geom") else { return 0 };
+    let Some(geom) = geom_prop.asCompound() else { return 0 };
+    let Some(bnds_prop) = geom.getPropertyByName(".childBnds") else { return 0 };
+    let Some(scalar) = bnds_prop.asScalar() else { return 0 };
+    scalar.getNumSamples()
 }
 
 /// Get the time sampling index for child bounds.
 pub fn child_bounds_time_sampling_index(object: &IObject<'_>) -> u32 {
     let props = object.getProperties();
-    let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
-    let Some(geom) = geom_prop.as_compound() else { return 0 };
-    let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
+    let Some(geom_prop) = props.getPropertyByName(".geom") else { return 0 };
+    let Some(geom) = geom_prop.asCompound() else { return 0 };
+    let Some(bnds_prop) = geom.getPropertyByName(".childBnds") else { return 0 };
     bnds_prop.getHeader().time_sampling_index
 }
 
@@ -135,27 +135,27 @@ pub fn child_bounds_time_sampling_index(object: &IObject<'_>) -> u32 {
 /// Used for curves, points, polymesh, etc.
 pub fn positions_time_sampling_index(object: &IObject<'_>) -> u32 {
     let props = object.getProperties();
-    let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
-    let Some(geom) = geom_prop.as_compound() else { return 0 };
-    let Some(p_prop) = geom.property_by_name("P") else { return 0 };
+    let Some(geom_prop) = props.getPropertyByName(".geom") else { return 0 };
+    let Some(geom) = geom_prop.asCompound() else { return 0 };
+    let Some(p_prop) = geom.getPropertyByName("P") else { return 0 };
     p_prop.getHeader().time_sampling_index
 }
 
 /// Get time sampling index from a named property in .geom compound.
 pub fn property_time_sampling_index(object: &IObject<'_>, prop_name: &str) -> u32 {
     let props = object.getProperties();
-    let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
-    let Some(geom) = geom_prop.as_compound() else { return 0 };
-    let Some(prop) = geom.property_by_name(prop_name) else { return 0 };
+    let Some(geom_prop) = props.getPropertyByName(".geom") else { return 0 };
+    let Some(geom) = geom_prop.asCompound() else { return 0 };
+    let Some(prop) = geom.getPropertyByName(prop_name) else { return 0 };
     prop.getHeader().time_sampling_index
 }
 
 /// Get time sampling index from a schema-specific compound (e.g. .xform, .camera, .light).
 pub fn schema_property_time_sampling_index(object: &IObject<'_>, schema_name: &str, prop_name: &str) -> u32 {
     let props = object.getProperties();
-    let Some(schema_prop) = props.property_by_name(schema_name) else { return 0 };
-    let Some(schema) = schema_prop.as_compound() else { return 0 };
-    let Some(prop) = schema.property_by_name(prop_name) else { return 0 };
+    let Some(schema_prop) = props.getPropertyByName(schema_name) else { return 0 };
+    let Some(schema) = schema_prop.asCompound() else { return 0 };
+    let Some(prop) = schema.getPropertyByName(prop_name) else { return 0 };
     prop.getHeader().time_sampling_index
 }
 
@@ -166,17 +166,17 @@ pub fn schema_property_time_sampling_index(object: &IObject<'_>, schema_name: &s
 /// Check if a property exists in .geom compound.
 pub fn has_geom_property(object: &IObject<'_>, prop_name: &str) -> bool {
     let props = object.getProperties();
-    let Some(geom_prop) = props.property_by_name(".geom") else { return false };
-    let Some(geom) = geom_prop.as_compound() else { return false };
-    geom.has_property(prop_name)
+    let Some(geom_prop) = props.getPropertyByName(".geom") else { return false };
+    let Some(geom) = geom_prop.asCompound() else { return false };
+    geom.hasProperty(prop_name)
 }
 
 /// Get property names from .geom compound.
 pub fn geom_property_names(object: &IObject<'_>) -> Vec<String> {
     let props = object.getProperties();
-    let Some(geom_prop) = props.property_by_name(".geom") else { return Vec::new() };
-    let Some(geom) = geom_prop.as_compound() else { return Vec::new() };
-    geom.property_names()
+    let Some(geom_prop) = props.getPropertyByName(".geom") else { return Vec::new() };
+    let Some(geom) = geom_prop.asCompound() else { return Vec::new() };
+    geom.getPropertyNames()
 }
 
 // ============================================================================
@@ -191,9 +191,9 @@ pub fn read_vec3_array(
     prop_name: &str,
     index: usize,
 ) -> Option<Vec<glam::Vec3>> {
-    let prop = geom.property_by_name(prop_name)?;
-    let array = prop.as_array()?;
-    let data = array.read_sample_vec(index).ok()?;
+    let prop = geom.getPropertyByName(prop_name)?;
+    let array = prop.asArray()?;
+    let data = array.getSampleVec(index).ok()?;
     let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
     Some(floats.chunks_exact(3)
         .map(|c| glam::vec3(c[0], c[1], c[2]))
@@ -215,9 +215,9 @@ pub fn read_vec2_array(
     prop_name: &str,
     index: usize,
 ) -> Option<Vec<glam::Vec2>> {
-    let prop = geom.property_by_name(prop_name)?;
-    let array = prop.as_array()?;
-    let data = array.read_sample_vec(index).ok()?;
+    let prop = geom.getPropertyByName(prop_name)?;
+    let array = prop.asArray()?;
+    let data = array.getSampleVec(index).ok()?;
     let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
     Some(floats.chunks_exact(2)
         .map(|c| glam::vec2(c[0], c[1]))
@@ -230,9 +230,9 @@ pub fn read_i32_array(
     prop_name: &str,
     index: usize,
 ) -> Option<Vec<i32>> {
-    let prop = geom.property_by_name(prop_name)?;
-    let array = prop.as_array()?;
-    let data = array.read_sample_vec(index).ok()?;
+    let prop = geom.getPropertyByName(prop_name)?;
+    let array = prop.asArray()?;
+    let data = array.getSampleVec(index).ok()?;
     Some(bytemuck::try_cast_slice::<u8, i32>(&data).ok()?.to_vec())
 }
 
@@ -242,9 +242,9 @@ pub fn read_f32_array(
     prop_name: &str,
     index: usize,
 ) -> Option<Vec<f32>> {
-    let prop = geom.property_by_name(prop_name)?;
-    let array = prop.as_array()?;
-    let data = array.read_sample_vec(index).ok()?;
+    let prop = geom.getPropertyByName(prop_name)?;
+    let array = prop.asArray()?;
+    let data = array.getSampleVec(index).ok()?;
     Some(bytemuck::try_cast_slice::<u8, f32>(&data).ok()?.to_vec())
 }
 
@@ -254,9 +254,9 @@ pub fn read_u64_array(
     prop_name: &str,
     index: usize,
 ) -> Option<Vec<u64>> {
-    let prop = geom.property_by_name(prop_name)?;
-    let array = prop.as_array()?;
-    let data = array.read_sample_vec(index).ok()?;
+    let prop = geom.getPropertyByName(prop_name)?;
+    let array = prop.asArray()?;
+    let data = array.getSampleVec(index).ok()?;
     Some(bytemuck::try_cast_slice::<u8, u64>(&data).ok()?.to_vec())
 }
 
@@ -266,10 +266,10 @@ pub fn read_i32_scalar(
     prop_name: &str,
     index: usize,
 ) -> Option<i32> {
-    let prop = geom.property_by_name(prop_name)?;
-    let scalar = prop.as_scalar()?;
+    let prop = geom.getPropertyByName(prop_name)?;
+    let scalar = prop.asScalar()?;
     let mut buf = [0u8; 4];
-    scalar.read_sample(index, &mut buf).ok()?;
+    scalar.getSample(index, &mut buf).ok()?;
     Some(i32::from_le_bytes(buf))
 }
 
@@ -278,11 +278,11 @@ pub fn read_self_bounds(
     geom: &dyn CompoundPropertyReader,
     index: usize,
 ) -> Option<BBox3d> {
-    let bnds_prop = geom.property_by_name(".selfBnds")?;
-    let scalar = bnds_prop.as_scalar()?;
+    let bnds_prop = geom.getPropertyByName(".selfBnds")?;
+    let scalar = bnds_prop.asScalar()?;
     
     let mut buf = [0u8; 48]; // 6 x f64
-    scalar.read_sample(index, &mut buf).ok()?;
+    scalar.getSample(index, &mut buf).ok()?;
     
     let doubles: &[f64] = bytemuck::try_cast_slice(&buf).ok()?;
     if doubles.len() >= 6 {
@@ -302,8 +302,8 @@ pub fn read_indexed_vec3(
     prop_name: &str,
     index: usize,
 ) -> Option<(Vec<glam::Vec3>, Option<Vec<i32>>)> {
-    let prop = geom.property_by_name(prop_name)?;
-    let compound = prop.as_compound()?;
+    let prop = geom.getPropertyByName(prop_name)?;
+    let compound = prop.asCompound()?;
     
     // Read values
     let vals = read_vec3_array(compound, ".vals", index)?;
@@ -321,8 +321,8 @@ pub fn read_indexed_vec2(
     prop_name: &str,
     index: usize,
 ) -> Option<(Vec<glam::Vec2>, Option<Vec<i32>>)> {
-    let prop = geom.property_by_name(prop_name)?;
-    let compound = prop.as_compound()?;
+    let prop = geom.getPropertyByName(prop_name)?;
+    let compound = prop.asCompound()?;
     
     // Read values
     let vals = read_vec2_array(compound, ".vals", index)?;

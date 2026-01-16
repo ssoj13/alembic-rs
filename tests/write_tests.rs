@@ -132,7 +132,7 @@ fn test_roundtrip_polymesh_triangle() {
     } else {
         println!("Could not create IPolyMesh - checking properties instead");
         let props = mesh_obj.getProperties();
-        println!("  Properties: {:?}", props.property_names());
+        println!("  Properties: {:?}", props.getPropertyNames());
     }
 }
 
@@ -400,7 +400,7 @@ fn test_roundtrip_with_time_sampling() {
         
         // Add uniform time sampling at 24 fps
         let ts = TimeSampling::uniform(1.0 / 24.0, 0.0);
-        let ts_idx = archive.add_time_sampling(ts);
+        let ts_idx = archive.addTimeSampling(ts);
         println!("Added time sampling at index {}", ts_idx);
         
         let root = OObject::new("");
@@ -470,7 +470,7 @@ fn copy_time_samplings(src: &alembic::abc::IArchive, dst: &mut OArchive) -> std:
     // Copy remaining time samplings
     for i in 1..src.getNumTimeSamplings() {
         if let Some(ts) = src.getTimeSampling(i) {
-            let new_idx = dst.add_time_sampling(ts.clone());
+            let new_idx = dst.addTimeSampling(ts.clone());
             mapping.insert(i as u32, new_idx);
         }
     }
@@ -847,9 +847,9 @@ fn test_deduplication() {
     for i in 0..5 {
         let mesh = root.getChildByName(&format!("mesh{}", i)).unwrap();
         let props = mesh.getProperties();
-        let p_prop = props.property_by_name("P").unwrap();
-        let p_array = p_prop.as_array().unwrap();
-        let data = p_array.read_sample_vec(0).unwrap();
+        let p_prop = props.getPropertyByName("P").unwrap();
+        let p_array = p_prop.asArray().unwrap();
+        let data = p_array.getSampleVec(0).unwrap();
         let read_positions: &[f32] = bytemuck::cast_slice(&data);
         assert_eq!(read_positions, &positions[..]);
     }
@@ -873,7 +873,7 @@ fn test_cyclic_time_sampling() {
         
         // Add cyclic time sampling: samples at 0.0, 0.33, 0.66 in a 1.0 second cycle
         let cyclic_ts = TimeSampling::cyclic(1.0, vec![0.0, 0.333, 0.666]);
-        let ts_idx = archive.add_time_sampling(cyclic_ts);
+        let ts_idx = archive.addTimeSampling(cyclic_ts);
         
         let mut root = OObject::new("");
         let mut mesh = OObject::new("cyclic_mesh");
@@ -931,7 +931,7 @@ fn test_acyclic_time_sampling() {
         
         // Acyclic: samples at irregular times
         let acyclic_ts = TimeSampling::acyclic(vec![0.0, 0.5, 1.0, 2.0, 5.0]);
-        let ts_idx = archive.add_time_sampling(acyclic_ts);
+        let ts_idx = archive.addTimeSampling(acyclic_ts);
         
         let mut root = OObject::new("");
         let mut mesh = OObject::new("acyclic_mesh");

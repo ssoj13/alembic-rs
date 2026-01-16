@@ -94,8 +94,8 @@ impl PyICompoundProperty {
             if path.is_empty() {
                 f(&compound)
             } else {
-                let prop = compound.property_by_name(&path[0])?;
-                let child_compound = prop.as_compound()?;
+                let prop = compound.getPropertyByName(&path[0])?;
+                let child_compound = prop.asCompound()?;
                 traverse_prop(child_compound, &path[1..], f)
             }
         }
@@ -113,30 +113,30 @@ impl PyICompoundProperty {
     
     /// Get property names.
     fn getPropertyNames(&self) -> Vec<String> {
-        self.with_compound(|c| Some(c.property_names())).unwrap_or_default()
+        self.with_compound(|c| Some(c.getPropertyNames())).unwrap_or_default()
     }
     
     /// Check if property exists.
     fn hasProperty(&self, name: &str) -> bool {
-        self.with_compound(|c| Some(c.has_property(name))).unwrap_or(false)
+        self.with_compound(|c| Some(c.hasProperty(name))).unwrap_or(false)
     }
     
     /// Get property info by name.
     fn getPropertyInfo(&self, name: &str) -> Option<PyPropertyInfo> {
         self.with_compound(|c| {
-            let prop = c.property_by_name(name)?;
+            let prop = c.getPropertyByName(name)?;
             let hdr = prop.getHeader();
             Some(PyPropertyInfo {
                 name: hdr.name.clone(),
-                is_scalar: prop.is_scalar(),
-                is_array: prop.is_array(),
-                is_compound: prop.is_compound(),
+                is_scalar: prop.isScalar(),
+                is_array: prop.isArray(),
+                is_compound: prop.isCompound(),
                 data_type: format!("{:?}", hdr.data_type),
                 extent: hdr.data_type.extent,
-                num_samples: if prop.is_scalar() {
-                    prop.as_scalar().map(|s| s.getNumSamples()).unwrap_or(1)
-                } else if prop.is_array() {
-                    prop.as_array().map(|a| a.getNumSamples()).unwrap_or(1)
+                num_samples: if prop.isScalar() {
+                    prop.asScalar().map(|s| s.getNumSamples()).unwrap_or(1)
+                } else if prop.isArray() {
+                    prop.asArray().map(|a| a.getNumSamples()).unwrap_or(1)
                 } else { 1 },
                 time_sampling_index: hdr.time_sampling_index,
             })
@@ -147,8 +147,8 @@ impl PyICompoundProperty {
     fn getCompoundProperty(&self, name: &str) -> PyResult<PyICompoundProperty> {
         // Check existence via closure - returns owned bool
         let exists = self.with_compound(|c| {
-            let prop = c.property_by_name(name)?;
-            if prop.is_compound() { Some(true) } else { None }
+            let prop = c.getPropertyByName(name)?;
+            if prop.isCompound() { Some(true) } else { None }
         }).unwrap_or(false);
         
         if !exists {
@@ -171,8 +171,8 @@ impl PyICompoundProperty {
     fn getScalarValue(&self, name: &str, index: usize) -> PyResult<PyObject> {
         Python::with_gil(|py| {
             self.with_compound(|c| {
-                let prop = c.property_by_name(name)?;
-                let scalar = prop.as_scalar()?;
+                let prop = c.getPropertyByName(name)?;
+                let scalar = prop.asScalar()?;
                 let hdr = scalar.getHeader();
                 
                 read_scalar_as_python(py, scalar, index, hdr.data_type)
@@ -187,10 +187,10 @@ impl PyICompoundProperty {
     fn getArrayValue(&self, name: &str, index: usize) -> PyResult<PyObject> {
         Python::with_gil(|py| {
             self.with_compound(|c| {
-                let prop = c.property_by_name(name)?;
-                let array = prop.as_array()?;
+                let prop = c.getPropertyByName(name)?;
+                let array = prop.asArray()?;
                 let hdr = array.getHeader();
-                let data = array.read_sample_vec(index).ok()?;
+                let data = array.getSampleVec(index).ok()?;
                 
                 read_array_as_python(py, &data, hdr.data_type)
             })
@@ -260,30 +260,30 @@ fn read_scalar_as_python(
     match data_type.pod {
         Boolean => {
             let mut buf = [0u8; 1];
-            scalar.read_sample(idx, &mut buf).ok()?;
+            scalar.getSample(idx, &mut buf).ok()?;
             let val = buf[0] != 0;
             Some(val.into_pyobject(py).ok()?.to_owned().unbind().into_any())
         }
         Int8 => {
             let mut buf = [0u8; 1];
-            scalar.read_sample(idx, &mut buf).ok()?;
+            scalar.getSample(idx, &mut buf).ok()?;
             let val = buf[0] as i8;
             Some(val.into_pyobject(py).ok()?.unbind().into_any())
         }
         Uint8 => {
             let mut buf = [0u8; 1];
-            scalar.read_sample(idx, &mut buf).ok()?;
+            scalar.getSample(idx, &mut buf).ok()?;
             Some(buf[0].into_pyobject(py).ok()?.unbind().into_any())
         }
         Int16 => {
             let mut buf = [0u8; 2];
-            scalar.read_sample(idx, &mut buf).ok()?;
+            scalar.getSample(idx, &mut buf).ok()?;
             let val = i16::from_le_bytes(buf);
             Some(val.into_pyobject(py).ok()?.unbind().into_any())
         }
         Uint16 => {
             let mut buf = [0u8; 2];
-            scalar.read_sample(idx, &mut buf).ok()?;
+            scalar.getSample(idx, &mut buf).ok()?;
             let val = u16::from_le_bytes(buf);
             Some(val.into_pyobject(py).ok()?.unbind().into_any())
         }
@@ -291,14 +291,14 @@ fn read_scalar_as_python(
             if extent > 1 {
                 let size = 4 * extent as usize;
                 let mut buf = vec![0u8; size];
-                scalar.read_sample(idx, &mut buf).ok()?;
+                scalar.getSample(idx, &mut buf).ok()?;
                 let values: Vec<i32> = buf.chunks_exact(4)
                     .map(|c| i32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                     .collect();
                 Some(values.into_pyobject(py).ok()?.unbind().into_any())
             } else {
                 let mut buf = [0u8; 4];
-                scalar.read_sample(idx, &mut buf).ok()?;
+                scalar.getSample(idx, &mut buf).ok()?;
                 let val = i32::from_le_bytes(buf);
                 Some(val.into_pyobject(py).ok()?.unbind().into_any())
             }
@@ -307,14 +307,14 @@ fn read_scalar_as_python(
             if extent > 1 {
                 let size = 4 * extent as usize;
                 let mut buf = vec![0u8; size];
-                scalar.read_sample(idx, &mut buf).ok()?;
+                scalar.getSample(idx, &mut buf).ok()?;
                 let values: Vec<u32> = buf.chunks_exact(4)
                     .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                     .collect();
                 Some(values.into_pyobject(py).ok()?.unbind().into_any())
             } else {
                 let mut buf = [0u8; 4];
-                scalar.read_sample(idx, &mut buf).ok()?;
+                scalar.getSample(idx, &mut buf).ok()?;
                 let val = u32::from_le_bytes(buf);
                 Some(val.into_pyobject(py).ok()?.unbind().into_any())
             }
@@ -323,14 +323,14 @@ fn read_scalar_as_python(
             if extent > 1 {
                 let size = 8 * extent as usize;
                 let mut buf = vec![0u8; size];
-                scalar.read_sample(idx, &mut buf).ok()?;
+                scalar.getSample(idx, &mut buf).ok()?;
                 let values: Vec<i64> = buf.chunks_exact(8)
                     .map(|c| i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
                     .collect();
                 Some(values.into_pyobject(py).ok()?.unbind().into_any())
             } else {
                 let mut buf = [0u8; 8];
-                scalar.read_sample(idx, &mut buf).ok()?;
+                scalar.getSample(idx, &mut buf).ok()?;
                 let val = i64::from_le_bytes(buf);
                 Some(val.into_pyobject(py).ok()?.unbind().into_any())
             }
@@ -339,21 +339,21 @@ fn read_scalar_as_python(
             if extent > 1 {
                 let size = 8 * extent as usize;
                 let mut buf = vec![0u8; size];
-                scalar.read_sample(idx, &mut buf).ok()?;
+                scalar.getSample(idx, &mut buf).ok()?;
                 let values: Vec<u64> = buf.chunks_exact(8)
                     .map(|c| u64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
                     .collect();
                 Some(values.into_pyobject(py).ok()?.unbind().into_any())
             } else {
                 let mut buf = [0u8; 8];
-                scalar.read_sample(idx, &mut buf).ok()?;
+                scalar.getSample(idx, &mut buf).ok()?;
                 let val = u64::from_le_bytes(buf);
                 Some(val.into_pyobject(py).ok()?.unbind().into_any())
             }
         }
         Float16 => {
             let mut buf = [0u8; 2];
-            scalar.read_sample(idx, &mut buf).ok()?;
+            scalar.getSample(idx, &mut buf).ok()?;
             let f16 = half::f16::from_le_bytes(buf);
             let val = f16.to_f32();
             Some(val.into_pyobject(py).ok()?.unbind().into_any())
@@ -362,14 +362,14 @@ fn read_scalar_as_python(
             if extent > 1 {
                 let size = 4 * extent as usize;
                 let mut buf = vec![0u8; size];
-                scalar.read_sample(idx, &mut buf).ok()?;
+                scalar.getSample(idx, &mut buf).ok()?;
                 let floats: Vec<f32> = buf.chunks_exact(4)
                     .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                     .collect();
                 Some(floats.into_pyobject(py).ok()?.unbind().into_any())
             } else {
                 let mut buf = [0u8; 4];
-                scalar.read_sample(idx, &mut buf).ok()?;
+                scalar.getSample(idx, &mut buf).ok()?;
                 let val = f32::from_le_bytes(buf);
                 Some(val.into_pyobject(py).ok()?.unbind().into_any())
             }
@@ -378,21 +378,21 @@ fn read_scalar_as_python(
             if extent > 1 {
                 let size = 8 * extent as usize;
                 let mut buf = vec![0u8; size];
-                scalar.read_sample(idx, &mut buf).ok()?;
+                scalar.getSample(idx, &mut buf).ok()?;
                 let floats: Vec<f64> = buf.chunks_exact(8)
                     .map(|c| f64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
                     .collect();
                 Some(floats.into_pyobject(py).ok()?.unbind().into_any())
             } else {
                 let mut buf = [0u8; 8];
-                scalar.read_sample(idx, &mut buf).ok()?;
+                scalar.getSample(idx, &mut buf).ok()?;
                 let val = f64::from_le_bytes(buf);
                 Some(val.into_pyobject(py).ok()?.unbind().into_any())
             }
         }
         String | Wstring => {
             // Use read_sample_vec for variable-length string data
-            if let Ok(buf) = scalar.read_sample_vec(idx) {
+            if let Ok(buf) = scalar.getSampleVec(idx) {
                 let s = std::string::String::from_utf8_lossy(&buf);
                 Some(s.into_pyobject(py).ok()?.unbind().into_any())
             } else {

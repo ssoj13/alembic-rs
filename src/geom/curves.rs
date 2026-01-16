@@ -261,20 +261,20 @@ impl<'a> ICurves<'a> {
     /// - Heterogeneous: Topology can change between samples
     pub fn topology_variance(&self) -> TopologyVariance {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
+        let Some(geom_prop) = props.getPropertyByName(".geom") else {
             return TopologyVariance::Static;
         };
-        let Some(geom) = geom_prop.as_compound() else {
+        let Some(geom) = geom_prop.asCompound() else {
             return TopologyVariance::Static;
         };
         
         // Get sample counts for positions and topology
-        let p_samples = if let Some(p) = geom.property_by_name("P") {
-            p.as_array().map(|a| a.num_samples()).unwrap_or(1)
+        let p_samples = if let Some(p) = geom.getPropertyByName("P") {
+            p.asArray().map(|a| a.getNumSamples()).unwrap_or(1)
         } else { 1 };
         
-        let nv_samples = if let Some(nv) = geom.property_by_name("nVertices") {
-            nv.as_array().map(|a| a.num_samples()).unwrap_or(1)
+        let nv_samples = if let Some(nv) = geom.getPropertyByName("nVertices") {
+            nv.asArray().map(|a| a.getNumSamples()).unwrap_or(1)
         } else { 1 };
         
         // Determine variance
@@ -314,9 +314,9 @@ impl<'a> ICurves<'a> {
         use crate::util::Error;
         
         let props = self.object.getProperties();
-        let geom_prop = props.property_by_name(".geom")
+        let geom_prop = props.getPropertyByName(".geom")
             .ok_or_else(|| Error::invalid("No .geom property"))?;
-        let geom = geom_prop.as_compound()
+        let geom = geom_prop.asCompound()
             .ok_or_else(|| Error::invalid(".geom is not compound"))?;
         let g = geom.as_reader();
         
@@ -332,10 +332,10 @@ impl<'a> ICurves<'a> {
         }
         
         // Read curveBasisAndType (combined type/basis info) - special handling
-        if let Some(cbt_prop) = geom.property_by_name("curveBasisAndType") {
-            if let Some(scalar) = cbt_prop.as_scalar() {
+        if let Some(cbt_prop) = geom.getPropertyByName("curveBasisAndType") {
+            if let Some(scalar) = cbt_prop.asScalar() {
                 let mut buf = [0u8; 4];
-                if scalar.read_sample(0, &mut buf).is_ok() {
+                if scalar.getSample(0, &mut buf).is_ok() {
                     sample.curve_type = CurveType::from_u8(buf[0]);
                     sample.wrap = CurvePeriodicity::from_u8(buf[1]);
                     sample.basis = BasisType::from_u8(buf[2]);

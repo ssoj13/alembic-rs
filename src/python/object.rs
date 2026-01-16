@@ -336,8 +336,8 @@ impl PyIObject {
     fn getGeomParam(&self, name: &str) -> PyResult<PyIGeomParam> {
         let exists = self.with_object(|obj| {
             let props = obj.getProperties();
-            let geom_box = props.property_by_name(".geom")?;
-            let geom = geom_box.as_compound()?;
+            let geom_box = props.getPropertyByName(".geom")?;
+            let geom = geom_box.asCompound()?;
             if IGeomParam::new(&geom, name).is_some() {
                 Some(true)
             } else {
@@ -362,8 +362,8 @@ impl PyIObject {
     fn getGeomParamNames(&self) -> Vec<String> {
         self.with_object(|obj| {
             let props = obj.getProperties();
-            let geom_box = props.property_by_name(".geom")?;
-            let geom = geom_box.as_compound()?;
+            let geom_box = props.getPropertyByName(".geom")?;
+            let geom = geom_box.asCompound()?;
             let mut names = Vec::new();
             for i in 0..geom.getNumProperties() {
                 if let Some(prop) = geom.property(i) {
@@ -413,12 +413,12 @@ impl PyIObject {
     fn getTimeSamplingIndex(&self) -> u32 {
         self.with_object(|obj| {
             let props = obj.getProperties();
-            let geom_box = props.property_by_name(".geom")?;
-            let geom = geom_box.as_compound()?;
+            let geom_box = props.getPropertyByName(".geom")?;
+            let geom = geom_box.asCompound()?;
             
             // Try common property names in priority order
             for name in &["P", ".vals", ".xform", ".camera", ".light", ".userProperties"] {
-                if let Some(prop) = geom.property_by_name(name) {
+                if let Some(prop) = geom.getPropertyByName(name) {
                     return Some(prop.getHeader().time_sampling_index);
                 }
             }
@@ -444,13 +444,13 @@ impl PyIObject {
     fn getSelfBounds(&self, index: usize) -> Option<([f64; 3], [f64; 3])> {
         self.with_object(|obj| {
             let props = obj.getProperties();
-            let geom_box = props.property_by_name(".geom")?;
-            let geom = geom_box.as_compound()?;
-            let bnds_prop = geom.property_by_name(".selfBnds")?;
-            let scalar = bnds_prop.as_scalar()?;
+            let geom_box = props.getPropertyByName(".geom")?;
+            let geom = geom_box.asCompound()?;
+            let bnds_prop = geom.getPropertyByName(".selfBnds")?;
+            let scalar = bnds_prop.asScalar()?;
             
             let mut buf = [0u8; 48]; // 6 x f64
-            scalar.read_sample(index, &mut buf).ok()?;
+            scalar.getSample(index, &mut buf).ok()?;
             let doubles: &[f64] = bytemuck::try_cast_slice(&buf).ok()?;
             
             if doubles.len() >= 6 {
@@ -470,13 +470,13 @@ impl PyIObject {
     fn getChildBounds(&self, index: usize) -> Option<([f64; 3], [f64; 3])> {
         self.with_object(|obj| {
             let props = obj.getProperties();
-            let geom_box = props.property_by_name(".geom")?;
-            let geom = geom_box.as_compound()?;
-            let bnds_prop = geom.property_by_name(".childBnds")?;
-            let scalar = bnds_prop.as_scalar()?;
+            let geom_box = props.getPropertyByName(".geom")?;
+            let geom = geom_box.asCompound()?;
+            let bnds_prop = geom.getPropertyByName(".childBnds")?;
+            let scalar = bnds_prop.asScalar()?;
             
             let mut buf = [0u8; 48]; // 6 x f64
-            scalar.read_sample(index, &mut buf).ok()?;
+            scalar.getSample(index, &mut buf).ok()?;
             let doubles: &[f64] = bytemuck::try_cast_slice(&buf).ok()?;
             
             if doubles.len() >= 6 {
@@ -494,9 +494,9 @@ impl PyIObject {
     fn hasSelfBounds(&self) -> bool {
         self.with_object(|obj| {
             let props = obj.getProperties();
-            let geom_box = props.property_by_name(".geom")?;
-            let geom = geom_box.as_compound()?;
-            Some(geom.has_property(".selfBnds"))
+            let geom_box = props.getPropertyByName(".geom")?;
+            let geom = geom_box.asCompound()?;
+            Some(geom.hasProperty(".selfBnds"))
         }).unwrap_or(false)
     }
     
@@ -504,9 +504,9 @@ impl PyIObject {
     fn hasChildBounds(&self) -> bool {
         self.with_object(|obj| {
             let props = obj.getProperties();
-            let geom_box = props.property_by_name(".geom")?;
-            let geom = geom_box.as_compound()?;
-            Some(geom.has_property(".childBnds"))
+            let geom_box = props.getPropertyByName(".geom")?;
+            let geom = geom_box.asCompound()?;
+            Some(geom.hasProperty(".childBnds"))
         }).unwrap_or(false)
     }
     

@@ -208,12 +208,12 @@ impl<'a> IXform<'a> {
     pub fn is_inheriting(&self) -> bool {
         // Read .inherits property if present
         let props = self.object.getProperties();
-        if let Some(geom_prop) = props.property_by_name(".xform") {
-            if let Some(geom) = geom_prop.as_compound() {
-                if let Some(inh_prop) = geom.property_by_name(".inherits") {
-                    if let Some(scalar) = inh_prop.as_scalar() {
+        if let Some(geom_prop) = props.getPropertyByName(".xform") {
+            if let Some(geom) = geom_prop.asCompound() {
+                if let Some(inh_prop) = geom.getPropertyByName(".inherits") {
+                    if let Some(scalar) = inh_prop.asScalar() {
                         let mut buf = [0u8; 1];
-                        if scalar.read_sample(0, &mut buf).is_ok() {
+                        if scalar.getSample(0, &mut buf).is_ok() {
                             return buf[0] != 0;
                         }
                     }
@@ -226,29 +226,29 @@ impl<'a> IXform<'a> {
     /// Get number of samples.
     pub fn getNumSamples(&self) -> usize {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".xform") else { return 1 };
-        let Some(geom) = geom_prop.as_compound() else { return 1 };
+        let Some(geom_prop) = props.getPropertyByName(".xform") else { return 1 };
+        let Some(geom) = geom_prop.asCompound() else { return 1 };
         
         // Check both .inherits and .vals - return MAX of both
         // Animation can be in either property
         let mut max_samples = 1usize;
         
-        if let Some(inherits_prop) = geom.property_by_name(".inherits") {
-            if let Some(scalar) = inherits_prop.as_scalar() {
-                max_samples = max_samples.max(scalar.num_samples());
+        if let Some(inherits_prop) = geom.getPropertyByName(".inherits") {
+            if let Some(scalar) = inherits_prop.asScalar() {
+                max_samples = max_samples.max(scalar.getNumSamples());
             }
         }
         
-        if let Some(vals_prop) = geom.property_by_name(".vals") {
-            if let Some(array_reader) = vals_prop.as_array() {
-                max_samples = max_samples.max(array_reader.num_samples());
+        if let Some(vals_prop) = geom.getPropertyByName(".vals") {
+            if let Some(array_reader) = vals_prop.asArray() {
+                max_samples = max_samples.max(array_reader.getNumSamples());
             }
         }
         
         // Also check .ops - animated ops would indicate animation
-        if let Some(ops_prop) = geom.property_by_name(".ops") {
-            if let Some(array_reader) = ops_prop.as_array() {
-                max_samples = max_samples.max(array_reader.num_samples());
+        if let Some(ops_prop) = geom.getPropertyByName(".ops") {
+            if let Some(array_reader) = ops_prop.asArray() {
+                max_samples = max_samples.max(array_reader.getNumSamples());
             }
         }
         
@@ -278,18 +278,18 @@ impl<'a> IXform<'a> {
         use crate::util::Error;
         
         let props = self.object.getProperties();
-        let geom_prop = props.property_by_name(".xform")
+        let geom_prop = props.getPropertyByName(".xform")
             .ok_or_else(|| Error::invalid("No .xform property"))?;
-        let geom = geom_prop.as_compound()
+        let geom = geom_prop.asCompound()
             .ok_or_else(|| Error::invalid(".xform is not compound"))?;
         
         let mut sample = XformSample::default();
         
         // Read .inherits (static scalar)
-        if let Some(inh_prop) = geom.property_by_name(".inherits") {
-            if let Some(scalar) = inh_prop.as_scalar() {
+        if let Some(inh_prop) = geom.getPropertyByName(".inherits") {
+            if let Some(scalar) = inh_prop.asScalar() {
                 let mut buf = [0u8; 1];
-                if scalar.read_sample(0, &mut buf).is_ok() {
+                if scalar.getSample(0, &mut buf).is_ok() {
                     sample.inherits = buf[0] != 0;
                 }
             }
@@ -297,11 +297,11 @@ impl<'a> IXform<'a> {
         
         // Read .ops (static scalar with uint8 operation codes)
         // Per IXform.cpp: numOps = ops->getHeader().getDataType().getExtent()
-        let ops_data = if let Some(ops_prop) = geom.property_by_name(".ops") {
-            if let Some(scalar) = ops_prop.as_scalar() {
-                let num_ops = scalar.header().data_type.extent as usize;
+        let ops_data = if let Some(ops_prop) = geom.getPropertyByName(".ops") {
+            if let Some(scalar) = ops_prop.asScalar() {
+                let num_ops = scalar.getHeader().data_type.extent as usize;
                 let mut buf = vec![0u8; num_ops];
-                if scalar.read_sample(0, &mut buf).is_ok() {
+                if scalar.getSample(0, &mut buf).is_ok() {
                     Some(buf)
                 } else {
                     None
@@ -315,14 +315,14 @@ impl<'a> IXform<'a> {
         
         // Read .vals (doubles - can be scalar or array)
         // Per IXform.cpp: useArrayProp determines which method
-        let vals_data = if let Some(vals_prop) = geom.property_by_name(".vals") {
-            if vals_prop.is_scalar() {
-                if let Some(scalar) = vals_prop.as_scalar() {
+        let vals_data = if let Some(vals_prop) = geom.getPropertyByName(".vals") {
+            if vals_prop.isScalar() {
+                if let Some(scalar) = vals_prop.asScalar() {
                     // Per IXform.cpp: dataVec.resize( extent )
-                    let num_vals = scalar.header().data_type.extent as usize;
+                    let num_vals = scalar.getHeader().data_type.extent as usize;
                     let byte_count = num_vals * 8; // f64 = 8 bytes
                     let mut buf = vec![0u8; byte_count];
-                    if scalar.read_sample(index, &mut buf).is_ok() {
+                    if scalar.getSample(index, &mut buf).is_ok() {
                         Some(buf)
                     } else {
                         None
@@ -330,9 +330,9 @@ impl<'a> IXform<'a> {
                 } else {
                     None
                 }
-            } else if let Some(array_reader) = vals_prop.as_array() {
+            } else if let Some(array_reader) = vals_prop.asArray() {
                 // Array property - size comes from the sample itself
-                array_reader.read_sample_vec(index).ok()
+                array_reader.getSampleVec(index).ok()
             } else {
                 None
             }
@@ -367,26 +367,26 @@ impl<'a> IXform<'a> {
     /// Check if this xform has child bounds property.
     pub fn has_child_bounds(&self) -> bool {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".xform") else {
+        let Some(geom_prop) = props.getPropertyByName(".xform") else {
             return false;
         };
-        let Some(geom) = geom_prop.as_compound() else {
+        let Some(geom) = geom_prop.asCompound() else {
             return false;
         };
-        geom.has_property(".childBnds")
+        geom.hasProperty(".childBnds")
     }
     
     /// Read child bounds at the given sample index.
     /// Returns the bounding box of all children.
     pub fn child_bounds(&self, index: usize) -> Option<crate::util::BBox3d> {
         let props = self.object.getProperties();
-        let geom_prop = props.property_by_name(".xform")?;
-        let geom = geom_prop.as_compound()?;
-        let bnds_prop = geom.property_by_name(".childBnds")?;
-        let scalar = bnds_prop.as_scalar()?;
+        let geom_prop = props.getPropertyByName(".xform")?;
+        let geom = geom_prop.asCompound()?;
+        let bnds_prop = geom.getPropertyByName(".childBnds")?;
+        let scalar = bnds_prop.asScalar()?;
         
         let mut buf = [0u8; 48]; // 6 x f64
-        if scalar.read_sample(index, &mut buf).is_ok() {
+        if scalar.getSample(index, &mut buf).is_ok() {
             let doubles: &[f64] = bytemuck::try_cast_slice(&buf).ok()?;
             if doubles.len() >= 6 {
                 return Some(crate::util::BBox3d::new(
@@ -401,89 +401,89 @@ impl<'a> IXform<'a> {
     /// Get the number of child bounds samples.
     pub fn child_bounds_num_samples(&self) -> usize {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".xform") else { return 0 };
-        let Some(geom) = geom_prop.as_compound() else { return 0 };
-        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
-        let Some(scalar) = bnds_prop.as_scalar() else { return 0 };
-        scalar.num_samples()
+        let Some(geom_prop) = props.getPropertyByName(".xform") else { return 0 };
+        let Some(geom) = geom_prop.asCompound() else { return 0 };
+        let Some(bnds_prop) = geom.getPropertyByName(".childBnds") else { return 0 };
+        let Some(scalar) = bnds_prop.asScalar() else { return 0 };
+        scalar.getNumSamples()
     }
     
     /// Get time sampling index from inherits property.
     pub fn time_sampling_index(&self) -> u32 {
         let props = self.object.getProperties();
-        let Some(xform_prop) = props.property_by_name(".xform") else { return 0 };
-        let Some(xform) = xform_prop.as_compound() else { return 0 };
-        let Some(inherits_prop) = xform.property_by_name(".inherits") else { return 0 };
+        let Some(xform_prop) = props.getPropertyByName(".xform") else { return 0 };
+        let Some(xform) = xform_prop.asCompound() else { return 0 };
+        let Some(inherits_prop) = xform.getPropertyByName(".inherits") else { return 0 };
         inherits_prop.getHeader().time_sampling_index
     }
     
     /// Get the time sampling index for child bounds property.
     pub fn child_bounds_time_sampling_index(&self) -> u32 {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".xform") else { return 0 };
-        let Some(geom) = geom_prop.as_compound() else { return 0 };
-        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
+        let Some(geom_prop) = props.getPropertyByName(".xform") else { return 0 };
+        let Some(geom) = geom_prop.asCompound() else { return 0 };
+        let Some(bnds_prop) = geom.getPropertyByName(".childBnds") else { return 0 };
         bnds_prop.getHeader().time_sampling_index
     }
     
     /// Check if this xform has arbitrary geometry parameters.
     pub fn has_arb_geom_params(&self) -> bool {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".xform") else {
+        let Some(geom_prop) = props.getPropertyByName(".xform") else {
             return false;
         };
-        let Some(geom) = geom_prop.as_compound() else {
+        let Some(geom) = geom_prop.asCompound() else {
             return false;
         };
-        geom.has_property(".arbGeomParams")
+        geom.hasProperty(".arbGeomParams")
     }
     
     /// Get names of arbitrary geometry parameters.
     pub fn arb_geom_param_names(&self) -> Vec<String> {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".xform") else {
+        let Some(geom_prop) = props.getPropertyByName(".xform") else {
             return Vec::new();
         };
-        let Some(geom) = geom_prop.as_compound() else {
+        let Some(geom) = geom_prop.asCompound() else {
             return Vec::new();
         };
-        let Some(arb_prop) = geom.property_by_name(".arbGeomParams") else {
+        let Some(arb_prop) = geom.getPropertyByName(".arbGeomParams") else {
             return Vec::new();
         };
-        let Some(arb) = arb_prop.as_compound() else {
+        let Some(arb) = arb_prop.asCompound() else {
             return Vec::new();
         };
-        arb.property_names()
+        arb.getPropertyNames()
     }
     
     /// Check if this xform has user properties.
     pub fn has_user_properties(&self) -> bool {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".xform") else {
+        let Some(geom_prop) = props.getPropertyByName(".xform") else {
             return false;
         };
-        let Some(geom) = geom_prop.as_compound() else {
+        let Some(geom) = geom_prop.asCompound() else {
             return false;
         };
-        geom.has_property(".userProperties")
+        geom.hasProperty(".userProperties")
     }
     
     /// Get names of user properties.
     pub fn user_property_names(&self) -> Vec<String> {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".xform") else {
+        let Some(geom_prop) = props.getPropertyByName(".xform") else {
             return Vec::new();
         };
-        let Some(geom) = geom_prop.as_compound() else {
+        let Some(geom) = geom_prop.asCompound() else {
             return Vec::new();
         };
-        let Some(user_prop) = geom.property_by_name(".userProperties") else {
+        let Some(user_prop) = geom.getPropertyByName(".userProperties") else {
             return Vec::new();
         };
-        let Some(user) = user_prop.as_compound() else {
+        let Some(user) = user_prop.asCompound() else {
             return Vec::new();
         };
-        user.property_names()
+        user.getPropertyNames()
     }
 }
 

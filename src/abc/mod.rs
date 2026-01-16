@@ -51,22 +51,22 @@ impl IArchive {
 
     /// Get the file name/path.
     pub fn getName(&self) -> &str {
-        self.reader.name()
+        self.reader.getName()
     }
 
     /// Get the number of time samplings in the archive.
     pub fn getNumTimeSamplings(&self) -> usize {
-        self.reader.num_time_samplings()
+        self.reader.getNumTimeSamplings()
     }
 
     /// Get a time sampling by index.
     pub fn getTimeSampling(&self, index: usize) -> Option<&TimeSampling> {
-        self.reader.time_sampling(index)
+        self.reader.getTimeSampling(index)
     }
 
     /// Get the root object of the archive.
     pub fn getTop(&self) -> IObject<'_> {
-        IObject::new(self.reader.root())
+        IObject::new(self.reader.getTop())
     }
     
     /// Find an object by its full path.
@@ -76,7 +76,7 @@ impl IArchive {
     /// 
     /// Returns None if the object is not found.
     pub fn find_object(&self, path: &str) -> Option<IObject<'_>> {
-        self.reader.find_object(path).map(IObject::from_owned)
+        self.reader.findObject(path).map(IObject::from_owned)
     }
     
     /// Get the archive version.
@@ -84,7 +84,7 @@ impl IArchive {
     /// Returns the Alembic library version this archive was written with.
     /// Format: AABBCC where AA=major, BB=minor, CC=patch (e.g., 10703 = 1.7.3)
     pub fn getArchiveVersion(&self) -> i32 {
-        self.reader.archive_version()
+        self.reader.getArchiveVersion()
     }
     
     /// Get the maximum number of samples for a given time sampling index.
@@ -92,7 +92,7 @@ impl IArchive {
     /// Returns None if the index is invalid or the information isn't available
     /// (for archives created before version 1.1.3).
     pub fn max_num_samples_for_time_sampling(&self, index: usize) -> Option<usize> {
-        self.reader.max_num_samples_for_time_sampling(index)
+        self.reader.getMaxNumSamplesForTimeSamplingIndex(index)
     }
     
     /// Check if this archive is valid.
@@ -132,31 +132,31 @@ impl IArchive {
     /// Get the application name that created this archive.
     /// Returns None if not available.
     pub fn app_name(&self) -> Option<&str> {
-        self.reader.archive_metadata().get("_ai_Application")
+        self.reader.getArchiveMetaData().get("_ai_Application")
     }
     
     /// Get the date the archive was written.
     /// Returns None if not available.
     pub fn date_written(&self) -> Option<&str> {
-        self.reader.archive_metadata().get("_ai_DateWritten")
+        self.reader.getArchiveMetaData().get("_ai_DateWritten")
     }
     
     /// Get the user description.
     /// Returns None if not available.
     pub fn user_description(&self) -> Option<&str> {
-        self.reader.archive_metadata().get("_ai_Description")
+        self.reader.getArchiveMetaData().get("_ai_Description")
     }
     
     /// Get the DCC FPS setting.
     /// Returns None if not available.
     pub fn dcc_fps(&self) -> Option<f64> {
-        self.reader.archive_metadata().get("_ai_DCC_FPS")
+        self.reader.getArchiveMetaData().get("_ai_DCC_FPS")
             .and_then(|s: &str| s.parse().ok())
     }
     
     /// Get raw archive metadata.
     pub fn archive_metadata(&self) -> &MetaData {
-        self.reader.archive_metadata()
+        self.reader.getArchiveMetaData()
     }
     
     /// Get the combined bounding box of all geometry in the archive.
@@ -293,7 +293,7 @@ impl OArchive {
     
     /// Get the archive name/path.
     pub fn getName(&self) -> &str {
-        self.inner.name()
+        self.inner.getName()
     }
     
     /// Add a time sampling and return its index.
@@ -301,17 +301,17 @@ impl OArchive {
     /// If an equivalent time sampling already exists, returns its index.
     /// Index 0 is always identity (static) time sampling.
     pub fn add_time_sampling(&mut self, ts: crate::core::TimeSampling) -> u32 {
-        self.inner.add_time_sampling(ts)
+        self.inner.addTimeSampling(ts)
     }
     
     /// Get the number of time samplings.
     pub fn getNumTimeSamplings(&self) -> usize {
-        self.inner.num_time_samplings()
+        self.inner.getNumTimeSamplings()
     }
     
     /// Get a time sampling by index.
     pub fn time_sampling(&self, index: u32) -> Option<&crate::core::TimeSampling> {
-        self.inner.time_sampling(index as usize)
+        self.inner.getTimeSampling(index as usize)
     }
     
     /// Set compression hint (-1 = no compression, 0-9 = compression level).
@@ -324,9 +324,53 @@ impl OArchive {
         self.inner.compression_hint()
     }
 
-    /// Get the root object of the archive.
-    pub fn root(&mut self) -> OObject<'_> {
-        OObject { _phantom: std::marker::PhantomData }
+    /// Write the object hierarchy to the archive.
+    /// 
+    /// Call this with the root object after building your scene hierarchy.
+    /// Use OPolyMesh, OXform, etc. to build objects, then assemble them
+    /// into a tree and pass the root here.
+    /// 
+    /// # Example
+    /// ```ignore
+    /// use alembic::geom::{OPolyMesh, OPolyMeshSample};
+    /// use alembic::ogawa::OObject;
+    /// 
+    /// let mut mesh = OPolyMesh::new("myMesh");
+    /// mesh.add_sample(&OPolyMeshSample::new(positions, face_counts, face_indices));
+    /// let mesh_obj = mesh.build();
+    /// 
+    /// let mut root = OObject::new("");
+    /// root.children.push(mesh_obj);
+    /// 
+    /// archive.write_archive(&root)?;
+    /// ```
+    pub fn write_archive(&mut self, root: &crate::ogawa::OObject) -> Result<()> {
+        self.inner.write_archive(root)
+    }
+    
+    /// Set application name metadata.
+    pub fn set_app_name(&mut self, name: &str) {
+        self.inner.set_app_name(name);
+    }
+    
+    /// Set date written metadata.
+    pub fn set_date_written(&mut self, date: &str) {
+        self.inner.set_date_written(date);
+    }
+    
+    /// Set user description metadata.
+    pub fn set_description(&mut self, desc: &str) {
+        self.inner.set_description(desc);
+    }
+    
+    /// Enable or disable sample deduplication.
+    pub fn set_dedup_enabled(&mut self, enabled: bool) {
+        self.inner.set_dedup_enabled(enabled);
+    }
+    
+    /// Check if deduplication is enabled.
+    pub fn dedup_enabled(&self) -> bool {
+        self.inner.dedup_enabled()
     }
     
     /// Check if this archive is valid.
@@ -381,17 +425,17 @@ impl<'a> IObject<'a> {
 
     /// Get the object header.
     pub fn getHeader(&self) -> &ObjectHeader {
-        self.reader.as_ref().header()
+        self.reader.as_ref().getHeader()
     }
 
     /// Get the name of this object.
     pub fn getName(&self) -> &str {
-        self.reader.as_ref().name()
+        self.reader.as_ref().getName()
     }
 
     /// Get the full path from root.
     pub fn getFullName(&self) -> &str {
-        self.reader.as_ref().full_name()
+        self.reader.as_ref().getFullName()
     }
     
     /// Check if this is the root object.
@@ -410,7 +454,7 @@ impl<'a> IObject<'a> {
     /// non-root objects. Use [`getParentFullName()`](Self::getParentFullName) 
     /// combined with archive navigation as an alternative.
     pub fn getParent(&self) -> Option<IObject<'_>> {
-        self.reader.as_ref().parent().map(|p| {
+        self.reader.as_ref().getParent().map(|p| {
             // Wrap borrowed parent reader
             IObject { reader: IObjectReader::Borrowed(p) }
         })
@@ -444,17 +488,17 @@ impl<'a> IObject<'a> {
 
     /// Get the number of child objects.
     pub fn getNumChildren(&self) -> usize {
-        self.reader.as_ref().num_children()
+        self.reader.as_ref().getNumChildren()
     }
     
     /// Get a child object by index.
     pub fn getChild(&self, index: usize) -> Option<IObject<'_>> {
-        self.reader.as_ref().child(index).map(IObject::from_owned)
+        self.reader.as_ref().getChildByIndex(index).map(IObject::from_owned)
     }
     
     /// Get a child object by name.
     pub fn getChildByName(&self, name: &str) -> Option<IObject<'_>> {
-        self.reader.as_ref().child_by_name(name).map(IObject::from_owned)
+        self.reader.as_ref().getChild(name).map(IObject::from_owned)
     }
     
     /// Iterate over all children.
@@ -464,27 +508,27 @@ impl<'a> IObject<'a> {
 
     /// Check if this object matches a schema.
     pub fn matchesSchema(&self, schema: &str) -> bool {
-        self.reader.as_ref().matches_schema(schema)
+        self.reader.as_ref().matchesSchema(schema)
     }
 
     /// Get the properties compound.
     pub fn getProperties(&self) -> ICompoundProperty<'_> {
-        ICompoundProperty::new(self.reader.as_ref().properties())
+        ICompoundProperty::new(self.reader.as_ref().getProperties())
     }
     
     /// Get the metadata.
     pub fn getMetaData(&self) -> &MetaData {
-        self.reader.as_ref().meta_data()
+        self.reader.as_ref().getMetaData()
     }
     
     /// Get the header of a child object by index without creating a full object.
     pub fn getChildHeader(&self, index: usize) -> Option<&ObjectHeader> {
-        self.reader.as_ref().child_header(index)
+        self.reader.as_ref().getChildHeader(index)
     }
     
     /// Get the header of a child object by name without creating a full object.
     pub fn getChildHeaderByName(&self, name: &str) -> Option<&ObjectHeader> {
-        self.reader.as_ref().child_header_by_name(name)
+        self.reader.as_ref().getChildHeaderByName(name)
     }
     
     // ========================================================================
@@ -496,7 +540,7 @@ impl<'a> IObject<'a> {
     /// An object can reference another object in the same archive and act as
     /// an instance. This method returns true if this object is such an instance.
     pub fn isInstanceRoot(&self) -> bool {
-        self.reader.as_ref().is_instance_root()
+        self.reader.as_ref().isInstanceRoot()
     }
     
     /// Check if this object has been reached via an instance path.
@@ -504,7 +548,7 @@ impl<'a> IObject<'a> {
     /// This returns true if this object is either an instance itself or
     /// any of its ancestors is an instance.
     pub fn isInstanceDescendant(&self) -> bool {
-        self.reader.as_ref().is_instance_descendant()
+        self.reader.as_ref().isInstanceDescendant()
     }
     
     /// Get the source path if this is an instance.
@@ -513,17 +557,17 @@ impl<'a> IObject<'a> {
     /// this returns the path to the source object that is being instanced.
     /// Otherwise returns an empty string.
     pub fn getInstanceSourcePath(&self) -> &str {
-        self.reader.as_ref().instance_source_path()
+        self.reader.as_ref().instanceSourcePath()
     }
     
     /// Check if the child at the given index is an instance.
     pub fn isChildInstance(&self, index: usize) -> bool {
-        self.reader.as_ref().is_child_instance(index)
+        self.reader.as_ref().isChildInstance(index)
     }
     
     /// Check if the child with the given name is an instance.
     pub fn isChildInstanceByName(&self, name: &str) -> bool {
-        self.reader.as_ref().is_child_instance_by_name(name)
+        self.reader.as_ref().isChildInstanceByName(name)
     }
     
     // ========================================================================
@@ -535,7 +579,7 @@ impl<'a> IObject<'a> {
     /// This returns a 16-byte digest that can be used to quickly
     /// compare if the properties have changed between two objects.
     pub fn getPropertiesHash(&self) -> Option<[u8; 16]> {
-        self.reader.as_ref().properties_hash()
+        self.reader.as_ref().getPropertiesHash()
     }
     
     /// Get the aggregated children hash if available.
@@ -543,7 +587,7 @@ impl<'a> IObject<'a> {
     /// This returns a 16-byte digest that can be used to quickly
     /// compare if the child hierarchy has changed.
     pub fn getChildrenHash(&self) -> Option<[u8; 16]> {
-        self.reader.as_ref().children_hash()
+        self.reader.as_ref().getChildrenHash()
     }
     
     // Note: getArchive() is not implemented in Rust due to ownership constraints.
@@ -564,23 +608,8 @@ impl<'a> IObject<'a> {
     }
 }
 
-/// Output object for writing scene hierarchy.
-pub struct OObject<'a> {
-    _phantom: std::marker::PhantomData<&'a ()>,
-}
-
-impl OObject<'_> {
-    /// Get the name of this object.
-    pub fn getName(&self) -> &str {
-        ""
-    }
-    
-    /// Check if this object is valid.
-    #[inline]
-    pub fn valid(&self) -> bool {
-        true
-    }
-}
+// Note: For writing objects, use ogawa::OObject directly.
+// See OArchive::write_archive() documentation for usage.
 
 // ============================================================================
 // Properties
@@ -604,48 +633,48 @@ impl<'a> ICompoundProperty<'a> {
 
     /// Get the property header.
     pub fn getHeader(&self) -> &PropertyHeader {
-        self.reader.header()
+        self.reader.getHeader()
     }
 
     /// Get the number of sub-properties.
     pub fn getNumProperties(&self) -> usize {
-        self.reader.num_properties()
+        self.reader.getNumProperties()
     }
 
     /// Check if a property exists.
-    pub fn has_property(&self, name: &str) -> bool {
-        self.reader.has_property(name)
+    pub fn hasProperty(&self, name: &str) -> bool {
+        self.reader.hasProperty(name)
     }
     
     /// Get property header by index.
-    pub fn property_header(&self, index: usize) -> Option<PropertyHeader> {
-        self.reader.property(index).map(|p| p.header().clone())
+    pub fn getPropertyHeader(&self, index: usize) -> Option<PropertyHeader> {
+        self.reader.getProperty(index).map(|p| p.getHeader().clone())
     }
     
     /// Get property header by name.
-    pub fn property_header_by_name(&self, name: &str) -> Option<PropertyHeader> {
-        self.reader.property_by_name(name).map(|p| p.header().clone())
+    pub fn getPropertyHeaderByName(&self, name: &str) -> Option<PropertyHeader> {
+        self.reader.getPropertyByName(name).map(|p| p.getHeader().clone())
     }
 
     /// Get property names.
-    pub fn property_names(&self) -> Vec<String> {
-        self.reader.property_names()
+    pub fn getPropertyNames(&self) -> Vec<String> {
+        self.reader.getPropertyNames()
     }
     
     /// Get a property by index.
-    pub fn property(&self, index: usize) -> Option<IProperty<'_>> {
-        self.reader.property(index).map(IProperty::new)
+    pub fn getProperty(&self, index: usize) -> Option<IProperty<'_>> {
+        self.reader.getProperty(index).map(IProperty::new)
     }
     
     /// Get a property by name.
-    pub fn property_by_name(&self, name: &str) -> Option<IProperty<'_>> {
-        self.reader.property_by_name(name).map(IProperty::new)
+    pub fn getPropertyByName(&self, name: &str) -> Option<IProperty<'_>> {
+        self.reader.getPropertyByName(name).map(IProperty::new)
     }
     
     /// Check if a scalar property exists by name.
     pub fn has_scalar_property(&self, name: &str) -> bool {
-        if let Some(prop) = self.property_by_name(name) {
-            prop.is_scalar()
+        if let Some(prop) = self.getPropertyByName(name) {
+            prop.isScalar()
         } else {
             false
         }
@@ -653,8 +682,8 @@ impl<'a> ICompoundProperty<'a> {
     
     /// Check if an array property exists by name.
     pub fn has_array_property(&self, name: &str) -> bool {
-        if let Some(prop) = self.property_by_name(name) {
-            prop.is_array()
+        if let Some(prop) = self.getPropertyByName(name) {
+            prop.isArray()
         } else {
             false
         }
@@ -667,10 +696,6 @@ impl<'a> ICompoundProperty<'a> {
     }
 }
 
-/// Output compound property.
-pub struct OCompoundProperty<'a> {
-    _phantom: std::marker::PhantomData<&'a ()>,
-}
 
 /// Generic input property - wraps scalar, array, or compound.
 pub struct IProperty<'a> {
@@ -684,42 +709,42 @@ impl<'a> IProperty<'a> {
     
     /// Get the property header.
     pub fn getHeader(&self) -> &PropertyHeader {
-        self.reader.header()
+        self.reader.getHeader()
     }
     
     /// Get the property name.
     pub fn getName(&self) -> &str {
-        self.reader.name()
+        self.reader.getName()
     }
     
     /// Check if this is a scalar property.
-    pub fn is_scalar(&self) -> bool {
-        self.reader.is_scalar()
+    pub fn isScalar(&self) -> bool {
+        self.reader.isScalar()
     }
     
     /// Check if this is an array property.
-    pub fn is_array(&self) -> bool {
-        self.reader.is_array()
+    pub fn isArray(&self) -> bool {
+        self.reader.isArray()
     }
     
     /// Check if this is a compound property.
-    pub fn is_compound(&self) -> bool {
-        self.reader.is_compound()
+    pub fn isCompound(&self) -> bool {
+        self.reader.isCompound()
     }
     
     /// Get as compound property reader.
-    pub fn as_compound(&self) -> Option<ICompoundProperty<'_>> {
-        self.reader.as_compound().map(ICompoundProperty::new)
+    pub fn asCompound(&self) -> Option<ICompoundProperty<'_>> {
+        self.reader.asCompound().map(ICompoundProperty::new)
     }
     
     /// Get as scalar property reader.
-    pub fn as_scalar(&self) -> Option<&dyn ScalarPropertyReader> {
-        self.reader.as_scalar()
+    pub fn asScalar(&self) -> Option<&dyn ScalarPropertyReader> {
+        self.reader.asScalar()
     }
     
     /// Get as array property reader.
-    pub fn as_array(&self) -> Option<&dyn ArrayPropertyReader> {
-        self.reader.as_array()
+    pub fn asArray(&self) -> Option<&dyn ArrayPropertyReader> {
+        self.reader.asArray()
     }
     
     /// Check if this property is valid.
@@ -731,7 +756,7 @@ impl<'a> IProperty<'a> {
     /// Get the time sampling index for this property.
     /// Use this with IArchive::time_sampling() to get the actual TimeSampling.
     pub fn time_sampling_index(&self) -> u32 {
-        self.reader.header().time_sampling_index
+        self.reader.getHeader().time_sampling_index
     }
 }
 
@@ -743,17 +768,17 @@ pub struct IScalarProperty<'a> {
 impl<'a> IScalarProperty<'a> {
     /// Get the property header.
     pub fn getHeader(&self) -> &PropertyHeader {
-        self.reader.header()
+        self.reader.getHeader()
     }
 
     /// Get the number of samples.
     pub fn getNumSamples(&self) -> usize {
-        self.reader.num_samples()
+        self.reader.getNumSamples()
     }
 
     /// Check if this property is constant.
     pub fn is_constant(&self) -> bool {
-        self.reader.is_constant()
+        self.reader.isConstant()
     }
 
     /// Read a sample into the provided buffer.
@@ -766,7 +791,7 @@ impl<'a> IScalarProperty<'a> {
             SampleSelector::Index(i) => i.min(self.getNumSamples().saturating_sub(1)),
             _ => 0, // Use read_sample_with_ts() for time-based selection
         };
-        self.reader.read_sample(index, out)
+        self.reader.getSample(index, out)
     }
     
     /// Read a sample with proper time-based selection.
@@ -774,12 +799,12 @@ impl<'a> IScalarProperty<'a> {
     /// Pass the TimeSampling from `archive.time_sampling(prop.time_sampling_index())`.
     pub fn read_sample_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling, out: &mut [u8]) -> Result<()> {
         let index = sel.into().get_index(ts, self.getNumSamples());
-        self.reader.read_sample(index, out)
+        self.reader.getSample(index, out)
     }
     
     /// Get the time sampling index.
     pub fn time_sampling_index(&self) -> u32 {
-        self.reader.header().time_sampling_index
+        self.reader.getHeader().time_sampling_index
     }
     
     /// Check if this property is valid.
@@ -789,10 +814,6 @@ impl<'a> IScalarProperty<'a> {
     }
 }
 
-/// Output scalar property.
-pub struct OScalarProperty<'a> {
-    _phantom: std::marker::PhantomData<&'a ()>,
-}
 
 // ============================================================================
 // Typed Scalar Property
@@ -818,7 +839,7 @@ impl<'a, T: bytemuck::Pod + Default> ITypedScalarProperty<'a, T> {
     /// Returns None if the data type size doesn't match T.
     pub fn new(reader: &'a dyn ScalarPropertyReader) -> Option<Self> {
         let expected_size = std::mem::size_of::<T>();
-        let actual_size = reader.header().data_type.num_bytes();
+        let actual_size = reader.getHeader().data_type.num_bytes();
         if expected_size == actual_size {
             Some(Self { reader, _phantom: std::marker::PhantomData })
         } else {
@@ -833,24 +854,24 @@ impl<'a, T: bytemuck::Pod + Default> ITypedScalarProperty<'a, T> {
     
     /// Get the property header.
     pub fn getHeader(&self) -> &PropertyHeader {
-        self.reader.header()
+        self.reader.getHeader()
     }
     
     /// Get the number of samples.
     pub fn getNumSamples(&self) -> usize {
-        self.reader.num_samples()
+        self.reader.getNumSamples()
     }
     
     /// Check if this property is constant.
     pub fn is_constant(&self) -> bool {
-        self.reader.is_constant()
+        self.reader.isConstant()
     }
     
     /// Get a typed value at the given sample index.
     pub fn get_value(&self, index: usize) -> Result<T> {
         let mut value = T::default();
         let bytes = bytemuck::bytes_of_mut(&mut value);
-        self.reader.read_sample(index, bytes)?;
+        self.reader.getSample(index, bytes)?;
         Ok(value)
     }
     
@@ -872,7 +893,7 @@ impl<'a, T: bytemuck::Pod + Default> ITypedScalarProperty<'a, T> {
     
     /// Get the time sampling index.
     pub fn time_sampling_index(&self) -> u32 {
-        self.reader.header().time_sampling_index
+        self.reader.getHeader().time_sampling_index
     }
     
     /// Check if valid.
@@ -934,17 +955,17 @@ pub struct IArrayProperty<'a> {
 impl<'a> IArrayProperty<'a> {
     /// Get the property header.
     pub fn getHeader(&self) -> &PropertyHeader {
-        self.reader.header()
+        self.reader.getHeader()
     }
 
     /// Get the number of samples.
     pub fn getNumSamples(&self) -> usize {
-        self.reader.num_samples()
+        self.reader.getNumSamples()
     }
 
     /// Check if this property is constant.
     pub fn is_constant(&self) -> bool {
-        self.reader.is_constant()
+        self.reader.isConstant()
     }
 
     /// Get the number of elements in a sample.
@@ -956,13 +977,13 @@ impl<'a> IArrayProperty<'a> {
             SampleSelector::Index(i) => i.min(self.getNumSamples().saturating_sub(1)),
             _ => 0,
         };
-        self.reader.sample_len(index)
+        self.reader.getSampleLen(index)
     }
     
     /// Get the number of elements in a sample with time-based selection.
     pub fn sample_len_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<usize> {
         let index = sel.into().get_index(ts, self.getNumSamples());
-        self.reader.sample_len(index)
+        self.reader.getSampleLen(index)
     }
 
     /// Read a sample as bytes.
@@ -974,7 +995,7 @@ impl<'a> IArrayProperty<'a> {
             SampleSelector::Index(i) => i.min(self.getNumSamples().saturating_sub(1)),
             _ => 0,
         };
-        self.reader.read_sample_vec(index)
+        self.reader.getSampleVec(index)
     }
     
     /// Read a sample as bytes with time-based selection.
@@ -982,12 +1003,12 @@ impl<'a> IArrayProperty<'a> {
     /// Pass the TimeSampling from `archive.time_sampling(prop.time_sampling_index())`.
     pub fn read_sample_vec_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<Vec<u8>> {
         let index = sel.into().get_index(ts, self.getNumSamples());
-        self.reader.read_sample_vec(index)
+        self.reader.getSampleVec(index)
     }
     
     /// Get the time sampling index.
     pub fn time_sampling_index(&self) -> u32 {
-        self.reader.header().time_sampling_index
+        self.reader.getHeader().time_sampling_index
     }
     
     /// Get the key (digest) of a sample for deduplication.
@@ -1000,13 +1021,13 @@ impl<'a> IArrayProperty<'a> {
             SampleSelector::Index(i) => i.min(self.getNumSamples().saturating_sub(1)),
             _ => 0,
         };
-        self.reader.sample_key(index)
+        self.reader.getKey(index)
     }
     
     /// Get the key with time-based selection.
     pub fn get_key_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<crate::core::SampleDigest> {
         let index = sel.into().get_index(ts, self.getNumSamples());
-        self.reader.sample_key(index)
+        self.reader.getKey(index)
     }
     
     /// Get the dimensions of a sample.
@@ -1018,13 +1039,13 @@ impl<'a> IArrayProperty<'a> {
             SampleSelector::Index(i) => i.min(self.getNumSamples().saturating_sub(1)),
             _ => 0,
         };
-        self.reader.sample_dimensions(index)
+        self.reader.getDimensions(index)
     }
     
     /// Get dimensions with time-based selection.
     pub fn get_dimensions_with_ts(&self, sel: impl Into<SampleSelector>, ts: &TimeSampling) -> Result<Vec<usize>> {
         let index = sel.into().get_index(ts, self.getNumSamples());
-        self.reader.sample_dimensions(index)
+        self.reader.getDimensions(index)
     }
     
     /// Read sample and convert to a different POD type.
@@ -1047,7 +1068,7 @@ impl<'a> IArrayProperty<'a> {
             SampleSelector::Index(i) => i.min(self.getNumSamples().saturating_sub(1)),
             _ => 0,
         };
-        let data = self.reader.read_sample_vec(index)?;
+        let data = self.reader.getSampleVec(index)?;
         let src_slice: &[Src] = bytemuck::try_cast_slice(&data).map_err(|_| crate::util::Error::invalid("cast error"))?;
         Ok(src_slice.iter().map(|&v| Dst::from(v)).collect())
     }
@@ -1059,7 +1080,7 @@ impl<'a> IArrayProperty<'a> {
         Dst: From<Src> + Clone,
     {
         let index = sel.into().get_index(ts, self.getNumSamples());
-        let data = self.reader.read_sample_vec(index)?;
+        let data = self.reader.getSampleVec(index)?;
         let src_slice: &[Src] = bytemuck::try_cast_slice(&data).map_err(|_| crate::util::Error::invalid("cast error"))?;
         Ok(src_slice.iter().map(|&v| Dst::from(v)).collect())
     }
@@ -1072,7 +1093,7 @@ impl<'a> IArrayProperty<'a> {
             return true;
         }
         for i in 0..num {
-            if let Ok(len) = self.reader.sample_len(i) {
+            if let Ok(len) = self.reader.getSampleLen(i) {
                 if len != 1 {
                     return false;
                 }
@@ -1088,16 +1109,16 @@ impl<'a> IArrayProperty<'a> {
     }
     
     /// Read sample as f32 array.
-    pub fn read_f32_array(&self, index: usize) -> Result<Vec<f32>> {
-        let data = self.reader.read_sample_vec(index)?;
+    pub fn readF32Array(&self, index: usize) -> Result<Vec<f32>> {
+        let data = self.reader.getSampleVec(index)?;
         let slice: &[f32] = bytemuck::try_cast_slice(&data)
             .map_err(|_| crate::util::Error::invalid("cannot cast to f32"))?;
         Ok(slice.to_vec())
     }
     
     /// Read sample as i32 array.
-    pub fn read_i32_array(&self, index: usize) -> Result<Vec<i32>> {
-        let data = self.reader.read_sample_vec(index)?;
+    pub fn readI32Array(&self, index: usize) -> Result<Vec<i32>> {
+        let data = self.reader.getSampleVec(index)?;
         let slice: &[i32] = bytemuck::try_cast_slice(&data)
             .map_err(|_| crate::util::Error::invalid("cannot cast to i32"))?;
         Ok(slice.to_vec())
@@ -1106,8 +1127,8 @@ impl<'a> IArrayProperty<'a> {
     /// Read sample as string array.
     /// 
     /// Alembic stores string arrays as null-terminated strings concatenated together.
-    pub fn read_string_array(&self, index: usize) -> Result<Vec<String>> {
-        let data = self.reader.read_sample_vec(index)?;
+    pub fn readStringArray(&self, index: usize) -> Result<Vec<String>> {
+        let data = self.reader.getSampleVec(index)?;
         let mut strings = Vec::new();
         let mut start = 0;
         
@@ -1133,10 +1154,6 @@ impl<'a> IArrayProperty<'a> {
     }
 }
 
-/// Output array property.
-pub struct OArrayProperty<'a> {
-    _phantom: std::marker::PhantomData<&'a ()>,
-}
 
 #[cfg(test)]
 mod tests {

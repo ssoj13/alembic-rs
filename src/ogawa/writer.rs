@@ -202,6 +202,11 @@ impl OArchive {
         &self.name
     }
     
+    /// Get the archive name/path (Alembic API name).
+    pub fn getName(&self) -> &str {
+        &self.name
+    }
+    
     /// Set the application writer string.
     pub fn set_application_writer(&mut self, writer: &str) {
         self.application_writer = writer.to_string();
@@ -248,7 +253,7 @@ impl OArchive {
     }
     
     /// Add a time sampling and return its index.
-    pub fn add_time_sampling(&mut self, ts: TimeSampling) -> u32 {
+    pub fn addTimeSampling(&mut self, ts: TimeSampling) -> u32 {
         // Check if this time sampling already exists
         for (i, existing) in self.time_samplings.iter().enumerate() {
             if existing.is_equivalent(&ts) {
@@ -270,12 +275,12 @@ impl OArchive {
     }
     
     /// Get the number of time samplings.
-    pub fn num_time_samplings(&self) -> usize {
+    pub fn getNumTimeSamplings(&self) -> usize {
         self.time_samplings.len()
     }
     
     /// Get a time sampling by index.
-    pub fn time_sampling(&self, index: usize) -> Option<&TimeSampling> {
+    pub fn getTimeSampling(&self, index: usize) -> Option<&TimeSampling> {
         self.time_samplings.get(index)
     }
     
@@ -877,7 +882,7 @@ impl OArchive {
             
             // For non-compound: next_sample_index, first/last changed, time_sampling_index
             if !matches!(prop.data, OPropertyData::Compound(_)) {
-                let num_samples = prop.num_samples() as u32;
+                let num_samples = prop.getNumSamples() as u32;
                 write_with_hint(&mut buf, num_samples, size_hint);
                 
                 // first/last changed (if flag set)
@@ -917,7 +922,7 @@ impl OArchive {
         let name_size = prop.name.len() as u32;
         let meta_data = prop.meta_data.serialize();
         let meta_data_size = meta_data.len() as u32;
-        let num_samples = prop.num_samples() as u32;
+        let num_samples = prop.getNumSamples() as u32;
         let time_sampling_index = prop.time_sampling_index;
 
         let max_size = meta_data_size.max(name_size).max(num_samples).max(time_sampling_index);
@@ -963,7 +968,7 @@ impl OArchive {
             }
 
             // Whether first/last index exists (bit 9)
-            let num_samples = prop.num_samples() as u32;
+            let num_samples = prop.getNumSamples() as u32;
             if prop.first_changed_index == 0 && prop.last_changed_index == 0 {
                 // All samples same flag (bit 11)
                 info |= 0x800;
@@ -1302,8 +1307,40 @@ impl OProperty {
         }
     }
     
+    /// Get or create an array child property by name.
+    /// 
+    /// If a property with the given name exists, returns it.
+    /// Otherwise creates a new array property and returns it.
+    pub fn get_or_create_array_child(&mut self, name: &str, dt: DataType) -> &mut OProperty {
+        if let OPropertyData::Compound(children) = &mut self.data {
+            if let Some(idx) = children.iter().position(|p| p.name == name) {
+                return &mut children[idx];
+            }
+            children.push(OProperty::array(name, dt));
+            children.last_mut().unwrap()
+        } else {
+            panic!("get_or_create_array_child called on non-compound property")
+        }
+    }
+    
+    /// Get or create a scalar child property by name.
+    /// 
+    /// If a property with the given name exists, returns it.
+    /// Otherwise creates a new scalar property and returns it.
+    pub fn get_or_create_scalar_child(&mut self, name: &str, dt: DataType) -> &mut OProperty {
+        if let OPropertyData::Compound(children) = &mut self.data {
+            if let Some(idx) = children.iter().position(|p| p.name == name) {
+                return &mut children[idx];
+            }
+            children.push(OProperty::scalar(name, dt));
+            children.last_mut().unwrap()
+        } else {
+            panic!("get_or_create_scalar_child called on non-compound property")
+        }
+    }
+    
     /// Get number of samples.
-    pub fn num_samples(&self) -> usize {
+    pub fn getNumSamples(&self) -> usize {
         match &self.data {
             OPropertyData::Scalar(s) => s.len(),
             OPropertyData::Array(s) => s.len(),
@@ -1313,7 +1350,7 @@ impl OProperty {
     
     /// Update changed indices based on samples.
     fn update_changed_indices(&mut self) {
-        let n = self.num_samples() as u32;
+        let n = self.getNumSamples() as u32;
         if n > 0 {
             self.first_changed_index = 1.min(n);
             self.last_changed_index = n.saturating_sub(1);
@@ -1387,30 +1424,30 @@ impl OPolyMesh {
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &OPolyMeshSample) {
         // Positions (P)
-        let positions_prop = self.get_or_create_array(".geom", "P", 
+        let positions_prop = self.get_or_create_array_with_ts("P", 
             DataType::new(PlainOldDataType::Float32, 3));
         positions_prop.add_array_pod(&sample.positions);
         
         // Face counts (.faceCounts)
-        let face_counts_prop = self.get_or_create_array(".geom", ".faceCounts",
+        let face_counts_prop = self.get_or_create_array_with_ts(".faceCounts",
             DataType::new(PlainOldDataType::Int32, 1));
         face_counts_prop.add_array_pod(&sample.face_counts);
         
         // Face indices (.faceIndices)
-        let face_indices_prop = self.get_or_create_array(".geom", ".faceIndices",
+        let face_indices_prop = self.get_or_create_array_with_ts(".faceIndices",
             DataType::new(PlainOldDataType::Int32, 1));
         face_indices_prop.add_array_pod(&sample.face_indices);
         
         // Velocities (optional)
         if let Some(ref vels) = sample.velocities {
-            let vel_prop = self.get_or_create_array(".geom", ".velocities",
+            let vel_prop = self.get_or_create_array_with_ts(".velocities",
                 DataType::new(PlainOldDataType::Float32, 3));
             vel_prop.add_array_pod(vels);
         }
         
         // Normals (optional)
         if let Some(ref normals) = sample.normals {
-            let normal_prop = self.get_or_create_array(".geom", "N",
+            let normal_prop = self.get_or_create_array_with_ts("N",
                 DataType::new(PlainOldDataType::Float32, 3));
             normal_prop.add_array_pod(normals);
         }
@@ -1426,8 +1463,8 @@ impl OPolyMesh {
         }
     }
     
-    /// Get or create array property in compound.
-    fn get_or_create_array(&mut self, _compound_name: &str, prop_name: &str, data_type: DataType) -> &mut OProperty {
+    /// Get or create array property with time sampling index set.
+    fn get_or_create_array_with_ts(&mut self, prop_name: &str, data_type: DataType) -> &mut OProperty {
         let ts_idx = self.time_sampling_index;
         if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
             // Find existing
@@ -1663,15 +1700,15 @@ impl OCurves {
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &OCurvesSample) {
         // Positions (P)
-        let p_prop = self.get_or_create_array("P", DataType::new(PlainOldDataType::Float32, 3));
+        let p_prop = self.geom_compound.get_or_create_array_child("P", DataType::new(PlainOldDataType::Float32, 3));
         p_prop.add_array_pod(&sample.positions);
         
         // nVertices
-        let nv_prop = self.get_or_create_array("nVertices", DataType::new(PlainOldDataType::Int32, 1));
+        let nv_prop = self.geom_compound.get_or_create_array_child("nVertices", DataType::new(PlainOldDataType::Int32, 1));
         nv_prop.add_array_pod(&sample.num_vertices);
         
         // curveBasisAndType (combined scalar)
-        let cbt_prop = self.get_or_create_scalar("curveBasisAndType", DataType::new(PlainOldDataType::Uint8, 4));
+        let cbt_prop = self.geom_compound.get_or_create_scalar_child("curveBasisAndType", DataType::new(PlainOldDataType::Uint8, 4));
         let cbt_data = [
             sample.curve_type as u8,
             sample.wrap as u8,
@@ -1682,62 +1719,38 @@ impl OCurves {
         
         // Velocities (optional)
         if let Some(ref vels) = sample.velocities {
-            let v_prop = self.get_or_create_array(".velocities", DataType::new(PlainOldDataType::Float32, 3));
+            let v_prop = self.geom_compound.get_or_create_array_child(".velocities", DataType::new(PlainOldDataType::Float32, 3));
             v_prop.add_array_pod(vels);
         }
         
         // Widths (optional)
         if let Some(ref widths) = sample.widths {
-            let w_prop = self.get_or_create_array("width", DataType::new(PlainOldDataType::Float32, 1));
+            let w_prop = self.geom_compound.get_or_create_array_child("width", DataType::new(PlainOldDataType::Float32, 1));
             w_prop.add_array_pod(widths);
         }
         
         // Normals (optional)
         if let Some(ref normals) = sample.normals {
-            let n_prop = self.get_or_create_array("N", DataType::new(PlainOldDataType::Float32, 3));
+            let n_prop = self.geom_compound.get_or_create_array_child("N", DataType::new(PlainOldDataType::Float32, 3));
             n_prop.add_array_pod(normals);
         }
         
         // UVs (optional)
         if let Some(ref uvs) = sample.uvs {
-            let uv_prop = self.get_or_create_array("uv", DataType::new(PlainOldDataType::Float32, 2));
+            let uv_prop = self.geom_compound.get_or_create_array_child("uv", DataType::new(PlainOldDataType::Float32, 2));
             uv_prop.add_array_pod(uvs);
         }
         
         // Knots (optional, for NURBS)
         if let Some(ref knots) = sample.knots {
-            let k_prop = self.get_or_create_array("knots", DataType::new(PlainOldDataType::Float32, 1));
+            let k_prop = self.geom_compound.get_or_create_array_child("knots", DataType::new(PlainOldDataType::Float32, 1));
             k_prop.add_array_pod(knots);
         }
         
         // Orders (optional, for NURBS)
         if let Some(ref orders) = sample.orders {
-            let o_prop = self.get_or_create_array("orders", DataType::new(PlainOldDataType::Int32, 1));
+            let o_prop = self.geom_compound.get_or_create_array_child("orders", DataType::new(PlainOldDataType::Int32, 1));
             o_prop.add_array_pod(orders);
-        }
-    }
-    
-    fn get_or_create_array(&mut self, name: &str, dt: DataType) -> &mut OProperty {
-        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
-            if let Some(idx) = children.iter().position(|p| p.name == name) {
-                return &mut children[idx];
-            }
-            children.push(OProperty::array(name, dt));
-            children.last_mut().unwrap()
-        } else {
-            unreachable!()
-        }
-    }
-    
-    fn get_or_create_scalar(&mut self, name: &str, dt: DataType) -> &mut OProperty {
-        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
-            if let Some(idx) = children.iter().position(|p| p.name == name) {
-                return &mut children[idx];
-            }
-            children.push(OProperty::scalar(name, dt));
-            children.last_mut().unwrap()
-        } else {
-            unreachable!()
         }
     }
     
@@ -1800,35 +1813,23 @@ impl OPoints {
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &OPointsSample) {
         // Positions (P)
-        let p_prop = self.get_or_create_array("P", DataType::new(PlainOldDataType::Float32, 3));
+        let p_prop = self.geom_compound.get_or_create_array_child("P", DataType::new(PlainOldDataType::Float32, 3));
         p_prop.add_array_pod(&sample.positions);
         
         // IDs (id)
-        let id_prop = self.get_or_create_array("id", DataType::new(PlainOldDataType::Uint64, 1));
+        let id_prop = self.geom_compound.get_or_create_array_child("id", DataType::new(PlainOldDataType::Uint64, 1));
         id_prop.add_array_pod(&sample.ids);
         
         // Velocities (optional)
         if let Some(ref vels) = sample.velocities {
-            let v_prop = self.get_or_create_array(".velocities", DataType::new(PlainOldDataType::Float32, 3));
+            let v_prop = self.geom_compound.get_or_create_array_child(".velocities", DataType::new(PlainOldDataType::Float32, 3));
             v_prop.add_array_pod(vels);
         }
         
         // Widths (optional)
         if let Some(ref widths) = sample.widths {
-            let w_prop = self.get_or_create_array("width", DataType::new(PlainOldDataType::Float32, 1));
+            let w_prop = self.geom_compound.get_or_create_array_child("width", DataType::new(PlainOldDataType::Float32, 1));
             w_prop.add_array_pod(widths);
-        }
-    }
-    
-    fn get_or_create_array(&mut self, name: &str, dt: DataType) -> &mut OProperty {
-        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
-            if let Some(idx) = children.iter().position(|p| p.name == name) {
-                return &mut children[idx];
-            }
-            children.push(OProperty::array(name, dt));
-            children.last_mut().unwrap()
-        } else {
-            unreachable!()
         }
     }
     
@@ -1915,89 +1916,65 @@ impl OSubD {
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &OSubDSample) {
         // Positions (P)
-        let p_prop = self.get_or_create_array("P", DataType::new(PlainOldDataType::Float32, 3));
+        let p_prop = self.geom_compound.get_or_create_array_child("P", DataType::new(PlainOldDataType::Float32, 3));
         p_prop.add_array_pod(&sample.positions);
         
         // Face counts
-        let fc_prop = self.get_or_create_array(".faceCounts", DataType::new(PlainOldDataType::Int32, 1));
+        let fc_prop = self.geom_compound.get_or_create_array_child(".faceCounts", DataType::new(PlainOldDataType::Int32, 1));
         fc_prop.add_array_pod(&sample.face_counts);
         
         // Face indices
-        let fi_prop = self.get_or_create_array(".faceIndices", DataType::new(PlainOldDataType::Int32, 1));
+        let fi_prop = self.geom_compound.get_or_create_array_child(".faceIndices", DataType::new(PlainOldDataType::Int32, 1));
         fi_prop.add_array_pod(&sample.face_indices);
         
         // Scheme
-        let scheme_prop = self.get_or_create_scalar(".scheme", DataType::new(PlainOldDataType::String, 1));
+        let scheme_prop = self.geom_compound.get_or_create_scalar_child(".scheme", DataType::new(PlainOldDataType::String, 1));
         scheme_prop.add_scalar_sample(sample.subdivision_scheme.as_bytes());
         
         // Velocities (optional)
         if let Some(ref vels) = sample.velocities {
-            let v_prop = self.get_or_create_array(".velocities", DataType::new(PlainOldDataType::Float32, 3));
+            let v_prop = self.geom_compound.get_or_create_array_child(".velocities", DataType::new(PlainOldDataType::Float32, 3));
             v_prop.add_array_pod(vels);
         }
         
         // Creases (optional)
         if let Some(ref indices) = sample.crease_indices {
-            let prop = self.get_or_create_array(".creaseIndices", DataType::new(PlainOldDataType::Int32, 1));
+            let prop = self.geom_compound.get_or_create_array_child(".creaseIndices", DataType::new(PlainOldDataType::Int32, 1));
             prop.add_array_pod(indices);
         }
         if let Some(ref lengths) = sample.crease_lengths {
-            let prop = self.get_or_create_array(".creaseLengths", DataType::new(PlainOldDataType::Int32, 1));
+            let prop = self.geom_compound.get_or_create_array_child(".creaseLengths", DataType::new(PlainOldDataType::Int32, 1));
             prop.add_array_pod(lengths);
         }
         if let Some(ref sharpnesses) = sample.crease_sharpnesses {
-            let prop = self.get_or_create_array(".creaseSharpnesses", DataType::new(PlainOldDataType::Float32, 1));
+            let prop = self.geom_compound.get_or_create_array_child(".creaseSharpnesses", DataType::new(PlainOldDataType::Float32, 1));
             prop.add_array_pod(sharpnesses);
         }
         
         // Corners (optional)
         if let Some(ref indices) = sample.corner_indices {
-            let prop = self.get_or_create_array(".cornerIndices", DataType::new(PlainOldDataType::Int32, 1));
+            let prop = self.geom_compound.get_or_create_array_child(".cornerIndices", DataType::new(PlainOldDataType::Int32, 1));
             prop.add_array_pod(indices);
         }
         if let Some(ref sharpnesses) = sample.corner_sharpnesses {
-            let prop = self.get_or_create_array(".cornerSharpnesses", DataType::new(PlainOldDataType::Float32, 1));
+            let prop = self.geom_compound.get_or_create_array_child(".cornerSharpnesses", DataType::new(PlainOldDataType::Float32, 1));
             prop.add_array_pod(sharpnesses);
         }
         
         // Holes (optional)
         if let Some(ref holes) = sample.holes {
-            let prop = self.get_or_create_array(".holes", DataType::new(PlainOldDataType::Int32, 1));
+            let prop = self.geom_compound.get_or_create_array_child(".holes", DataType::new(PlainOldDataType::Int32, 1));
             prop.add_array_pod(holes);
         }
         
         // UVs (optional)
         if let Some(ref uvs) = sample.uvs {
-            let prop = self.get_or_create_array("uv", DataType::new(PlainOldDataType::Float32, 2));
+            let prop = self.geom_compound.get_or_create_array_child("uv", DataType::new(PlainOldDataType::Float32, 2));
             prop.add_array_pod(uvs);
         }
         if let Some(ref uvi) = sample.uv_indices {
-            let prop = self.get_or_create_array(".uvIndices", DataType::new(PlainOldDataType::Int32, 1));
+            let prop = self.geom_compound.get_or_create_array_child(".uvIndices", DataType::new(PlainOldDataType::Int32, 1));
             prop.add_array_pod(uvi);
-        }
-    }
-    
-    fn get_or_create_array(&mut self, name: &str, dt: DataType) -> &mut OProperty {
-        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
-            if let Some(idx) = children.iter().position(|p| p.name == name) {
-                return &mut children[idx];
-            }
-            children.push(OProperty::array(name, dt));
-            children.last_mut().unwrap()
-        } else {
-            unreachable!()
-        }
-    }
-    
-    fn get_or_create_scalar(&mut self, name: &str, dt: DataType) -> &mut OProperty {
-        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
-            if let Some(idx) = children.iter().position(|p| p.name == name) {
-                return &mut children[idx];
-            }
-            children.push(OProperty::scalar(name, dt));
-            children.last_mut().unwrap()
-        } else {
-            unreachable!()
         }
     }
     
@@ -2151,76 +2128,52 @@ impl ONuPatch {
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &ONuPatchSample) {
         // Positions (P)
-        let p_prop = self.get_or_create_array("P", DataType::new(PlainOldDataType::Float32, 3));
+        let p_prop = self.geom_compound.get_or_create_array_child("P", DataType::new(PlainOldDataType::Float32, 3));
         p_prop.add_array_pod(&sample.positions);
         
         // numU, numV
-        let nu_prop = self.get_or_create_scalar("nu", DataType::new(PlainOldDataType::Int32, 1));
+        let nu_prop = self.geom_compound.get_or_create_scalar_child("nu", DataType::new(PlainOldDataType::Int32, 1));
         nu_prop.add_scalar_pod(&sample.num_u);
         
-        let nv_prop = self.get_or_create_scalar("nv", DataType::new(PlainOldDataType::Int32, 1));
+        let nv_prop = self.geom_compound.get_or_create_scalar_child("nv", DataType::new(PlainOldDataType::Int32, 1));
         nv_prop.add_scalar_pod(&sample.num_v);
         
         // Orders
-        let uo_prop = self.get_or_create_scalar("uOrder", DataType::new(PlainOldDataType::Int32, 1));
+        let uo_prop = self.geom_compound.get_or_create_scalar_child("uOrder", DataType::new(PlainOldDataType::Int32, 1));
         uo_prop.add_scalar_pod(&sample.u_order);
         
-        let vo_prop = self.get_or_create_scalar("vOrder", DataType::new(PlainOldDataType::Int32, 1));
+        let vo_prop = self.geom_compound.get_or_create_scalar_child("vOrder", DataType::new(PlainOldDataType::Int32, 1));
         vo_prop.add_scalar_pod(&sample.v_order);
         
         // Knots
-        let uk_prop = self.get_or_create_array("uKnot", DataType::new(PlainOldDataType::Float32, 1));
+        let uk_prop = self.geom_compound.get_or_create_array_child("uKnot", DataType::new(PlainOldDataType::Float32, 1));
         uk_prop.add_array_pod(&sample.u_knot);
         
-        let vk_prop = self.get_or_create_array("vKnot", DataType::new(PlainOldDataType::Float32, 1));
+        let vk_prop = self.geom_compound.get_or_create_array_child("vKnot", DataType::new(PlainOldDataType::Float32, 1));
         vk_prop.add_array_pod(&sample.v_knot);
         
         // Position weights (optional)
         if let Some(ref weights) = sample.position_weights {
-            let prop = self.get_or_create_array("w", DataType::new(PlainOldDataType::Float32, 1));
+            let prop = self.geom_compound.get_or_create_array_child("w", DataType::new(PlainOldDataType::Float32, 1));
             prop.add_array_pod(weights);
         }
         
         // Velocities (optional)
         if let Some(ref vels) = sample.velocities {
-            let prop = self.get_or_create_array(".velocities", DataType::new(PlainOldDataType::Float32, 3));
+            let prop = self.geom_compound.get_or_create_array_child(".velocities", DataType::new(PlainOldDataType::Float32, 3));
             prop.add_array_pod(vels);
         }
         
         // UVs (optional)
         if let Some(ref uvs) = sample.uvs {
-            let prop = self.get_or_create_array("uv", DataType::new(PlainOldDataType::Float32, 2));
+            let prop = self.geom_compound.get_or_create_array_child("uv", DataType::new(PlainOldDataType::Float32, 2));
             prop.add_array_pod(uvs);
         }
         
         // Normals (optional)
         if let Some(ref normals) = sample.normals {
-            let prop = self.get_or_create_array("N", DataType::new(PlainOldDataType::Float32, 3));
+            let prop = self.geom_compound.get_or_create_array_child("N", DataType::new(PlainOldDataType::Float32, 3));
             prop.add_array_pod(normals);
-        }
-    }
-    
-    fn get_or_create_array(&mut self, name: &str, dt: DataType) -> &mut OProperty {
-        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
-            if let Some(idx) = children.iter().position(|p| p.name == name) {
-                return &mut children[idx];
-            }
-            children.push(OProperty::array(name, dt));
-            children.last_mut().unwrap()
-        } else {
-            unreachable!()
-        }
-    }
-    
-    fn get_or_create_scalar(&mut self, name: &str, dt: DataType) -> &mut OProperty {
-        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
-            if let Some(idx) = children.iter().position(|p| p.name == name) {
-                return &mut children[idx];
-            }
-            children.push(OProperty::scalar(name, dt));
-            children.last_mut().unwrap()
-        } else {
-            unreachable!()
         }
     }
     
@@ -2354,20 +2307,8 @@ impl OFaceSet {
     
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &OFaceSetSample) {
-        let faces_prop = self.get_or_create_array(".faces", DataType::new(PlainOldDataType::Int32, 1));
+        let faces_prop = self.geom_compound.get_or_create_array_child(".faces", DataType::new(PlainOldDataType::Int32, 1));
         faces_prop.add_array_pod(&sample.faces);
-    }
-    
-    fn get_or_create_array(&mut self, name: &str, dt: DataType) -> &mut OProperty {
-        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
-            if let Some(idx) = children.iter().position(|p| p.name == name) {
-                return &mut children[idx];
-            }
-            children.push(OProperty::array(name, dt));
-            children.last_mut().unwrap()
-        } else {
-            unreachable!()
-        }
     }
     
     /// Build the object.

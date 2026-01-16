@@ -10,7 +10,6 @@
 //! - [`IFaceSet`] / [`OFaceSet`] - Face groupings
 //! - [`INuPatch`] / [`ONuPatch`] - NURBS patches
 
-use std::marker::PhantomData;
 
 // ============================================================================
 // Safe casting helpers
@@ -98,73 +97,27 @@ pub use nupatch::{INuPatch, NuPatchSample, TrimCurveData, TrimCurve, NUPATCH_SCH
 pub use light::{ILight, LightSample, LIGHT_SCHEMA};
 
 // ============================================================================
-// PolyMesh
+// Output Schema Writers (re-exported from ogawa::writer)
 // ============================================================================
 
-/// Output polygon mesh schema.
-pub struct OPolyMesh {
-    _phantom: PhantomData<()>,
-}
-
-// ============================================================================
-// Xform
-// ============================================================================
-
-/// Output transform schema.
-pub struct OXform {
-    _phantom: PhantomData<()>,
-}
-
-// ============================================================================
-// Curves
-// ============================================================================
-
-/// Output curves schema.
-pub struct OCurves {
-    _phantom: PhantomData<()>,
-}
-
-// ============================================================================
-// Points
-// ============================================================================
-
-/// Output points schema.
-pub struct OPoints {
-    _phantom: PhantomData<()>,
-}
-
-// ============================================================================
-// SubD (Subdivision Surface)
-// ============================================================================
-
-/// Output subdivision surface schema.
-pub struct OSubD {
-    _phantom: PhantomData<()>,
-}
-
-// ============================================================================
-// Camera
-// ============================================================================
-
-/// Output camera schema.
-pub struct OCamera {
-    _phantom: PhantomData<()>,
-}
-
-// ============================================================================
-// FaceSet
-// ============================================================================
-
-/// Output face set schema.
-pub struct OFaceSet {
-    _phantom: PhantomData<()>,
-}
-
-// ============================================================================
-// NuPatch (NURBS)
-// ============================================================================
-
-/// Output NURBS patch schema.
-pub struct ONuPatch {
-    _phantom: PhantomData<()>,
-}
+// These are the real implementations - not stubs!
+pub use crate::ogawa::writer::{
+    // PolyMesh
+    OPolyMesh, OPolyMeshSample,
+    // Xform
+    OXform, OXformSample,
+    // Curves
+    OCurves, OCurvesSample,
+    // Points
+    OPoints, OPointsSample,
+    // SubD
+    OSubD, OSubDSample,
+    // Camera (uses CameraSample from geom::camera)
+    OCamera,
+    // FaceSet
+    OFaceSet, OFaceSetSample,
+    // NuPatch
+    ONuPatch, ONuPatchSample,
+    // Light (uses CameraSample from geom::camera)
+    OLight,
+};

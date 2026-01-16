@@ -54,8 +54,8 @@ pub use ogawa::{IArchive as OgawaIArchive, OArchive as OgawaOArchive};
 /// Prelude module for convenient imports
 pub mod prelude {
     pub use crate::util::{DataType, PlainOldDataType, Error, Result};
-    pub use crate::abc::{IArchive, OArchive, IObject, OObject};
-    pub use crate::ogawa::{IArchive as OgawaIArchive, OArchive as OgawaOArchive};
+    pub use crate::abc::{IArchive, OArchive, IObject};
+    pub use crate::ogawa::{IArchive as OgawaIArchive, OArchive as OgawaOArchive, OObject};
     pub use crate::core::{TimeSampling, SampleSelector};
     pub use crate::geom::*;
 }

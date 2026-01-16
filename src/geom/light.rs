@@ -77,12 +77,12 @@ impl<'a> ILight<'a> {
         let props = self.object.getProperties();
         
         // Check for camera-like properties
-        if let Some(geom_prop) = props.property_by_name(".geom") {
-            if let Some(geom) = geom_prop.as_compound() {
+        if let Some(geom_prop) = props.getPropertyByName(".geom") {
+            if let Some(geom) = geom_prop.asCompound() {
                 // Check focalLength as it's commonly animated
-                if let Some(fl_prop) = geom.property_by_name("focalLength") {
-                    if let Some(scalar) = fl_prop.as_scalar() {
-                        return scalar.num_samples();
+                if let Some(fl_prop) = geom.getPropertyByName("focalLength") {
+                    if let Some(scalar) = fl_prop.asScalar() {
+                        return scalar.getNumSamples();
                     }
                 }
             }
@@ -99,11 +99,11 @@ impl<'a> ILight<'a> {
     /// Follows original Alembic: checks childBounds first, then camera schema.
     pub fn time_sampling_index(&self) -> u32 {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
-        let Some(geom) = geom_prop.as_compound() else { return 0 };
+        let Some(geom_prop) = props.getPropertyByName(".geom") else { return 0 };
+        let Some(geom) = geom_prop.asCompound() else { return 0 };
         
         // Try child bounds first
-        if let Some(bnds_prop) = geom.property_by_name(".childBnds") {
+        if let Some(bnds_prop) = geom.getPropertyByName(".childBnds") {
             let ts = bnds_prop.getHeader().time_sampling_index;
             if ts > 0 {
                 return ts;
@@ -111,9 +111,9 @@ impl<'a> ILight<'a> {
         }
         
         // Fall back to camera schema core property
-        if let Some(cam_prop) = geom.property_by_name(".camera") {
-            if let Some(cam) = cam_prop.as_compound() {
-                if let Some(core_prop) = cam.property_by_name(".core") {
+        if let Some(cam_prop) = geom.getPropertyByName(".camera") {
+            if let Some(cam) = cam_prop.asCompound() {
+                if let Some(core_prop) = cam.getPropertyByName(".core") {
                     return core_prop.getHeader().time_sampling_index;
                 }
             }
@@ -125,15 +125,15 @@ impl<'a> ILight<'a> {
     /// Get the time sampling index for child bounds property.
     pub fn child_bounds_time_sampling_index(&self) -> u32 {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return 0 };
-        let Some(geom) = geom_prop.as_compound() else { return 0 };
-        let Some(bnds_prop) = geom.property_by_name(".childBnds") else { return 0 };
+        let Some(geom_prop) = props.getPropertyByName(".geom") else { return 0 };
+        let Some(geom) = geom_prop.asCompound() else { return 0 };
+        let Some(bnds_prop) = geom.getPropertyByName(".childBnds") else { return 0 };
         bnds_prop.getHeader().time_sampling_index
     }
     
     /// Get available property names.
     pub fn property_names(&self) -> Vec<String> {
-        self.object.getProperties().property_names()
+        self.object.getProperties().getPropertyNames()
     }
     
     /// Read a sample at the given index.
@@ -143,16 +143,16 @@ impl<'a> ILight<'a> {
         let props = self.object.getProperties();
         
         // Try to read camera-like properties from .geom
-        if let Some(geom_prop) = props.property_by_name(".geom") {
-            if let Some(geom) = geom_prop.as_compound() {
+        if let Some(geom_prop) = props.getPropertyByName(".geom") {
+            if let Some(geom) = geom_prop.asCompound() {
                 // Read camera parameters
                 sample.camera = Self::read_camera_params(&geom, index);
                 
                 // Read .childBnds if present
-                if let Some(bnds_prop) = geom.property_by_name(".childBnds") {
-                    if let Some(scalar) = bnds_prop.as_scalar() {
+                if let Some(bnds_prop) = geom.getPropertyByName(".childBnds") {
+                    if let Some(scalar) = bnds_prop.asScalar() {
                         let mut buf = [0u8; 48];
-                        if scalar.read_sample(index, &mut buf).is_ok() {
+                        if scalar.getSample(index, &mut buf).is_ok() {
                             let values: &[f64] = bytemuck::try_cast_slice(&buf).unwrap_or(&[]);
                             if values.len() >= 6 {
                                 sample.child_bounds = Some(BBox3d::new(
@@ -175,10 +175,10 @@ impl<'a> ILight<'a> {
         
         // Helper to read f64 property
         let read_f64 = |name: &str| -> Option<f64> {
-            let prop = geom.property_by_name(name)?;
-            let scalar = prop.as_scalar()?;
+            let prop = geom.getPropertyByName(name)?;
+            let scalar = prop.asScalar()?;
             let mut buf = [0u8; 8];
-            scalar.read_sample(index, &mut buf).ok()?;
+            scalar.getSample(index, &mut buf).ok()?;
             Some(f64::from_le_bytes(buf))
         };
         
@@ -214,9 +214,9 @@ impl<'a> ILight<'a> {
     /// Check if this light has child bounds.
     pub fn has_child_bounds(&self) -> bool {
         let props = self.object.getProperties();
-        if let Some(geom_prop) = props.property_by_name(".geom") {
-            if let Some(geom) = geom_prop.as_compound() {
-                return geom.has_property(".childBnds");
+        if let Some(geom_prop) = props.getPropertyByName(".geom") {
+            if let Some(geom) = geom_prop.asCompound() {
+                return geom.hasProperty(".childBnds");
             }
         }
         false
@@ -225,9 +225,9 @@ impl<'a> ILight<'a> {
     /// Check if this light has arbitrary geometry params.
     pub fn has_arb_geom_params(&self) -> bool {
         let props = self.object.getProperties();
-        if let Some(geom_prop) = props.property_by_name(".geom") {
-            if let Some(geom) = geom_prop.as_compound() {
-                return geom.has_property(".arbGeomParams");
+        if let Some(geom_prop) = props.getPropertyByName(".geom") {
+            if let Some(geom) = geom_prop.asCompound() {
+                return geom.hasProperty(".arbGeomParams");
             }
         }
         false
@@ -236,9 +236,9 @@ impl<'a> ILight<'a> {
     /// Check if this light has user properties.
     pub fn has_user_properties(&self) -> bool {
         let props = self.object.getProperties();
-        if let Some(geom_prop) = props.property_by_name(".geom") {
-            if let Some(geom) = geom_prop.as_compound() {
-                return geom.has_property(".userProperties");
+        if let Some(geom_prop) = props.getPropertyByName(".geom") {
+            if let Some(geom) = geom_prop.asCompound() {
+                return geom.hasProperty(".userProperties");
             }
         }
         false

@@ -165,9 +165,9 @@ impl<'a> IPoints<'a> {
         use crate::util::Error;
         
         let props = self.object.getProperties();
-        let geom_prop = props.property_by_name(".geom")
+        let geom_prop = props.getPropertyByName(".geom")
             .ok_or_else(|| Error::invalid("No .geom property"))?;
-        let geom = geom_prop.as_compound()
+        let geom = geom_prop.asCompound()
             .ok_or_else(|| Error::invalid(".geom is not compound"))?;
         let g = geom.as_reader();
         

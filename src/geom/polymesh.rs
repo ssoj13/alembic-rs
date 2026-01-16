@@ -170,24 +170,24 @@ impl<'a> IPolyMesh<'a> {
     /// - Heterogeneous: Topology can change between samples
     pub fn topology_variance(&self) -> TopologyVariance {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
+        let Some(geom_prop) = props.getPropertyByName(".geom") else {
             return TopologyVariance::Static;
         };
-        let Some(geom) = geom_prop.as_compound() else {
+        let Some(geom) = geom_prop.asCompound() else {
             return TopologyVariance::Static;
         };
         
         // Get sample counts for positions and topology
-        let p_samples = if let Some(p) = geom.property_by_name("P") {
-            p.as_array().map(|a| a.num_samples()).unwrap_or(1)
+        let p_samples = if let Some(p) = geom.getPropertyByName("P") {
+            p.asArray().map(|a| a.getNumSamples()).unwrap_or(1)
         } else { 1 };
         
-        let fc_samples = if let Some(fc) = geom.property_by_name(".faceCounts") {
-            fc.as_array().map(|a| a.num_samples()).unwrap_or(1)
+        let fc_samples = if let Some(fc) = geom.getPropertyByName(".faceCounts") {
+            fc.asArray().map(|a| a.getNumSamples()).unwrap_or(1)
         } else { 1 };
         
-        let fi_samples = if let Some(fi) = geom.property_by_name(".faceIndices") {
-            fi.as_array().map(|a| a.num_samples()).unwrap_or(1)
+        let fi_samples = if let Some(fi) = geom.getPropertyByName(".faceIndices") {
+            fi.asArray().map(|a| a.getNumSamples()).unwrap_or(1)
         } else { 1 };
         
         // Determine variance
@@ -206,7 +206,7 @@ impl<'a> IPolyMesh<'a> {
     
     /// Get property names available on this mesh.
     pub fn property_names(&self) -> Vec<String> {
-        self.object.getProperties().property_names()
+        self.object.getProperties().getPropertyNames()
     }
     
     /// Get the names of all FaceSets on this mesh.
@@ -246,23 +246,23 @@ impl<'a> IPolyMesh<'a> {
         let mut sample = super::faceset::FaceSetSample::new();
         
         let props = child.getProperties();
-        let geom_prop = props.property_by_name(".geom")?;
-        let geom = geom_prop.as_compound()?;
+        let geom_prop = props.getPropertyByName(".geom")?;
+        let geom = geom_prop.asCompound()?;
         
         // Read .faces
-        if let Some(faces_prop) = geom.property_by_name(".faces") {
-            if let Some(array) = faces_prop.as_array() {
-                if let Ok(data) = array.read_sample_vec(index) {
+        if let Some(faces_prop) = geom.getPropertyByName(".faces") {
+            if let Some(array) = faces_prop.asArray() {
+                if let Ok(data) = array.getSampleVec(index) {
                     sample.faces = super::safe_cast_vec(&data);
                 }
             }
         }
         
         // Read .selfBnds if present
-        if let Some(bnds_prop) = geom.property_by_name(".selfBnds") {
-            if let Some(scalar) = bnds_prop.as_scalar() {
+        if let Some(bnds_prop) = geom.getPropertyByName(".selfBnds") {
+            if let Some(scalar) = bnds_prop.asScalar() {
                 let mut buf = [0u8; 48];
-                if scalar.read_sample(index, &mut buf).is_ok() {
+                if scalar.getSample(index, &mut buf).is_ok() {
                     if let Some(values) = super::safe_cast_slice::<f64>(&buf) {
                         if values.len() >= 6 {
                             sample.self_bounds = Some(BBox3d::new(
@@ -301,11 +301,11 @@ impl<'a> IPolyMesh<'a> {
         }
         
         let props = child.getProperties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return 1 };
-        let Some(geom) = geom_prop.as_compound() else { return 1 };
-        let Some(faces_prop) = geom.property_by_name(".faces") else { return 1 };
-        let Some(array) = faces_prop.as_array() else { return 1 };
-        array.num_samples()
+        let Some(geom_prop) = props.getPropertyByName(".geom") else { return 1 };
+        let Some(geom) = geom_prop.asCompound() else { return 1 };
+        let Some(faces_prop) = geom.getPropertyByName(".faces") else { return 1 };
+        let Some(array) = faces_prop.asArray() else { return 1 };
+        array.getNumSamples()
     }
     
     /// Get number of FaceSets on this mesh.
@@ -360,9 +360,9 @@ impl<'a> IPolyMesh<'a> {
         let mut sample = PolyMeshSample::new();
         
         let props = self.object.getProperties();
-        let geom_prop = props.property_by_name(".geom")
+        let geom_prop = props.getPropertyByName(".geom")
             .ok_or_else(|| Error::invalid("No .geom property"))?;
-        let geom = geom_prop.as_compound()
+        let geom = geom_prop.asCompound()
             .ok_or_else(|| Error::invalid(".geom is not compound"))?;
         let g = geom.as_reader();
         
@@ -401,21 +401,21 @@ impl<'a> IPolyMesh<'a> {
     /// If UVs are indexed, this expands them to per-face-vertex values.
     pub fn get_uvs(&self, index: usize) -> Option<Vec<glam::Vec2>> {
         let props = self.object.getProperties();
-        let geom_prop = props.property_by_name(".geom")?;
-        let geom = geom_prop.as_compound()?;
-        let uv_prop = geom.property_by_name("uv")?;
+        let geom_prop = props.getPropertyByName(".geom")?;
+        let geom = geom_prop.asCompound()?;
+        let uv_prop = geom.getPropertyByName("uv")?;
         
-        if let Some(compound) = uv_prop.as_compound() {
+        if let Some(compound) = uv_prop.asCompound() {
             // Indexed UVs - read .vals and .indices
-            let vals_prop = compound.property_by_name(".vals")?;
-            let array = vals_prop.as_array()?;
-            let data = array.read_sample_vec(index).ok()?;
+            let vals_prop = compound.getPropertyByName(".vals")?;
+            let array = vals_prop.asArray()?;
+            let data = array.getSampleVec(index).ok()?;
             let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
             
             // Check for indices
-            if let Some(idx_prop) = compound.property_by_name(".indices") {
-                if let Some(idx_array) = idx_prop.as_array() {
-                    if let Ok(idx_data) = idx_array.read_sample_vec(index) {
+            if let Some(idx_prop) = compound.getPropertyByName(".indices") {
+                if let Some(idx_array) = idx_prop.asArray() {
+                    if let Ok(idx_data) = idx_array.getSampleVec(index) {
                         let indices: &[u32] = bytemuck::try_cast_slice(&idx_data).ok()?;
                         return Some(indices.iter()
                             .map(|&i| {
@@ -435,9 +435,9 @@ impl<'a> IPolyMesh<'a> {
             Some(floats.chunks_exact(2)
                 .map(|c| glam::vec2(c[0], c[1]))
                 .collect())
-        } else if let Some(array) = uv_prop.as_array() {
+        } else if let Some(array) = uv_prop.asArray() {
             // Non-indexed UVs
-            let data = array.read_sample_vec(index).ok()?;
+            let data = array.getSampleVec(index).ok()?;
             let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
             Some(floats.chunks_exact(2)
                 .map(|c| glam::vec2(c[0], c[1]))
@@ -452,21 +452,21 @@ impl<'a> IPolyMesh<'a> {
     /// If normals are indexed, this expands them to per-face-vertex values.
     pub fn get_normals(&self, index: usize) -> Option<Vec<glam::Vec3>> {
         let props = self.object.getProperties();
-        let geom_prop = props.property_by_name(".geom")?;
-        let geom = geom_prop.as_compound()?;
-        let n_prop = geom.property_by_name("N")?;
+        let geom_prop = props.getPropertyByName(".geom")?;
+        let geom = geom_prop.asCompound()?;
+        let n_prop = geom.getPropertyByName("N")?;
         
-        if let Some(compound) = n_prop.as_compound() {
+        if let Some(compound) = n_prop.asCompound() {
             // Indexed normals - read .vals and .indices
-            let vals_prop = compound.property_by_name(".vals")?;
-            let array = vals_prop.as_array()?;
-            let data = array.read_sample_vec(index).ok()?;
+            let vals_prop = compound.getPropertyByName(".vals")?;
+            let array = vals_prop.asArray()?;
+            let data = array.getSampleVec(index).ok()?;
             let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
             
             // Check for indices
-            if let Some(idx_prop) = compound.property_by_name(".indices") {
-                if let Some(idx_array) = idx_prop.as_array() {
-                    if let Ok(idx_data) = idx_array.read_sample_vec(index) {
+            if let Some(idx_prop) = compound.getPropertyByName(".indices") {
+                if let Some(idx_array) = idx_prop.asArray() {
+                    if let Ok(idx_data) = idx_array.getSampleVec(index) {
                         let indices: &[u32] = bytemuck::try_cast_slice(&idx_data).ok()?;
                         return Some(indices.iter()
                             .map(|&i| {
@@ -486,9 +486,9 @@ impl<'a> IPolyMesh<'a> {
             Some(floats.chunks_exact(3)
                 .map(|c| glam::vec3(c[0], c[1], c[2]))
                 .collect())
-        } else if let Some(array) = n_prop.as_array() {
+        } else if let Some(array) = n_prop.asArray() {
             // Non-indexed normals
-            let data = array.read_sample_vec(index).ok()?;
+            let data = array.getSampleVec(index).ok()?;
             let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
             Some(floats.chunks_exact(3)
                 .map(|c| glam::vec3(c[0], c[1], c[2]))
@@ -503,13 +503,13 @@ impl<'a> IPolyMesh<'a> {
         use crate::core::GeometryScope;
         
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
+        let Some(geom_prop) = props.getPropertyByName(".geom") else {
             return GeometryScope::Unknown;
         };
-        let Some(geom) = geom_prop.as_compound() else {
+        let Some(geom) = geom_prop.asCompound() else {
             return GeometryScope::Unknown;
         };
-        let Some(uv_prop) = geom.property_by_name("uv") else {
+        let Some(uv_prop) = geom.getPropertyByName("uv") else {
             return GeometryScope::Unknown;
         };
         
@@ -525,13 +525,13 @@ impl<'a> IPolyMesh<'a> {
         use crate::core::GeometryScope;
         
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
+        let Some(geom_prop) = props.getPropertyByName(".geom") else {
             return GeometryScope::Unknown;
         };
-        let Some(geom) = geom_prop.as_compound() else {
+        let Some(geom) = geom_prop.asCompound() else {
             return GeometryScope::Unknown;
         };
-        let Some(n_prop) = geom.property_by_name("N") else {
+        let Some(n_prop) = geom.getPropertyByName("N") else {
             return GeometryScope::Unknown;
         };
         

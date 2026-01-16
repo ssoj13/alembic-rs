@@ -439,8 +439,8 @@ impl PyIGeomParam {
         ) -> Option<T> {
             if path.is_empty() {
                 let props = obj.getProperties();
-                let geom_box = props.property_by_name(".geom")?;
-                let geom_prop = geom_box.as_compound()?;
+                let geom_box = props.getPropertyByName(".geom")?;
+                let geom_prop = geom_box.asCompound()?;
                 let gp = IGeomParam::new(&geom_prop, param_name)?;
                 Some(f(&gp))
             } else {

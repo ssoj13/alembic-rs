@@ -65,17 +65,17 @@ fn debug_brake_disc_xform() {
     let props = brake_disc.getProperties();
     
     // Get .xform compound
-    let xform_prop = props.property_by_name(".xform").expect(".xform property");
-    let xform = xform_prop.as_compound().expect(".xform compound");
+    let xform_prop = props.getPropertyByName(".xform").expect(".xform property");
+    let xform = xform_prop.asCompound().expect(".xform compound");
     
     // Read .ops
     {
-        let ops_prop = xform.property_by_name(".ops").expect(".ops");
-        let scalar = ops_prop.as_scalar().expect(".ops scalar");
-        let extent = scalar.header().data_type.extent as usize;
+        let ops_prop = xform.getPropertyByName(".ops").expect(".ops");
+        let scalar = ops_prop.asScalar().expect(".ops scalar");
+        let extent = scalar.getHeader().data_type.extent as usize;
         println!("\n.ops extent: {}", extent);
         let mut buf = vec![0u8; extent];
-        scalar.read_sample(0, &mut buf).expect("read .ops");
+        scalar.getSample(0, &mut buf).expect("read .ops");
         println!(".ops raw bytes: {:?}", buf);
         println!(".ops decoded:");
         for (i, &byte) in buf.iter().enumerate() {
@@ -110,14 +110,14 @@ fn debug_brake_disc_xform() {
     
     // Read .vals
     {
-        let vals_prop = xform.property_by_name(".vals").expect(".vals");
-        if vals_prop.is_scalar() {
-            let scalar = vals_prop.as_scalar().expect(".vals scalar");
-            let extent = scalar.header().data_type.extent as usize;
+        let vals_prop = xform.getPropertyByName(".vals").expect(".vals");
+        if vals_prop.isScalar() {
+            let scalar = vals_prop.asScalar().expect(".vals scalar");
+            let extent = scalar.getHeader().data_type.extent as usize;
             println!("\n.vals extent: {} doubles", extent);
             let byte_count = extent * 8;
             let mut buf = vec![0u8; byte_count];
-            scalar.read_sample(0, &mut buf).expect("read .vals");
+            scalar.getSample(0, &mut buf).expect("read .vals");
             let doubles: &[f64] = bytemuck::try_cast_slice(&buf).unwrap_or(&[]);
             println!(".vals values:");
             for (i, chunk) in doubles.chunks(3).enumerate() {
@@ -128,10 +128,10 @@ fn debug_brake_disc_xform() {
     
     // Read .inherits
     {
-        let inh_prop = xform.property_by_name(".inherits").expect(".inherits");
-        let scalar = inh_prop.as_scalar().expect(".inherits scalar");
+        let inh_prop = xform.getPropertyByName(".inherits").expect(".inherits");
+        let scalar = inh_prop.asScalar().expect(".inherits scalar");
         let mut buf = [0u8; 1];
-        scalar.read_sample(0, &mut buf).expect("read .inherits");
+        scalar.getSample(0, &mut buf).expect("read .inherits");
         println!("\n.inherits: {}", buf[0] != 0);
     }
     

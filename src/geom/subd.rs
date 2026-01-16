@@ -194,24 +194,24 @@ impl<'a> ISubD<'a> {
     /// - Heterogeneous: Topology can change between samples
     pub fn topology_variance(&self) -> TopologyVariance {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".geom") else {
+        let Some(geom_prop) = props.getPropertyByName(".geom") else {
             return TopologyVariance::Static;
         };
-        let Some(geom) = geom_prop.as_compound() else {
+        let Some(geom) = geom_prop.asCompound() else {
             return TopologyVariance::Static;
         };
         
         // Get sample counts for positions and topology
-        let p_samples = if let Some(p) = geom.property_by_name("P") {
-            p.as_array().map(|a| a.num_samples()).unwrap_or(1)
+        let p_samples = if let Some(p) = geom.getPropertyByName("P") {
+            p.asArray().map(|a| a.getNumSamples()).unwrap_or(1)
         } else { 1 };
         
-        let fc_samples = if let Some(fc) = geom.property_by_name(".faceCounts") {
-            fc.as_array().map(|a| a.num_samples()).unwrap_or(1)
+        let fc_samples = if let Some(fc) = geom.getPropertyByName(".faceCounts") {
+            fc.asArray().map(|a| a.getNumSamples()).unwrap_or(1)
         } else { 1 };
         
-        let fi_samples = if let Some(fi) = geom.property_by_name(".faceIndices") {
-            fi.as_array().map(|a| a.num_samples()).unwrap_or(1)
+        let fi_samples = if let Some(fi) = geom.getPropertyByName(".faceIndices") {
+            fi.asArray().map(|a| a.getNumSamples()).unwrap_or(1)
         } else { 1 };
         
         // Determine variance
@@ -308,9 +308,9 @@ impl<'a> ISubD<'a> {
         use crate::util::Error;
         
         let props = self.object.getProperties();
-        let geom_prop = props.property_by_name(".geom")
+        let geom_prop = props.getPropertyByName(".geom")
             .ok_or_else(|| Error::invalid("No .geom property"))?;
-        let geom = geom_prop.as_compound()
+        let geom = geom_prop.asCompound()
             .ok_or_else(|| Error::invalid(".geom is not compound"))?;
         let g = geom.as_reader();
         
@@ -373,17 +373,17 @@ impl<'a> ISubD<'a> {
     /// Check if this subd has UVs.
     pub fn has_uvs(&self) -> bool {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return false };
-        let Some(geom) = geom_prop.as_compound() else { return false };
-        geom.has_property("uv")
+        let Some(geom_prop) = props.getPropertyByName(".geom") else { return false };
+        let Some(geom) = geom_prop.asCompound() else { return false };
+        geom.hasProperty("uv")
     }
     
     /// Check if this subd has normals.
     pub fn has_normals(&self) -> bool {
         let props = self.object.getProperties();
-        let Some(geom_prop) = props.property_by_name(".geom") else { return false };
-        let Some(geom) = geom_prop.as_compound() else { return false };
-        geom.has_property("N")
+        let Some(geom_prop) = props.getPropertyByName(".geom") else { return false };
+        let Some(geom) = geom_prop.asCompound() else { return false };
+        geom.hasProperty("N")
     }
     
     /// Get expanded UVs at the given sample index.
@@ -391,20 +391,20 @@ impl<'a> ISubD<'a> {
     /// If UVs are indexed, this expands them to per-face-vertex values.
     pub fn get_uvs(&self, index: usize) -> Option<Vec<glam::Vec2>> {
         let props = self.object.getProperties();
-        let geom_prop = props.property_by_name(".geom")?;
-        let geom = geom_prop.as_compound()?;
-        let uv_prop = geom.property_by_name("uv")?;
+        let geom_prop = props.getPropertyByName(".geom")?;
+        let geom = geom_prop.asCompound()?;
+        let uv_prop = geom.getPropertyByName("uv")?;
         
-        if let Some(compound) = uv_prop.as_compound() {
+        if let Some(compound) = uv_prop.asCompound() {
             // Indexed UVs
-            let vals_prop = compound.property_by_name(".vals")?;
-            let array = vals_prop.as_array()?;
-            let data = array.read_sample_vec(index).ok()?;
+            let vals_prop = compound.getPropertyByName(".vals")?;
+            let array = vals_prop.asArray()?;
+            let data = array.getSampleVec(index).ok()?;
             let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
             
-            if let Some(idx_prop) = compound.property_by_name(".indices") {
-                if let Some(idx_array) = idx_prop.as_array() {
-                    if let Ok(idx_data) = idx_array.read_sample_vec(index) {
+            if let Some(idx_prop) = compound.getPropertyByName(".indices") {
+                if let Some(idx_array) = idx_prop.asArray() {
+                    if let Ok(idx_data) = idx_array.getSampleVec(index) {
                         let indices: &[u32] = bytemuck::try_cast_slice(&idx_data).ok()?;
                         return Some(indices.iter()
                             .map(|&i| {
@@ -423,8 +423,8 @@ impl<'a> ISubD<'a> {
             Some(floats.chunks_exact(2)
                 .map(|c| glam::vec2(c[0], c[1]))
                 .collect())
-        } else if let Some(array) = uv_prop.as_array() {
-            let data = array.read_sample_vec(index).ok()?;
+        } else if let Some(array) = uv_prop.asArray() {
+            let data = array.getSampleVec(index).ok()?;
             let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
             Some(floats.chunks_exact(2)
                 .map(|c| glam::vec2(c[0], c[1]))
@@ -437,19 +437,19 @@ impl<'a> ISubD<'a> {
     /// Get expanded normals at the given sample index.
     pub fn get_normals(&self, index: usize) -> Option<Vec<glam::Vec3>> {
         let props = self.object.getProperties();
-        let geom_prop = props.property_by_name(".geom")?;
-        let geom = geom_prop.as_compound()?;
-        let n_prop = geom.property_by_name("N")?;
+        let geom_prop = props.getPropertyByName(".geom")?;
+        let geom = geom_prop.asCompound()?;
+        let n_prop = geom.getPropertyByName("N")?;
         
-        if let Some(compound) = n_prop.as_compound() {
-            let vals_prop = compound.property_by_name(".vals")?;
-            let array = vals_prop.as_array()?;
-            let data = array.read_sample_vec(index).ok()?;
+        if let Some(compound) = n_prop.asCompound() {
+            let vals_prop = compound.getPropertyByName(".vals")?;
+            let array = vals_prop.asArray()?;
+            let data = array.getSampleVec(index).ok()?;
             let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
             
-            if let Some(idx_prop) = compound.property_by_name(".indices") {
-                if let Some(idx_array) = idx_prop.as_array() {
-                    if let Ok(idx_data) = idx_array.read_sample_vec(index) {
+            if let Some(idx_prop) = compound.getPropertyByName(".indices") {
+                if let Some(idx_array) = idx_prop.asArray() {
+                    if let Ok(idx_data) = idx_array.getSampleVec(index) {
                         let indices: &[u32] = bytemuck::try_cast_slice(&idx_data).ok()?;
                         return Some(indices.iter()
                             .map(|&i| {
@@ -468,8 +468,8 @@ impl<'a> ISubD<'a> {
             Some(floats.chunks_exact(3)
                 .map(|c| glam::vec3(c[0], c[1], c[2]))
                 .collect())
-        } else if let Some(array) = n_prop.as_array() {
-            let data = array.read_sample_vec(index).ok()?;
+        } else if let Some(array) = n_prop.asArray() {
+            let data = array.getSampleVec(index).ok()?;
             let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
             Some(floats.chunks_exact(3)
                 .map(|c| glam::vec3(c[0], c[1], c[2]))

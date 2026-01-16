@@ -212,3 +212,27 @@ alembic-rs
 ├── smallvec - stack-allocated vectors
 └── bytemuck - safe POD casting
 ```
+
+## BUGHUNT Status (2026-01-15)
+
+### Fixed Issues
+
+| Issue | Status |
+|-------|--------|
+| PhantomData stubs in geom/mod.rs | ✅ Fixed - re-exports from ogawa/writer.rs |
+| abc::OArchive stub | ✅ Fixed - write_archive() delegates to ogawa |
+| Dead O* stubs in abc/mod.rs | ✅ Fixed - removed |
+| Code duplication (~60 lines) | ✅ Fixed - shared helpers in OProperty |
+
+### Remaining Items
+
+| Category | Count | Severity |
+|----------|-------|----------|
+| Dead code annotations | 31 | Low (intentional for GPU resources) |
+| ICamera doesn't use geom::util | 1 | Low |
+| TODO in viewport.rs | 1 | Low |
+
+### See Also
+
+- [BUGHUNT_REPORT.md](./BUGHUNT_REPORT.md) - Full analysis and fix details
+- [DIAGRAMS.md](./DIAGRAMS.md) - Architecture diagrams

@@ -146,7 +146,7 @@ impl OgawaArchiveReader {
     }
     
     /// Get the Alembic file version.
-    pub fn archive_version(&self) -> i32 {
+    pub fn getArchiveVersion(&self) -> i32 {
         self.archive_version
     }
     
@@ -162,38 +162,38 @@ impl OgawaArchiveReader {
 }
 
 impl ArchiveReader for OgawaArchiveReader {
-    fn name(&self) -> &str {
+    fn getName(&self) -> &str {
         &self.name
     }
     
-    fn num_time_samplings(&self) -> usize {
+    fn getNumTimeSamplings(&self) -> usize {
         self.time_samplings.len()
     }
     
-    fn time_sampling(&self, index: usize) -> Option<&TimeSampling> {
+    fn getTimeSampling(&self, index: usize) -> Option<&TimeSampling> {
         self.time_samplings.get(index)
     }
     
-    fn root(&self) -> &dyn ObjectReader {
+    fn getTop(&self) -> &dyn ObjectReader {
         // Return a wrapper that provides ObjectReader trait
         // We need a static reference, so we'll use a different approach
         // For now, return self as a "root object"
         self
     }
     
-    fn archive_version(&self) -> i32 {
+    fn getArchiveVersion(&self) -> i32 {
         self.archive_version
     }
     
-    fn max_num_samples_for_time_sampling(&self, index: usize) -> Option<usize> {
+    fn getMaxNumSamplesForTimeSamplingIndex(&self, index: usize) -> Option<usize> {
         self.max_samples.get(index).map(|&v| v as usize)
     }
     
-    fn archive_metadata(&self) -> &MetaData {
+    fn getArchiveMetaData(&self) -> &MetaData {
         &self.root_header.meta_data
     }
     
-    fn find_object(&self, path: &str) -> Option<Box<dyn ObjectReader + '_>> {
+    fn findObject(&self, path: &str) -> Option<Box<dyn ObjectReader + '_>> {
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         if parts.is_empty() {
             // Empty path - return root (self implements ObjectReader)
@@ -252,19 +252,19 @@ impl ArchiveReader for OgawaArchiveReader {
 
 // Implement ObjectReader for OgawaArchiveReader (as the root object)
 impl ObjectReader for OgawaArchiveReader {
-    fn header(&self) -> &ObjectHeader {
+    fn getHeader(&self) -> &ObjectHeader {
         &self.root_header
     }
     
-    fn parent(&self) -> Option<&dyn ObjectReader> {
+    fn getParent(&self) -> Option<&dyn ObjectReader> {
         None
     }
     
-    fn num_children(&self) -> usize {
-        self.root_data.num_children()
+    fn getNumChildren(&self) -> usize {
+        self.root_data.getNumChildren()
     }
     
-    fn child(&self, index: usize) -> Option<Box<dyn ObjectReader + '_>> {
+    fn getChildByIndex(&self, index: usize) -> Option<Box<dyn ObjectReader + '_>> {
         match self.root_data.child(index)? {
             Ok(reader) => Some(Box::new(reader)),
             Err(_e) => {
@@ -275,7 +275,7 @@ impl ObjectReader for OgawaArchiveReader {
         }
     }
     
-    fn child_by_name(&self, name: &str) -> Option<Box<dyn ObjectReader + '_>> {
+    fn getChild(&self, name: &str) -> Option<Box<dyn ObjectReader + '_>> {
         match self.root_data.child_by_name(name)? {
             Ok(reader) => Some(Box::new(reader)),
             Err(_e) => {
@@ -286,7 +286,7 @@ impl ObjectReader for OgawaArchiveReader {
         }
     }
     
-    fn properties(&self) -> &dyn CompoundPropertyReader {
+    fn getProperties(&self) -> &dyn CompoundPropertyReader {
         self.root_data.properties()
     }
 }
@@ -302,11 +302,11 @@ pub struct OgawaObjectReader {
 }
 
 impl ObjectReader for OgawaObjectReader {
-    fn header(&self) -> &ObjectHeader {
+    fn getHeader(&self) -> &ObjectHeader {
         &self.header
     }
     
-    fn parent(&self) -> Option<&dyn ObjectReader> {
+    fn getParent(&self) -> Option<&dyn ObjectReader> {
         // Parent tracking is not implemented due to Rust ownership constraints.
         // In a tree structure, returning &dyn ObjectReader to parent would require
         // either unsafe self-referential structs or Arc<Mutex> overhead.
@@ -316,11 +316,11 @@ impl ObjectReader for OgawaObjectReader {
         None
     }
     
-    fn num_children(&self) -> usize {
-        self.data.num_children()
+    fn getNumChildren(&self) -> usize {
+        self.data.getNumChildren()
     }
     
-    fn child(&self, index: usize) -> Option<Box<dyn ObjectReader + '_>> {
+    fn getChildByIndex(&self, index: usize) -> Option<Box<dyn ObjectReader + '_>> {
         match self.data.child(index)? {
             Ok(reader) => Some(Box::new(reader)),
             Err(_e) => {
@@ -331,7 +331,7 @@ impl ObjectReader for OgawaObjectReader {
         }
     }
     
-    fn child_by_name(&self, name: &str) -> Option<Box<dyn ObjectReader + '_>> {
+    fn getChild(&self, name: &str) -> Option<Box<dyn ObjectReader + '_>> {
         match self.data.child_by_name(name)? {
             Ok(reader) => Some(Box::new(reader)),
             Err(_e) => {
@@ -342,7 +342,7 @@ impl ObjectReader for OgawaObjectReader {
         }
     }
     
-    fn properties(&self) -> &dyn CompoundPropertyReader {
+    fn getProperties(&self) -> &dyn CompoundPropertyReader {
         self.data.properties()
     }
 }
@@ -394,7 +394,7 @@ impl ObjectData {
         })
     }
     
-    fn num_children(&self) -> usize {
+    fn getNumChildren(&self) -> usize {
         self.children.len()
     }
     
@@ -501,21 +501,21 @@ impl CompoundData {
 }
 
 impl PropertyReader for CompoundData {
-    fn header(&self) -> &PropertyHeader {
+    fn getHeader(&self) -> &PropertyHeader {
         &self.header
     }
     
-    fn as_compound(&self) -> Option<&dyn CompoundPropertyReader> {
+    fn asCompound(&self) -> Option<&dyn CompoundPropertyReader> {
         Some(self)
     }
 }
 
 impl CompoundPropertyReader for CompoundData {
-    fn num_properties(&self) -> usize {
+    fn getNumProperties(&self) -> usize {
         self.sub_properties.len()
     }
     
-    fn property(&self, index: usize) -> Option<Box<dyn PropertyReader + '_>> {
+    fn getProperty(&self, index: usize) -> Option<Box<dyn PropertyReader + '_>> {
         let parsed = self.sub_properties.get(index)?;
         
         // Get the property's group if available
@@ -529,9 +529,9 @@ impl CompoundPropertyReader for CompoundData {
         )))
     }
     
-    fn property_by_name(&self, name: &str) -> Option<Box<dyn PropertyReader + '_>> {
+    fn getPropertyByName(&self, name: &str) -> Option<Box<dyn PropertyReader + '_>> {
         let index = self.sub_properties.iter().position(|p| p.name == name)?;
-        self.property(index)
+        self.getProperty(index)
     }
 }
 
@@ -723,15 +723,15 @@ impl OgawaPropertyReader {
 }
 
 impl PropertyReader for OgawaPropertyReader {
-    fn header(&self) -> &PropertyHeader {
+    fn getHeader(&self) -> &PropertyHeader {
         &self.header
     }
     
-    fn as_compound(&self) -> Option<&dyn CompoundPropertyReader> {
+    fn asCompound(&self) -> Option<&dyn CompoundPropertyReader> {
         self.get_compound_data().map(|c| c as &dyn CompoundPropertyReader)
     }
     
-    fn as_scalar(&self) -> Option<&dyn ScalarPropertyReader> {
+    fn asScalar(&self) -> Option<&dyn ScalarPropertyReader> {
         if self.parsed.property_type == PropertyType::Scalar {
             Some(self)
         } else {
@@ -739,7 +739,7 @@ impl PropertyReader for OgawaPropertyReader {
         }
     }
     
-    fn as_array(&self) -> Option<&dyn ArrayPropertyReader> {
+    fn asArray(&self) -> Option<&dyn ArrayPropertyReader> {
         if self.parsed.property_type == PropertyType::Array {
             Some(self)
         } else {
@@ -749,15 +749,15 @@ impl PropertyReader for OgawaPropertyReader {
 }
 
 impl ScalarPropertyReader for OgawaPropertyReader {
-    fn num_samples(&self) -> usize {
+    fn getNumSamples(&self) -> usize {
         self.num_samples_internal()
     }
     
-    fn is_constant(&self) -> bool {
+    fn isConstant(&self) -> bool {
         self.is_constant_internal()
     }
     
-    fn read_sample(&self, index: usize, out: &mut [u8]) -> Result<()> {
+    fn getSample(&self, index: usize, out: &mut [u8]) -> Result<()> {
         // Handle constant optimization
         let actual_index = if self.is_constant_internal() && index > 0 {
             0
@@ -770,15 +770,15 @@ impl ScalarPropertyReader for OgawaPropertyReader {
 }
 
 impl ArrayPropertyReader for OgawaPropertyReader {
-    fn num_samples(&self) -> usize {
+    fn getNumSamples(&self) -> usize {
         self.num_samples_internal()
     }
     
-    fn is_constant(&self) -> bool {
+    fn isConstant(&self) -> bool {
         self.is_constant_internal()
     }
     
-    fn sample_len(&self, index: usize) -> Result<usize> {
+    fn getSampleLen(&self, index: usize) -> Result<usize> {
         let actual_index = if self.is_constant_internal() && index > 0 {
             0
         } else {
@@ -788,7 +788,7 @@ impl ArrayPropertyReader for OgawaPropertyReader {
         self.array_sample_len(actual_index)
     }
     
-    fn read_sample(&self, index: usize, out: &mut [u8]) -> Result<usize> {
+    fn getSample(&self, index: usize, out: &mut [u8]) -> Result<usize> {
         let actual_index = if self.is_constant_internal() && index > 0 {
             0
         } else {
@@ -801,7 +801,7 @@ impl ArrayPropertyReader for OgawaPropertyReader {
         Ok(copy_len)
     }
     
-    fn read_sample_vec(&self, index: usize) -> Result<Vec<u8>> {
+    fn getSampleVec(&self, index: usize) -> Result<Vec<u8>> {
         let actual_index = if self.is_constant_internal() && index > 0 {
             0
         } else {
@@ -811,7 +811,7 @@ impl ArrayPropertyReader for OgawaPropertyReader {
         self.read_array_sample(actual_index)
     }
     
-    fn sample_key(&self, index: usize) -> Result<[u8; 16]> {
+    fn getKey(&self, index: usize) -> Result<[u8; 16]> {
         let actual_index = if self.is_constant_internal() && index > 0 {
             0
         } else {
@@ -821,7 +821,7 @@ impl ArrayPropertyReader for OgawaPropertyReader {
         self.read_array_sample_key(actual_index)
     }
     
-    fn sample_dimensions(&self, index: usize) -> Result<Vec<usize>> {
+    fn getDimensions(&self, index: usize) -> Result<Vec<usize>> {
         let actual_index = if self.is_constant_internal() && index > 0 {
             0
         } else {
@@ -870,7 +870,7 @@ mod tests {
     #[test]
     fn test_compound_data_empty() {
         let data = CompoundData::empty();
-        assert_eq!(data.num_properties(), 0);
-        assert!(data.is_compound());
+        assert_eq!(data.getNumProperties(), 0);
+        assert!(data.isCompound());
     }
 }

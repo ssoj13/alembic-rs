@@ -265,7 +265,7 @@ fn traverse_iobject(obj: &alembic::abc::IObject, depth: usize) {
     let props = obj.getProperties();
     if props.getNumProperties() > 0 {
         println!("{}  Properties: {}", indent, props.getNumProperties());
-        for name in props.property_names() {
+        for name in props.getPropertyNames() {
             println!("{}    - {}", indent, name);
         }
     }
@@ -424,16 +424,16 @@ fn test_xform_get_sample() {
         if let Some(xform) = IXform::new(&child) {
             found_xform = true;
             println!("Found xform: '{}'", xform.getName());
-            println!("  properties: {:?}", xform.object().getProperties().property_names());
+            println!("  properties: {:?}", xform.object().getProperties().getPropertyNames());
             println!("  num_samples: {}", xform.getNumSamples());
             println!("  is_inheriting: {}", xform.is_inheriting());
             println!("  is_constant: {}", xform.is_constant());
             
             // Check .xform compound contents
             let props = xform.object().getProperties();
-            if let Some(xf_prop) = props.property_by_name(".xform") {
-                if let Some(xf_compound) = xf_prop.as_compound() {
-                    println!("  .xform sub-properties: {:?}", xf_compound.property_names());
+            if let Some(xf_prop) = props.getPropertyByName(".xform") {
+                if let Some(xf_compound) = xf_prop.asCompound() {
+                    println!("  .xform sub-properties: {:?}", xf_compound.getPropertyNames());
                 }
             }
             
@@ -540,29 +540,29 @@ fn test_read_mesh_properties() {
                 
                 // Get properties
                 let props = grandchild.getProperties();
-                println!("  Properties: {:?}", props.property_names());
+                println!("  Properties: {:?}", props.getPropertyNames());
                 
                 // Try to read .geom compound which contains mesh data
-                if let Some(geom_prop) = props.property_by_name(".geom") {
+                if let Some(geom_prop) = props.getPropertyByName(".geom") {
                     println!("  Found .geom property");
                     
-                    if let Some(compound) = geom_prop.as_compound() {
-                        println!("    .geom sub-properties: {:?}", compound.property_names());
+                    if let Some(compound) = geom_prop.asCompound() {
+                        println!("    .geom sub-properties: {:?}", compound.getPropertyNames());
                         
                         // Try to read P (positions)
-                        if let Some(p_prop) = compound.property_by_name("P") {
+                        if let Some(p_prop) = compound.getPropertyByName("P") {
                             println!("    Found P property");
-                            if let Some(array_reader) = p_prop.as_array() {
-                                let num_samples = array_reader.num_samples();
+                            if let Some(array_reader) = p_prop.asArray() {
+                                let num_samples = array_reader.getNumSamples();
                                 println!("      P num_samples: {}", num_samples);
                                 
                                 if num_samples > 0 {
-                                    match array_reader.sample_len(0) {
+                                    match array_reader.getSampleLen(0) {
                                         Ok(len) => println!("      P sample[0] len: {} elements", len),
                                         Err(e) => println!("      P sample_len error: {:?}", e),
                                     }
                                     
-                                    match array_reader.read_sample_vec(0) {
+                                    match array_reader.getSampleVec(0) {
                                         Ok(data) => {
                                             println!("      P sample[0] bytes: {} bytes", data.len());
                                             let num_verts = data.len() / 12; // 3 floats * 4 bytes
@@ -584,18 +584,18 @@ fn test_read_mesh_properties() {
                         }
                         
                         // Try to read .faceCounts
-                        if let Some(fc_prop) = compound.property_by_name(".faceCounts") {
+                        if let Some(fc_prop) = compound.getPropertyByName(".faceCounts") {
                             println!("    Found .faceCounts property");
-                            if let Some(array_reader) = fc_prop.as_array() {
-                                println!("      .faceCounts num_samples: {}", array_reader.num_samples());
+                            if let Some(array_reader) = fc_prop.asArray() {
+                                println!("      .faceCounts num_samples: {}", array_reader.getNumSamples());
                             }
                         }
                         
                         // Try to read .faceIndices
-                        if let Some(fi_prop) = compound.property_by_name(".faceIndices") {
+                        if let Some(fi_prop) = compound.getPropertyByName(".faceIndices") {
                             println!("    Found .faceIndices property");
-                            if let Some(array_reader) = fi_prop.as_array() {
-                                println!("      .faceIndices num_samples: {}", array_reader.num_samples());
+                            if let Some(array_reader) = fi_prop.asArray() {
+                                println!("      .faceIndices num_samples: {}", array_reader.getNumSamples());
                             }
                         }
                     }
