@@ -1875,6 +1875,8 @@ pub struct OPolyMeshSample {
     pub face_indices: Vec<i32>,
     pub velocities: Option<Vec<glam::Vec3>>,
     pub normals: Option<Vec<glam::Vec3>>,
+    /// Write normals as simple array (true) or GeomParam compound (false).
+    pub normals_is_simple_array: bool,
     pub uvs: Option<Vec<glam::Vec2>>,
 }
 
@@ -1887,6 +1889,7 @@ impl OPolyMeshSample {
             face_indices,
             velocities: None,
             normals: None,
+            normals_is_simple_array: false, // Default to compound format
             uvs: None,
         }
     }
@@ -1945,24 +1948,18 @@ impl OPolyMesh {
     /// 
     /// This order is critical for indexed metadata table parity with C++.
     pub fn add_sample(&mut self, sample: &OPolyMeshSample) {
-        // C++ property CREATION order determines compound order (indexed metadata):
-        // .selfBnds → P → .faceIndices → .faceCounts
-        // 
-        // C++ data WRITE order follows setSample() call order:
-        // P → .faceIndices → .faceCounts → .selfBnds
-        //
-        // We must create properties in compound order, then write data in write order.
+        // C++ file header order: .selfBnds -> P -> .faceIndices -> .faceCounts
+        // Create in same order as C++ file for binary parity.
+        // Data write order (controls sample data layout): P(0) -> .faceIndices(1) -> .faceCounts(2) -> .selfBnds(3)
         
-        // First ensure all properties exist in correct compound order
-        // (only creates on first sample, subsequent calls find existing)
-        // Compound order: .selfBnds → P → .faceIndices → .faceCounts
-        // Data write order: P(0) → .faceIndices(1) → .faceCounts(2) → .selfBnds(3)
+        // 1. .selfBnds - first in file
         let mut bnds_meta = MetaData::new();
         bnds_meta.set("interpretation", "box");
         let bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
             DataType::new(PlainOldDataType::Float64, 6), bnds_meta);
         bnds_prop.data_write_order = 3;
         
+        // 2. P - second in file
         let mut p_meta = MetaData::new();
         p_meta.set("geoScope", "vtx");
         p_meta.set("interpretation", "point");
@@ -1970,10 +1967,12 @@ impl OPolyMesh {
             DataType::new(PlainOldDataType::Float32, 3), p_meta);
         p_prop.data_write_order = 0;
         
+        // 3. .faceIndices - third in file
         let fi_prop = self.get_or_create_array_with_ts(".faceIndices",
             DataType::new(PlainOldDataType::Int32, 1));
         fi_prop.data_write_order = 1;
         
+        // 4. .faceCounts - fourth in file
         let fc_prop = self.get_or_create_scalar_like_array_with_ts(".faceCounts",
             DataType::new(PlainOldDataType::Int32, 1));
         fc_prop.data_write_order = 2;
@@ -2003,20 +2002,30 @@ impl OPolyMesh {
             vel_prop.add_array_pod(vels);
         }
         
-        // Normals (optional) - write as GeomParam compound: N/.vals
+        // Normals (optional) - write as simple array or GeomParam compound based on flag
         if let Some(ref normals) = sample.normals {
-            // Create or get compound property "N"
-            let n_compound = self.geom_compound.get_or_create_compound_child("N");
-            // Set metadata for GeomParam
-            n_compound.meta_data.set("isGeomParam", "true");
-            n_compound.meta_data.set("podName", "float32_t");
-            n_compound.meta_data.set("podExtent", "3");
-            n_compound.meta_data.set("geoScope", "fvr"); // facevarying
-            // Create .vals array inside compound
-            let vals_prop = n_compound.get_or_create_array_child(".vals",
-                DataType::new(PlainOldDataType::Float32, 3));
-            vals_prop.time_sampling_index = self.time_sampling_index;
-            vals_prop.add_array_pod(normals);
+            if sample.normals_is_simple_array {
+                // Write as simple array N (matching original file format)
+                let mut n_meta = MetaData::new();
+                n_meta.set("geoScope", "fvr"); // facevarying
+                n_meta.set("interpretation", "normal");
+                let n_prop = self.get_or_create_array_with_meta("N",
+                    DataType::new(PlainOldDataType::Float32, 3), n_meta);
+                n_prop.add_array_pod(normals);
+            } else {
+                // Write as GeomParam compound: N/.vals
+                let n_compound = self.geom_compound.get_or_create_compound_child("N");
+                // Set metadata for GeomParam
+                n_compound.meta_data.set("isGeomParam", "true");
+                n_compound.meta_data.set("podName", "float32_t");
+                n_compound.meta_data.set("podExtent", "3");
+                n_compound.meta_data.set("geoScope", "fvr"); // facevarying
+                // Create .vals array inside compound
+                let vals_prop = n_compound.get_or_create_array_child(".vals",
+                    DataType::new(PlainOldDataType::Float32, 3));
+                vals_prop.time_sampling_index = self.time_sampling_index;
+                vals_prop.add_array_pod(normals);
+            }
         }
         
         // UVs (optional) - write as GeomParam compound: .arbGeomParams/uv/.vals
@@ -2151,9 +2160,12 @@ impl OPolyMesh {
     }
 }
 
+use crate::geom::{XformOp, XformOpType};
+
 /// Xform sample data.
 pub struct OXformSample {
-    pub matrix: glam::Mat4,
+    /// Transform operations (decomposed or single matrix).
+    pub ops: Vec<XformOp>,
     pub inherits: bool,
 }
 
@@ -2161,14 +2173,28 @@ impl OXformSample {
     /// Create identity sample.
     pub fn identity() -> Self {
         Self {
-            matrix: glam::Mat4::IDENTITY,
+            ops: Vec::new(),
             inherits: true,
         }
     }
     
-    /// Create from matrix.
+    /// Create from matrix (single Matrix operation).
     pub fn from_matrix(matrix: glam::Mat4, inherits: bool) -> Self {
-        Self { matrix, inherits }
+        let mat_f64: [f64; 16] = [
+            matrix.x_axis.x as f64, matrix.x_axis.y as f64, matrix.x_axis.z as f64, matrix.x_axis.w as f64,
+            matrix.y_axis.x as f64, matrix.y_axis.y as f64, matrix.y_axis.z as f64, matrix.y_axis.w as f64,
+            matrix.z_axis.x as f64, matrix.z_axis.y as f64, matrix.z_axis.z as f64, matrix.z_axis.w as f64,
+            matrix.w_axis.x as f64, matrix.w_axis.y as f64, matrix.w_axis.z as f64, matrix.w_axis.w as f64,
+        ];
+        Self {
+            ops: vec![XformOp::matrix(mat_f64)],
+            inherits,
+        }
+    }
+    
+    /// Create from XformSample ops (preserves decomposed operations).
+    pub fn from_ops(ops: Vec<XformOp>, inherits: bool) -> Self {
+        Self { ops, inherits }
     }
 }
 
@@ -2221,50 +2247,58 @@ impl OXform {
             geom_meta.set("schema", "AbcGeom_Xform_v3");
             geom.meta_data = geom_meta;
             
-            // Per IXform.cpp: .ops is scalar with extent = num_ops
-            // .vals is scalar with extent = total_num_values (16 for Matrix)
-            // For Matrix4x4 operation: extent=16 for vals, extent=1 for ops
+            // Check if this is a non-identity transform (has ops)
+            let is_not_identity = self.samples.iter().any(|s| !s.ops.is_empty());
             
-            // .vals - scalar with extent=16 for 4x4 matrix
-            // Alembic row-major (row-vector v*M) and glam column-major (column-vector M*v)
-            // have the SAME flat layout for translation: indices 12-14
-            // So we can write glam's column-major directly
-            let mut vals = OProperty::scalar(".vals", DataType::new(PlainOldDataType::Float64, 16));
-            vals.time_sampling_index = self.time_sampling_index;
-            for sample in &self.samples {
-                let m = sample.matrix;
-                // Write glam column-major directly - same layout as Alembic row-major
-                let mat_f64: [f64; 16] = [
-                    m.x_axis.x as f64, m.x_axis.y as f64, m.x_axis.z as f64, m.x_axis.w as f64,
-                    m.y_axis.x as f64, m.y_axis.y as f64, m.y_axis.z as f64, m.y_axis.w as f64,
-                    m.z_axis.x as f64, m.z_axis.y as f64, m.z_axis.z as f64, m.z_axis.w as f64,
-                    m.w_axis.x as f64, m.w_axis.y as f64, m.w_axis.z as f64, m.w_axis.w as f64,
-                ];
-                vals.add_scalar_sample(bytemuck::cast_slice(&mat_f64));
+            if is_not_identity {
+                // Determine ops structure from first sample
+                // All samples should have same ops structure (same number of ops)
+                let first_sample = &self.samples[0];
+                let num_ops = first_sample.ops.len();
+                
+                // Calculate total values for all ops
+                let total_vals: usize = first_sample.ops.iter().map(|op| op.values.len()).sum();
+                
+                // .vals - scalar with extent = total number of values
+                let mut vals = OProperty::scalar(".vals", DataType::new(PlainOldDataType::Float64, total_vals as u8));
+                vals.time_sampling_index = self.time_sampling_index;
+                for sample in &self.samples {
+                    // Collect all values from all ops
+                    let all_vals: Vec<f64> = sample.ops.iter()
+                        .flat_map(|op| op.values.iter().copied())
+                        .collect();
+                    vals.add_scalar_sample(bytemuck::cast_slice(&all_vals));
+                }
+                
+                // .ops - scalar with extent = number of operations
+                // Op encoding: (type << 4) | hint
+                let mut ops = OProperty::scalar(".ops", DataType::new(PlainOldDataType::Uint8, num_ops as u8));
+                ops.time_sampling_index = self.time_sampling_index;
+                for sample in &self.samples {
+                    let op_codes: Vec<u8> = sample.ops.iter().map(|op| encode_xform_op(op.op_type)).collect();
+                    ops.add_scalar_sample(&op_codes);
+                }
+                
+                // .inherits - scalar with extent=1
+                let mut inherits = OProperty::scalar(".inherits", DataType::new(PlainOldDataType::Boolean, 1));
+                inherits.time_sampling_index = self.time_sampling_index;
+                for sample in &self.samples {
+                    inherits.add_scalar_pod(&(sample.inherits as u8));
+                }
+                
+                // isNotConstantIdentity marker
+                let mut not_id = OProperty::scalar("isNotConstantIdentity", DataType::new(PlainOldDataType::Boolean, 1));
+                not_id.add_scalar_pod(&1u8);
+                
+                if let OPropertyData::Compound(children) = &mut geom.data {
+                    // Order must match C++ Alembic: .inherits, .ops, .vals, isNotConstantIdentity
+                    children.push(inherits);
+                    children.push(ops);
+                    children.push(vals);
+                    children.push(not_id);
+                }
             }
-            
-            // .ops - scalar with extent=1 (one Matrix op)
-            // Op encoding: (type << 4) | hint
-            // Matrix = type 3, hint 0 -> (3 << 4) | 0 = 0x30
-            let mut ops = OProperty::scalar(".ops", DataType::new(PlainOldDataType::Uint8, 1));
-            ops.time_sampling_index = self.time_sampling_index;
-            for _ in &self.samples {
-                ops.add_scalar_pod(&0x30u8);
-            }
-            
-            // .inherits - scalar with extent=1
-            let mut inherits = OProperty::scalar(".inherits", DataType::new(PlainOldDataType::Boolean, 1));
-            inherits.time_sampling_index = self.time_sampling_index;
-            for sample in &self.samples {
-                inherits.add_scalar_pod(&(sample.inherits as u8));
-            }
-            
-            if let OPropertyData::Compound(children) = &mut geom.data {
-                // Order must match C++ Alembic: .inherits, .ops, .vals
-                children.push(inherits);
-                children.push(ops);
-                children.push(vals);
-            }
+            // For identity transforms, .xform compound remains empty (no children)
             
             self.object.properties.push(geom);
         }
@@ -2276,6 +2310,21 @@ impl OXform {
     pub fn add_child(&mut self, child: OObject) {
         self.object.children.push(child);
     }
+}
+
+/// Encode xform operation type to byte.
+/// Per XformOp.cpp: getOpEncoding() returns (m_type << 4) | (m_hint & 0xF)
+fn encode_xform_op(op_type: XformOpType) -> u8 {
+    let type_code = match op_type {
+        XformOpType::Scale => 0,      // kScaleOperation
+        XformOpType::Translate => 1,  // kTranslateOperation
+        XformOpType::Rotate => 2,     // kRotateOperation (axis + angle)
+        XformOpType::Matrix => 3,     // kMatrixOperation
+        XformOpType::RotateX => 4,    // kRotateXOperation
+        XformOpType::RotateY => 5,    // kRotateYOperation
+        XformOpType::RotateZ => 6,    // kRotateZOperation
+    };
+    type_code << 4 // hint = 0
 }
 
 // ============================================================================
@@ -2374,24 +2423,19 @@ impl OCurves {
     
     /// Add a sample.
     /// 
-    /// Property creation order follows C++ OCurvesSchema pattern:
-    /// P is created first, then .selfBnds via createSelfBoundsProperty().
-    /// This order is critical for indexed metadata table parity with C++.
+    /// C++ file header order: .selfBnds -> P -> nVertices -> curveBasisAndType
+    /// Create properties in same order for binary parity.
     pub fn add_sample(&mut self, sample: &OCurvesSample) {
-        // C++ order: P → .selfBnds → nVertices → curveBasisAndType
-        // P is created first, then createSelfBoundsProperty() is called
-        
-        // Positions (P) with metadata: geoScope=vtx, interpretation=point
-        // Created FIRST to match C++ indexed metadata order
-        let p_prop = self.get_or_create_array_with_meta("P", 
-            DataType::new(PlainOldDataType::Float32, 3), Self::p_meta());
-        p_prop.add_array_pod(&sample.positions);
-        
-        // Self bounds (.selfBnds) - created AFTER P
+        // 1. .selfBnds - first in file
         let bounds = Self::compute_bounds(&sample.positions);
         let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
             DataType::new(PlainOldDataType::Float64, 6), Self::bnds_meta());
         self_bnds_prop.add_scalar_pod(&bounds);
+        
+        // 2. P - second in file
+        let p_prop = self.get_or_create_array_with_meta("P", 
+            DataType::new(PlainOldDataType::Float32, 3), Self::p_meta());
+        p_prop.add_array_pod(&sample.positions);
         
         // nVertices
         let nv_prop = self.geom_compound.get_or_create_array_child("nVertices", DataType::new(PlainOldDataType::Int32, 1));
@@ -2594,25 +2638,20 @@ impl OPoints {
     
     /// Add a sample.
     /// 
-    /// Property creation order follows C++ OPointsSchema pattern:
-    /// P is created first, then .selfBnds via createSelfBoundsProperty().
-    /// This order is critical for indexed metadata table parity with C++.
+    /// C++ file header order: .selfBnds -> P -> .pointIds
+    /// Create properties in same order for binary parity.
     pub fn add_sample(&mut self, sample: &OPointsSample) {
-        // C++ order: P → .selfBnds → .pointIds
-        // P is created first, then createSelfBoundsProperty() is called
-        
-        // Positions (P) with metadata: geoScope=var (varying), interpretation=point
-        // Created FIRST to match C++ indexed metadata order
-        let p_prop = self.get_or_create_array_with_meta("P", 
-            DataType::new(PlainOldDataType::Float32, 3), 
-            Self::p_meta());
-        p_prop.add_array_pod(&sample.positions);
-        
-        // Self bounds (.selfBnds) - created AFTER P
+        // 1. .selfBnds - first in file
         let bounds = Self::compute_bounds(&sample.positions);
         let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
             DataType::new(PlainOldDataType::Float64, 6), Self::bnds_meta());
         self_bnds_prop.add_scalar_pod(&bounds);
+        
+        // 2. P - second in file
+        let p_prop = self.get_or_create_array_with_meta("P", 
+            DataType::new(PlainOldDataType::Float32, 3), 
+            Self::p_meta());
+        p_prop.add_array_pod(&sample.positions);
         
         // IDs (.pointIds) - C++ name
         let id_prop = self.geom_compound.get_or_create_array_child(".pointIds", DataType::new(PlainOldDataType::Uint64, 1));
@@ -2795,24 +2834,19 @@ impl OSubD {
     
     /// Add a sample.
     /// 
-    /// Property creation order follows C++ OSubDSchema pattern:
-    /// P is created first, then .selfBnds via createSelfBoundsProperty().
-    /// This order is critical for indexed metadata table parity with C++.
+    /// C++ file header order: .selfBnds -> P -> .faceIndices -> .faceCounts
+    /// Create properties in same order for binary parity.
     pub fn add_sample(&mut self, sample: &OSubDSample) {
-        // C++ order: P → .selfBnds → .faceIndices → .faceCounts
-        // P is created first, then createSelfBoundsProperty() is called
-        
-        // Positions (P) with metadata: geoScope=vtx, interpretation=point
-        // Created FIRST to match C++ indexed metadata order
-        let p_prop = self.get_or_create_array_with_meta("P", 
-            DataType::new(PlainOldDataType::Float32, 3), Self::p_meta());
-        p_prop.add_array_pod(&sample.positions);
-        
-        // Self bounds (.selfBnds) - created AFTER P
+        // 1. .selfBnds - first in file
         let bounds = Self::compute_bounds(&sample.positions);
         let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
             DataType::new(PlainOldDataType::Float64, 6), Self::bnds_meta());
         self_bnds_prop.add_scalar_pod(&bounds);
+        
+        // 2. P - second in file
+        let p_prop = self.get_or_create_array_with_meta("P", 
+            DataType::new(PlainOldDataType::Float32, 3), Self::p_meta());
+        p_prop.add_array_pod(&sample.positions);
         
         // Face indices
         let fi_prop = self.geom_compound.get_or_create_array_child(".faceIndices", DataType::new(PlainOldDataType::Int32, 1));
@@ -3143,21 +3177,19 @@ impl ONuPatch {
     }
     
     /// Add a sample.
+    /// C++ file header order: .selfBnds -> P -> nu -> nv -> ...
+    /// Create properties in same order for binary parity.
     pub fn add_sample(&mut self, sample: &ONuPatchSample) {
-        // C++ order: P → .selfBnds → nu → nv → ...
-        // P is created first, then createSelfBoundsProperty() is called
-        
-        // Positions (P) with metadata: geoScope=vtx, interpretation=point
-        // Created FIRST to match C++ indexed metadata order
-        let p_prop = self.get_or_create_array_with_meta("P", 
-            DataType::new(PlainOldDataType::Float32, 3), Self::p_meta());
-        p_prop.add_array_pod(&sample.positions);
-        
-        // Self bounds (.selfBnds) - created AFTER P
+        // 1. .selfBnds - first in file
         let bounds = Self::compute_bounds(&sample.positions);
         let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
             DataType::new(PlainOldDataType::Float64, 6), Self::bnds_meta());
         self_bnds_prop.add_scalar_pod(&bounds);
+        
+        // 2. P - second in file
+        let p_prop = self.get_or_create_array_with_meta("P", 
+            DataType::new(PlainOldDataType::Float32, 3), Self::p_meta());
+        p_prop.add_array_pod(&sample.positions);
         
         // numU, numV
         let nu_prop = self.geom_compound.get_or_create_scalar_child("nu", DataType::new(PlainOldDataType::Int32, 1));

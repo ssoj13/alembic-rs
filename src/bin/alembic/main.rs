@@ -993,8 +993,8 @@ fn copy2_xform(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> O
         
         for i in 0..xform.getNumSamples() {
             if let Ok(sample) = xform.getSample(i) {
-                let matrix = sample.matrix();
-                out_xform.add_sample(OXformSample::from_matrix(matrix, sample.inherits));
+                // Preserve original ops for binary parity
+                out_xform.add_sample(OXformSample::from_ops(sample.ops.clone(), sample.inherits));
             }
         }
         
@@ -1035,6 +1035,7 @@ fn copy2_polymesh(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -
                 );
                 out_sample.velocities = sample.velocities.clone();
                 out_sample.normals = sample.normals.clone();
+                out_sample.normals_is_simple_array = sample.normals_is_simple_array;
                 out_sample.uvs = sample.uvs.clone();
                 out_mesh.add_sample(&out_sample);
             }

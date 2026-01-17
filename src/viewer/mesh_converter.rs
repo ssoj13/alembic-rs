@@ -713,6 +713,7 @@ fn collect_samples_recursive(
                 velocities: sample.velocities,
                 uvs: sample.uvs,
                 normals: sample.normals,
+                normals_is_simple_array: false,
                 self_bounds: sample.self_bounds,
             };
             mesh_tasks.push(MeshTask {

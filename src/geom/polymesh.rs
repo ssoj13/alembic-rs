@@ -26,6 +26,8 @@ pub struct PolyMeshSample {
     pub uvs: Option<Vec<glam::Vec2>>,
     /// Normals (optional).
     pub normals: Option<Vec<glam::Vec3>>,
+    /// Whether normals are stored as simple array (true) or GeomParam compound (false).
+    pub normals_is_simple_array: bool,
     /// Self bounds - bounding box of this geometry (optional).
     pub self_bounds: Option<BBox3d>,
 }
@@ -380,6 +382,7 @@ impl<'a> IPolyMesh<'a> {
         
         // Read optional attributes
         sample.normals = geom_util::read_vec3_array(g, "N", index);
+        sample.normals_is_simple_array = geom_util::is_simple_array(g, "N");
         sample.uvs = geom_util::read_vec2_array(g, "uv", index);
         sample.self_bounds = geom_util::read_self_bounds(g, index);
         

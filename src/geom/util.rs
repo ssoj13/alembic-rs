@@ -227,6 +227,20 @@ pub fn read_vec3_array_opt(
     read_vec3_array(geom, prop_name, index)
 }
 
+/// Check if a property is a simple array (not a GeomParam compound).
+/// Returns true if the property exists and is a direct array, false if it's a compound or missing.
+pub fn is_simple_array(
+    geom: &dyn CompoundPropertyReader,
+    prop_name: &str,
+) -> bool {
+    if let Some(prop) = geom.getPropertyByName(prop_name) {
+        // If it's directly an array (not compound), it's a simple array
+        prop.asArray().is_some()
+    } else {
+        false
+    }
+}
+
 /// Read a Vec2 array property from a compound.
 /// Handles both simple arrays and GeomParam compounds (with .vals inside).
 pub fn read_vec2_array(
