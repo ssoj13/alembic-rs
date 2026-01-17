@@ -1878,6 +1878,8 @@ pub struct OPolyMeshSample {
     /// Write normals as simple array (true) or GeomParam compound (false).
     pub normals_is_simple_array: bool,
     pub uvs: Option<Vec<glam::Vec2>>,
+    /// Explicit self bounds (if None, computed from positions).
+    pub self_bounds: Option<crate::util::BBox3d>,
 }
 
 impl OPolyMeshSample {
@@ -1891,6 +1893,7 @@ impl OPolyMeshSample {
             normals: None,
             normals_is_simple_array: false, // Default to compound format
             uvs: None,
+            self_bounds: None, // Computed from positions if None
         }
     }
 }
@@ -1990,7 +1993,12 @@ impl OPolyMesh {
             DataType::new(PlainOldDataType::Int32, 1));
         face_counts_prop.add_array_pod(&sample.face_counts);
         
-        let bounds = Self::compute_bounds(&sample.positions);
+        // Use explicit self_bounds if provided, otherwise compute from positions
+        let bounds = if let Some(ref bnds) = sample.self_bounds {
+            [bnds.min.x, bnds.min.y, bnds.min.z, bnds.max.x, bnds.max.y, bnds.max.z]
+        } else {
+            Self::compute_bounds(&sample.positions)
+        };
         let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
             DataType::new(PlainOldDataType::Float64, 6), MetaData::new());
         self_bnds_prop.add_scalar_pod(&bounds);
@@ -2203,6 +2211,10 @@ pub struct OXform {
     object: OObject,
     samples: Vec<OXformSample>,
     time_sampling_index: u32,
+    /// Child bounds samples (bounding box of all children).
+    child_bounds: Vec<crate::util::BBox3d>,
+    /// Time sampling index for child bounds (may differ from transform ts).
+    child_bounds_ts_index: u32,
 }
 
 impl OXform {
@@ -2219,6 +2231,8 @@ impl OXform {
             object,
             samples: Vec::new(),
             time_sampling_index: 0,
+            child_bounds: Vec::new(),
+            child_bounds_ts_index: 0,
         }
     }
     
@@ -2236,6 +2250,16 @@ impl OXform {
     /// Add a sample.
     pub fn add_sample(&mut self, sample: OXformSample) {
         self.samples.push(sample);
+    }
+    
+    /// Add child bounds sample (bounding box of all children).
+    pub fn add_child_bounds(&mut self, bounds: crate::util::BBox3d) {
+        self.child_bounds.push(bounds);
+    }
+    
+    /// Set child bounds time sampling index.
+    pub fn set_child_bounds_time_sampling(&mut self, index: u32) {
+        self.child_bounds_ts_index = index;
     }
     
     /// Build the object.
@@ -2259,7 +2283,23 @@ impl OXform {
                 // Calculate total values for all ops
                 let total_vals: usize = first_sample.ops.iter().map(|op| op.values.len()).sum();
                 
-                // .vals - scalar with extent = total number of values
+                // .inherits - uses schema's time sampling, can have multiple samples
+                // Per C++ OXform.cpp: m_inheritsProperty = Abc::OBoolProperty(ptr, ".inherits", m_data->tsIdx)
+                let mut inherits = OProperty::scalar(".inherits", DataType::new(PlainOldDataType::Boolean, 1));
+                inherits.time_sampling_index = self.time_sampling_index;
+                for sample in &self.samples {
+                    inherits.add_scalar_pod(&(sample.inherits as u8));
+                }
+                
+                // .ops - STATIC scalar (ts_idx=0), always one sample
+                // Per C++ OXform.cpp: createScalarProperty(".ops", ..., 0) <- ts_idx is 0
+                let mut ops = OProperty::scalar(".ops", DataType::new(PlainOldDataType::Uint8, num_ops as u8));
+                // ops.time_sampling_index = 0; // Already default
+                let op_codes: Vec<u8> = first_sample.ops.iter().map(|op| encode_xform_op(op.op_type)).collect();
+                ops.add_scalar_sample(&op_codes);
+                
+                // .vals - uses schema's time sampling, has multiple samples
+                // Per C++ OXform.cpp: createScalarProperty(".vals", ..., m_data->tsIdx)
                 let mut vals = OProperty::scalar(".vals", DataType::new(PlainOldDataType::Float64, total_vals as u8));
                 vals.time_sampling_index = self.time_sampling_index;
                 for sample in &self.samples {
@@ -2270,23 +2310,7 @@ impl OXform {
                     vals.add_scalar_sample(bytemuck::cast_slice(&all_vals));
                 }
                 
-                // .ops - scalar with extent = number of operations
-                // Op encoding: (type << 4) | hint
-                let mut ops = OProperty::scalar(".ops", DataType::new(PlainOldDataType::Uint8, num_ops as u8));
-                ops.time_sampling_index = self.time_sampling_index;
-                for sample in &self.samples {
-                    let op_codes: Vec<u8> = sample.ops.iter().map(|op| encode_xform_op(op.op_type)).collect();
-                    ops.add_scalar_sample(&op_codes);
-                }
-                
-                // .inherits - scalar with extent=1
-                let mut inherits = OProperty::scalar(".inherits", DataType::new(PlainOldDataType::Boolean, 1));
-                inherits.time_sampling_index = self.time_sampling_index;
-                for sample in &self.samples {
-                    inherits.add_scalar_pod(&(sample.inherits as u8));
-                }
-                
-                // isNotConstantIdentity marker
+                // isNotConstantIdentity - STATIC marker (no time sampling)
                 let mut not_id = OProperty::scalar("isNotConstantIdentity", DataType::new(PlainOldDataType::Boolean, 1));
                 not_id.add_scalar_pod(&1u8);
                 
@@ -2299,6 +2323,27 @@ impl OXform {
                 }
             }
             // For identity transforms, .xform compound remains empty (no children)
+            
+            // .childBnds - child bounds property (optional, used by Maya)
+            // Per C++ OXform.cpp: OBox3dProperty(".childBnds", m_data->tsIdx)
+            if !self.child_bounds.is_empty() {
+                let mut bnds = OProperty::scalar(".childBnds", DataType::new(PlainOldDataType::Float64, 6));
+                bnds.time_sampling_index = self.child_bounds_ts_index;
+                // Set interpretation metadata
+                let mut bnds_meta = MetaData::new();
+                bnds_meta.set("interpretation", "box");
+                bnds.meta_data = bnds_meta;
+                for bounds in &self.child_bounds {
+                    let data: [f64; 6] = [
+                        bounds.min.x, bounds.min.y, bounds.min.z,
+                        bounds.max.x, bounds.max.y, bounds.max.z,
+                    ];
+                    bnds.add_scalar_sample(bytemuck::cast_slice(&data));
+                }
+                if let OPropertyData::Compound(children) = &mut geom.data {
+                    children.push(bnds);
+                }
+            }
             
             self.object.properties.push(geom);
         }

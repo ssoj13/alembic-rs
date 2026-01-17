@@ -861,6 +861,66 @@ fn get_object_info(obj: &IObject, schema: &str) -> String {
 // copy2 - Full re-write using our writer (ALL schema types)
 // ============================================================================
 
+/// Copy root object properties from source to destination.
+/// This copies Maya-specific metadata like .childBnds, statistics, N.samples.
+fn copy_root_properties(root: &IObject, out_root: &mut OObject) {
+    use alembic::ogawa::writer::OProperty;
+    use alembic::util::{DataType, PlainOldDataType};
+    use alembic::core::{ScalarPropertyReader, PropertyType};
+    
+    let props = root.getProperties();
+    let num_props = props.getNumProperties();
+    
+    for i in 0..num_props {
+        if let Some(prop) = props.getProperty(i) {
+            let header = prop.getHeader();
+            let name = &header.name;
+            
+            // Skip compound properties (schemas are handled separately)
+            if header.property_type == PropertyType::Compound {
+                continue;
+            }
+            
+            // Copy scalar properties
+            if let Some(scalar) = prop.asScalar() {
+                let num_samples = scalar.getNumSamples();
+                let pod = header.data_type.pod;
+                let data_type = DataType::new(pod, header.data_type.extent);
+                
+                let mut out_prop = OProperty::scalar(name, data_type);
+                out_prop.time_sampling_index = header.time_sampling_index;
+                out_prop.meta_data = header.meta_data.clone().into();
+                
+                // Read and write all samples
+                // For strings, use getSampleVec(); for POD types, use fixed buffer
+                let is_string = pod == PlainOldDataType::String || pod == PlainOldDataType::Wstring;
+                
+                for s in 0..num_samples {
+                    if is_string {
+                        // String: use getSampleVec which handles variable length
+                        // Need to add null terminator back (Alembic stores strings with \0)
+                        if let Ok(mut buf) = scalar.getSampleVec(s) {
+                            buf.push(0); // Add null terminator
+                            out_prop.add_scalar_sample(&buf);
+                        }
+                    } else {
+                        // Fixed POD type: use known size
+                        let sample_size = header.data_type.num_bytes();
+                        let mut buf = vec![0u8; sample_size];
+                        if scalar.getSample(s, &mut buf).is_ok() {
+                            out_prop.add_scalar_sample(&buf);
+                        }
+                    }
+                }
+                
+                out_root.add_property(out_prop);
+                debug!("Copied root property: {} ({} samples)", name, num_samples);
+            }
+            // Note: Array properties on root are less common, skip for now
+        }
+    }
+}
+
 fn cmd_copy2(input: &str, output: &str) {
     info!("Full re-write {} -> {} (ALL schema types)", input, output);
     
@@ -893,6 +953,9 @@ fn cmd_copy2(input: &str, output: &str) {
     
     let root = archive.getTop();
     let mut out_root = OObject::new("");
+    
+    // Copy root object properties (Maya metadata: .childBnds, statistics, N.samples)
+    copy_root_properties(&root, &mut out_root);
     
     let mut stats = CopyStats::default();
     
@@ -998,6 +1061,16 @@ fn copy2_xform(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> O
             }
         }
         
+        // Copy child bounds if present
+        if xform.has_child_bounds() {
+            out_xform.set_child_bounds_time_sampling(xform.child_bounds_time_sampling_index());
+            for i in 0..xform.child_bounds_num_samples() {
+                if let Some(bounds) = xform.child_bounds(i) {
+                    out_xform.add_child_bounds(bounds);
+                }
+            }
+        }
+        
         let mut out_obj = out_xform.build();
         for child in obj.getChildren() {
             if let Some(out_child) = copy2_object(&child, archive, stats) {
@@ -1037,6 +1110,7 @@ fn copy2_polymesh(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -
                 out_sample.normals = sample.normals.clone();
                 out_sample.normals_is_simple_array = sample.normals_is_simple_array;
                 out_sample.uvs = sample.uvs.clone();
+                out_sample.self_bounds = sample.self_bounds;
                 out_mesh.add_sample(&out_sample);
             }
         }

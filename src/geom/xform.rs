@@ -284,11 +284,14 @@ impl<'a> IXform<'a> {
         
         let mut sample = XformSample::default();
         
-        // Read .inherits (static scalar)
+        // Read .inherits - can be animated, read at requested sample index
+        // Per C++ IXform.cpp: m_inheritsProperty.getValue( iSS ) - uses sample selector
         if let Some(inh_prop) = geom.getPropertyByName(".inherits") {
             if let Some(scalar) = inh_prop.asScalar() {
                 let mut buf = [0u8; 1];
-                if scalar.getSample(0, &mut buf).is_ok() {
+                // Use the requested sample index (not 0)
+                let sample_idx = index.min(scalar.getNumSamples().saturating_sub(1));
+                if scalar.getSample(sample_idx, &mut buf).is_ok() {
                     sample.inherits = buf[0] != 0;
                 }
             }
