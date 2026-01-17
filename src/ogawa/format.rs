@@ -41,6 +41,10 @@ pub const EMPTY_GROUP_SIZE: u64 = 0;
 /// Empty data marker - data with zero bytes.
 pub const EMPTY_DATA_SIZE: u64 = 0;
 
+/// Empty data offset marker - offset 0 with MSB set.
+/// Used when dimensions can be inferred from data size (rank <= 1, non-string types).
+pub const EMPTY_DATA: u64 = TYPE_FLAG_MASK;  // 0x8000000000000000
+
 /// Minimum valid offset for data (after header).
 pub const MIN_DATA_OFFSET: u64 = HEADER_SIZE as u64;
 

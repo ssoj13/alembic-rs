@@ -768,8 +768,13 @@ fn cmd_copy2(input: &str, output: &str) {
     // Copy archive metadata from source file
     out_archive.set_archive_metadata(archive.getArchiveMetaData().clone());
     
-    // Copy time samplings
-    // TODO: copy time samplings from input archive
+    // Copy time samplings from input archive
+    // Skip index 0 (identity time sampling - always present)
+    for i in 1..archive.getNumTimeSamplings() {
+        if let Some(ts) = archive.getTimeSampling(i) {
+            out_archive.addTimeSampling(ts.clone());
+        }
+    }
     
     let root = archive.getTop();
     let mut out_root = OObject::new("");
@@ -778,7 +783,7 @@ fn cmd_copy2(input: &str, output: &str) {
     
     // Copy children recursively
     for child in root.getChildren() {
-        if let Some(out_child) = copy2_object(&child, &mut stats) {
+        if let Some(out_child) = copy2_object(&child, &archive, &mut stats) {
             out_root.add_child(out_child);
         }
     }
@@ -824,7 +829,7 @@ impl CopyStats {
     }
 }
 
-fn copy2_object(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_object(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
     let name = obj.getName();
     let schema = obj.getMetaData().get("schema").unwrap_or_default();
     
@@ -832,41 +837,44 @@ fn copy2_object(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
     
     // Handle different schema types
     if schema.contains("Xform") {
-        return copy2_xform(obj, stats);
+        return copy2_xform(obj, archive, stats);
     } else if schema.contains("PolyMesh") {
-        return copy2_polymesh(obj, stats);
+        return copy2_polymesh(obj, archive, stats);
     } else if schema.contains("SubD") {
-        return copy2_subd(obj, stats);
+        return copy2_subd(obj, archive, stats);
     } else if schema.contains("Curve") {
-        return copy2_curves(obj, stats);
+        return copy2_curves(obj, archive, stats);
     } else if schema.contains("Points") {
-        return copy2_points(obj, stats);
+        return copy2_points(obj, archive, stats);
     } else if schema.contains("Camera") {
-        return copy2_camera(obj, stats);
+        return copy2_camera(obj, archive, stats);
     } else if schema.contains("NuPatch") {
-        return copy2_nupatch(obj, stats);
+        return copy2_nupatch(obj, archive, stats);
     } else if schema.contains("Light") {
-        return copy2_light(obj, stats);
+        return copy2_light(obj, archive, stats);
     } else if schema.contains("FaceSet") {
-        return copy2_faceset(obj, stats);
+        return copy2_faceset(obj, archive, stats);
     }
     
     // Generic object - just copy children
     stats.other += 1;
     let mut out_obj = OObject::new(name);
     for child in obj.getChildren() {
-        if let Some(out_child) = copy2_object(&child, stats) {
+        if let Some(out_child) = copy2_object(&child, archive, stats) {
             out_obj.add_child(out_child);
         }
     }
     Some(out_obj)
 }
 
-fn copy2_xform(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_xform(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
     let name = obj.getName();
     if let Some(xform) = IXform::new(obj) {
         stats.xform += 1;
         let mut out_xform = OXform::new(name);
+        
+        // Copy time sampling
+        out_xform.set_time_sampling(xform.getTimeSamplingIndex());
         
         for i in 0..xform.getNumSamples() {
             if let Ok(sample) = xform.getSample(i) {
@@ -877,7 +885,7 @@ fn copy2_xform(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
         
         let mut out_obj = out_xform.build();
         for child in obj.getChildren() {
-            if let Some(out_child) = copy2_object(&child, stats) {
+            if let Some(out_child) = copy2_object(&child, archive, stats) {
                 out_obj.add_child(out_child);
             }
         }
@@ -887,18 +895,21 @@ fn copy2_xform(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
     debug!("copy2_xform: IXform::new failed for {}, using generic copy", name);
     let mut out_obj = OObject::new(name);
     for child in obj.getChildren() {
-        if let Some(out_child) = copy2_object(&child, stats) {
+        if let Some(out_child) = copy2_object(&child, archive, stats) {
             out_obj.add_child(out_child);
         }
     }
     Some(out_obj)
 }
 
-fn copy2_polymesh(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_polymesh(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
     let name = obj.getName();
     if let Some(mesh) = IPolyMesh::new(obj) {
         stats.polymesh += 1;
         let mut out_mesh = OPolyMesh::new(name);
+        
+        // Copy time sampling
+        out_mesh.set_time_sampling(mesh.getTimeSamplingIndex());
         
         for i in 0..mesh.getNumSamples() {
             if let Ok(sample) = mesh.getSample(i) {
@@ -916,7 +927,7 @@ fn copy2_polymesh(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
         let mut out_obj = out_mesh.build();
         // Copy child FaceSets if any
         for child in obj.getChildren() {
-            if let Some(out_child) = copy2_object(&child, stats) {
+            if let Some(out_child) = copy2_object(&child, archive, stats) {
                 out_obj.add_child(out_child);
             }
         }
@@ -926,18 +937,21 @@ fn copy2_polymesh(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
     debug!("copy2_polymesh: IPolyMesh::new failed for {}", name);
     let mut out_obj = OObject::new(name);
     for child in obj.getChildren() {
-        if let Some(out_child) = copy2_object(&child, stats) {
+        if let Some(out_child) = copy2_object(&child, archive, stats) {
             out_obj.add_child(out_child);
         }
     }
     Some(out_obj)
 }
 
-fn copy2_subd(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_subd(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
     let name = obj.getName();
     if let Some(sd) = ISubD::new(obj) {
         stats.subd += 1;
         let mut out_sd = OSubD::new(name);
+        
+        // Copy time sampling
+        out_sd.set_time_sampling(sd.getTimeSamplingIndex());
         
         for i in 0..sd.getNumSamples() {
             if let Ok(sample) = sd.getSample(i) {
@@ -972,7 +986,7 @@ fn copy2_subd(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
         
         let mut out_obj = out_sd.build();
         for child in obj.getChildren() {
-            if let Some(out_child) = copy2_object(&child, stats) {
+            if let Some(out_child) = copy2_object(&child, archive, stats) {
                 out_obj.add_child(out_child);
             }
         }
@@ -981,11 +995,14 @@ fn copy2_subd(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
     None
 }
 
-fn copy2_curves(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_curves(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
     let name = obj.getName();
     if let Some(curves) = ICurves::new(obj) {
         stats.curves += 1;
         let mut out_curves = OCurves::new(name);
+        
+        // Copy time sampling
+        out_curves.set_time_sampling(curves.getTimeSamplingIndex());
         
         for i in 0..curves.getNumSamples() {
             if let Ok(sample) = curves.getSample(i) {
@@ -1016,11 +1033,14 @@ fn copy2_curves(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
     None
 }
 
-fn copy2_points(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_points(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
     let name = obj.getName();
     if let Some(points) = IPoints::new(obj) {
         stats.points += 1;
         let mut out_points = OPoints::new(name);
+        
+        // Copy time sampling
+        out_points.set_time_sampling(points.getTimeSamplingIndex());
         
         for i in 0..points.getNumSamples() {
             if let Ok(sample) = points.getSample(i) {
@@ -1044,11 +1064,14 @@ fn copy2_points(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
     None
 }
 
-fn copy2_camera(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_camera(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
     let name = obj.getName();
     if let Some(cam) = ICamera::new(obj) {
         stats.camera += 1;
         let mut out_cam = OCamera::new(name);
+        
+        // Copy time sampling
+        out_cam.set_time_sampling(cam.getTimeSamplingIndex());
         
         for i in 0..cam.getNumSamples() {
             if let Ok(sample) = cam.getSample(i) {
@@ -1061,11 +1084,14 @@ fn copy2_camera(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
     None
 }
 
-fn copy2_nupatch(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_nupatch(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
     let name = obj.getName();
     if let Some(nup) = INuPatch::new(obj) {
         stats.nupatch += 1;
         let mut out_nup = ONuPatch::new(name);
+        
+        // Copy time sampling
+        out_nup.set_time_sampling(nup.getTimeSamplingIndex());
         
         for i in 0..nup.getNumSamples() {
             if let Ok(sample) = nup.getSample(i) {
@@ -1093,11 +1119,14 @@ fn copy2_nupatch(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
     None
 }
 
-fn copy2_light(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_light(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
     let name = obj.getName();
     if let Some(light) = ILight::new(obj) {
         stats.light += 1;
         let mut out_light = OLight::new(name);
+        
+        // Copy time sampling
+        out_light.set_time_sampling(light.getTimeSamplingIndex());
         
         // Light contains camera-like samples directly
         for i in 0..light.getNumSamples() {
@@ -1111,11 +1140,14 @@ fn copy2_light(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
     None
 }
 
-fn copy2_faceset(obj: &IObject, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_faceset(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
     let name = obj.getName();
     if let Some(fs) = IFaceSet::new(obj) {
         stats.faceset += 1;
         let mut out_fs = OFaceSet::new(name);
+        
+        // Copy time sampling
+        out_fs.set_time_sampling(fs.getTimeSamplingIndex());
         
         for i in 0..fs.getNumSamples() {
             if let Ok(sample) = fs.getSample(i) {

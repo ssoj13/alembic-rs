@@ -113,8 +113,8 @@ impl OStream {
     }
 }
 
-/// Library version for written archives (1.7.9).
-const ALEMBIC_LIBRARY_VERSION: i32 = 10709;
+/// Library version for written archives (1.8.8).
+const ALEMBIC_LIBRARY_VERSION: i32 = 10808;
 
 /// Ogawa file version.
 /// Ogawa file format version - matches C++ ALEMBIC_OGAWA_FILE_VERSION = 0
@@ -197,7 +197,7 @@ impl OArchive {
             indexed_metadata: vec![MetaData::new()], // Index 0 is always empty
             metadata_map: HashMap::new(),
             archive_metadata: MetaData::new(),
-            application_writer: String::from("alembic-rs"),
+            application_writer: String::new(),  // Empty by default for C++ parity
             compression_hint: -1,
             dedup_map: HashMap::new(),
             dedup_enabled: true,
@@ -602,37 +602,10 @@ impl OArchive {
         // Write all objects recursively, collect positions
         let (root_obj_pos, _, _) = self.write_object(root, "/")?;
 
-        // Write archive metadata
-        // Include application_writer if not already set via set_app_name
-        let mut archive_meta = self.archive_metadata.clone();
-        if archive_meta.get("_ai_Application").is_none() && !self.application_writer.is_empty() {
-            archive_meta.set("_ai_Application", &self.application_writer);
-        }
-        // Also set the Alembic version as in the reference implementation
-        if archive_meta.get("_ai_AlembicVersion").is_none() {
-            archive_meta.set("_ai_AlembicVersion", "1.7.9"); // Using the same version as the library
-        }
-        let archive_meta_str = archive_meta.serialize();
-        let archive_meta_pos = if archive_meta_str.is_empty() {
-            0
-        } else {
-            self.write_data(archive_meta_str.as_bytes())?
-        };
-
-        // Serialize time samplings
-        let ts_data = self.serialize_time_samplings();
-        let ts_pos = self.write_data(&ts_data)?;
-
-        // Serialize indexed metadata
-        let idx_meta_data = self.serialize_indexed_metadata();
-        let idx_meta_pos = if idx_meta_data.is_empty() {
-            0
-        } else {
-            self.write_data(&idx_meta_data)?
-        };
-
         // In deferred mode, flush all collected groups first
         // This writes groups bottom-up like C++
+        // IMPORTANT: Must be done BEFORE writing archive metadata/time samplings/indexed metadata
+        // to match C++ layout where these come after all object groups
         let final_root_obj_pos = if self.deferred_mode {
             // If root_obj_pos is a deferred placeholder, flush and resolve
             if Self::is_deferred_placeholder(root_obj_pos) {
@@ -647,6 +620,35 @@ impl OArchive {
             }
         } else {
             root_obj_pos
+        };
+
+        // Write archive metadata AFTER flushing groups (C++ parity)
+        // Include application_writer if not already set via set_app_name
+        let mut archive_meta = self.archive_metadata.clone();
+        if archive_meta.get("_ai_Application").is_none() && !self.application_writer.is_empty() {
+            archive_meta.set("_ai_Application", &self.application_writer);
+        }
+        // Also set the Alembic version as in the reference implementation
+        if archive_meta.get("_ai_AlembicVersion").is_none() {
+            archive_meta.set("_ai_AlembicVersion", "Alembic 1.8.8 (built Aug  4 2025 10:01:52)");
+        }
+        let archive_meta_str = archive_meta.serialize();
+        let archive_meta_pos = if archive_meta_str.is_empty() {
+            0
+        } else {
+            self.write_data(archive_meta_str.as_bytes())?
+        };
+
+        // Serialize time samplings AFTER flushing groups (C++ parity)
+        let ts_data = self.serialize_time_samplings();
+        let ts_pos = self.write_data(&ts_data)?;
+
+        // Serialize indexed metadata AFTER flushing groups (C++ parity)
+        let idx_meta_data = self.serialize_indexed_metadata();
+        let idx_meta_pos = if idx_meta_data.is_empty() {
+            0
+        } else {
+            self.write_data(&idx_meta_data)?
         };
 
         // Build root group:
@@ -828,16 +830,26 @@ impl OArchive {
             return Ok((pos, h1, h2));
         }
         
-        // Collect property hashes (pairs of u64)
-        let mut prop_hashes: Vec<u64> = Vec::new();
+        // Create sorted indices by data_write_order for data writing order
+        // But keep original compound order for group children
+        let mut sorted_indices: Vec<usize> = (0..props.len()).collect();
+        sorted_indices.sort_by_key(|&i| props[i].data_write_order);
         
-        // Write each property
-        let mut prop_positions = Vec::new();
-        for prop in props {
-            let (prop_pos, h1, h2) = self.write_property_with_data(prop)?;
-            prop_positions.push(prop_pos);
-            prop_hashes.push(h1);
-            prop_hashes.push(h2);
+        // Write properties in data_write_order, store positions indexed by original order
+        let mut prop_positions = vec![0u64; props.len()];
+        let mut prop_hashes_pairs = vec![(0u64, 0u64); props.len()];
+        
+        for &idx in &sorted_indices {
+            let (pos, h1, h2) = self.write_property_with_data(&props[idx])?;
+            prop_positions[idx] = pos;
+            prop_hashes_pairs[idx] = (h1, h2);
+        }
+        
+        // Collect hashes in compound order (original order)
+        let mut prop_hashes: Vec<u64> = Vec::new();
+        for (h1, h2) in &prop_hashes_pairs {
+            prop_hashes.push(*h1);
+            prop_hashes.push(*h2);
         }
         
         // Write property headers
@@ -976,12 +988,22 @@ impl OArchive {
                     };
                     
                     let data_pos = self.write_keyed_data(data)?;
-                    let dims_data: Vec<u8> = dims.iter()
-                        .flat_map(|dim| (*dim as u64).to_le_bytes())
-                        .collect();
-                    let dims_pos = self.write_data(&dims_data)?;
+                    
+                    // C++ WriteDimensions: use EMPTY_DATA for rank <= 1 (non-string types)
+                    // This allows dimensions to be inferred from data size
+                    let dims_offset = if dims.len() <= 1 && 
+                        !matches!(prop.data_type.pod, PlainOldDataType::String | PlainOldDataType::Wstring) 
+                    {
+                        EMPTY_DATA  // No data written, just marker
+                    } else {
+                        let dims_data: Vec<u8> = dims.iter()
+                            .flat_map(|dim| (*dim as u64).to_le_bytes())
+                            .collect();
+                        make_data_offset(self.write_data(&dims_data)?)
+                    };
+                    
                     children.push(make_data_offset(data_pos));
-                    children.push(make_data_offset(dims_pos));
+                    children.push(dims_offset);
                 }
                 let pos = if self.deferred_mode {
                     self.add_deferred_group(children)
@@ -1128,15 +1150,21 @@ impl OArchive {
         info |= (size_hint & 0x03) << 2;
 
         // Property type (bits 0-1)
+        // Bit 0 = is_scalar_like, bit 1 = is_array
+        // 0=compound, 1=scalar, 2=array, 3=scalar-like-array
         match &prop.data {
             OPropertyData::Compound(_) => {
                 info |= 0; // Compound
             }
             OPropertyData::Scalar(_) => {
-                info |= 1; // Scalar
+                info |= 1; // Scalar (always scalar-like)
             }
             OPropertyData::Array(_) => {
-                info |= 2; // Array
+                if prop.is_scalar_like {
+                    info |= 3; // Scalar-like array
+                } else {
+                    info |= 2; // Regular array
+                }
             }
         }
 
@@ -1406,6 +1434,12 @@ pub struct OProperty {
     pub last_changed_index: u32,
     /// Property data.
     pub data: OPropertyData,
+    /// Is scalar-like (for array properties that behave like scalars).
+    /// When true, bit 0 of property type is set (ptype 3 instead of 2 for arrays).
+    pub is_scalar_like: bool,
+    /// Data write order - determines order of data in file (C++ parity).
+    /// Lower values are written first. Properties with same order use compound order.
+    pub data_write_order: u32,
 }
 
 impl OProperty {
@@ -1419,6 +1453,8 @@ impl OProperty {
             first_changed_index: 1,
             last_changed_index: 0,
             data: OPropertyData::Scalar(Vec::new()),
+            is_scalar_like: true,
+            data_write_order: u32::MAX, // Default: use compound order
         }
     }
     
@@ -1432,6 +1468,23 @@ impl OProperty {
             first_changed_index: 1,
             last_changed_index: 0,
             data: OPropertyData::Array(Vec::new()),
+            is_scalar_like: false,
+            data_write_order: u32::MAX,
+        }
+    }
+    
+    /// Create an array property that behaves like a scalar (scalar-like).
+    pub fn scalar_like_array(name: &str, data_type: DataType) -> Self {
+        Self {
+            name: name.to_string(),
+            data_type,
+            meta_data: MetaData::new(),
+            time_sampling_index: 0,
+            first_changed_index: 1,
+            last_changed_index: 0,
+            data: OPropertyData::Array(Vec::new()),
+            is_scalar_like: true,
+            data_write_order: u32::MAX,
         }
     }
     
@@ -1445,6 +1498,8 @@ impl OProperty {
             first_changed_index: 0,
             last_changed_index: 0,
             data: OPropertyData::Compound(Vec::new()),
+            is_scalar_like: false,
+            data_write_order: u32::MAX,
         }
     }
     
@@ -1541,9 +1596,17 @@ impl OProperty {
     /// Update changed indices based on samples.
     fn update_changed_indices(&mut self) {
         let n = self.getNumSamples() as u32;
-        if n > 0 {
-            self.first_changed_index = 1.min(n);
-            self.last_changed_index = n.saturating_sub(1);
+        if n == 0 {
+            self.first_changed_index = 0;
+            self.last_changed_index = 0;
+        } else if n == 1 {
+            // Single sample = all samples same (static property)
+            self.first_changed_index = 0;
+            self.last_changed_index = 0;
+        } else {
+            // Multiple samples - assume all change (animation)
+            self.first_changed_index = 1;
+            self.last_changed_index = n - 1;
         }
     }
 }
@@ -1629,35 +1692,50 @@ impl OPolyMesh {
     /// 
     /// This order is critical for indexed metadata table parity with C++.
     pub fn add_sample(&mut self, sample: &OPolyMeshSample) {
-        // C++ order: P → .selfBnds → .faceIndices → .faceCounts
-        // createPositionsProperty() creates P first, then calls createSelfBoundsProperty()
+        // C++ property CREATION order determines compound order (indexed metadata):
+        // .selfBnds → P → .faceIndices → .faceCounts
+        // 
+        // C++ data WRITE order follows setSample() call order:
+        // P → .faceIndices → .faceCounts → .selfBnds
+        //
+        // We must create properties in compound order, then write data in write order.
         
-        // Positions (P) with metadata: geoScope=vtx, interpretation=point
-        // Created FIRST to match C++ createPositionsProperty() order
+        // First ensure all properties exist in correct compound order
+        // (only creates on first sample, subsequent calls find existing)
+        let mut bnds_meta = MetaData::new();
+        bnds_meta.set("interpretation", "box");
+        let _ = self.get_or_create_scalar_with_meta(".selfBnds",
+            DataType::new(PlainOldDataType::Float64, 6), bnds_meta);
+        
         let mut p_meta = MetaData::new();
         p_meta.set("geoScope", "vtx");
         p_meta.set("interpretation", "point");
-        let positions_prop = self.get_or_create_array_with_meta("P", 
+        let _ = self.get_or_create_array_with_meta("P", 
             DataType::new(PlainOldDataType::Float32, 3), p_meta);
+        
+        let _ = self.get_or_create_array_with_ts(".faceIndices",
+            DataType::new(PlainOldDataType::Int32, 1));
+        
+        let _ = self.get_or_create_scalar_like_array_with_ts(".faceCounts",
+            DataType::new(PlainOldDataType::Int32, 1));
+        
+        // Now write data in C++ setSample() order: P → .faceIndices → .faceCounts → .selfBnds
+        let positions_prop = self.get_or_create_array_with_meta("P", 
+            DataType::new(PlainOldDataType::Float32, 3), MetaData::new());
         positions_prop.add_array_pod(&sample.positions);
         
-        // Self bounds (.selfBnds) - created AFTER P by createSelfBoundsProperty()
-        let bounds = Self::compute_bounds(&sample.positions);
-        let mut bnds_meta = MetaData::new();
-        bnds_meta.set("interpretation", "box");
-        let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
-            DataType::new(PlainOldDataType::Float64, 6), bnds_meta);
-        self_bnds_prop.add_scalar_pod(&bounds);
-        
-        // Face indices (.faceIndices)
         let face_indices_prop = self.get_or_create_array_with_ts(".faceIndices",
             DataType::new(PlainOldDataType::Int32, 1));
         face_indices_prop.add_array_pod(&sample.face_indices);
         
-        // Face counts (.faceCounts)
-        let face_counts_prop = self.get_or_create_array_with_ts(".faceCounts",
+        let face_counts_prop = self.get_or_create_scalar_like_array_with_ts(".faceCounts",
             DataType::new(PlainOldDataType::Int32, 1));
         face_counts_prop.add_array_pod(&sample.face_counts);
+        
+        let bounds = Self::compute_bounds(&sample.positions);
+        let self_bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
+            DataType::new(PlainOldDataType::Float64, 6), MetaData::new());
+        self_bnds_prop.add_scalar_pod(&bounds);
         
         // Velocities (optional)
         if let Some(ref vels) = sample.velocities {
@@ -1709,6 +1787,23 @@ impl OPolyMesh {
             }
             // Create new with time sampling
             let mut prop = OProperty::array(prop_name, data_type);
+            prop.time_sampling_index = ts_idx;
+            children.push(prop);
+            children.last_mut().unwrap()
+        } else {
+            unreachable!()
+        }
+    }
+    
+    /// Get or create scalar-like array property with time sampling index set.
+    /// Scalar-like arrays have property type 3 (bit 0 set) indicating they behave like scalars.
+    fn get_or_create_scalar_like_array_with_ts(&mut self, prop_name: &str, data_type: DataType) -> &mut OProperty {
+        let ts_idx = self.time_sampling_index;
+        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
+            if let Some(idx) = children.iter().position(|p| p.name == prop_name) {
+                return &mut children[idx];
+            }
+            let mut prop = OProperty::scalar_like_array(prop_name, data_type);
             prop.time_sampling_index = ts_idx;
             children.push(prop);
             children.last_mut().unwrap()
