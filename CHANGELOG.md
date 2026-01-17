@@ -1,5 +1,122 @@
 # CHANGELOG
 
+## Session 2026-01-16: FULL BINARY PARITY with C++ Alembic
+
+### Achievement
+**100% byte-identical output** with C++ Alembic library. The `copy2` command now produces files that are SHA256-identical to C++ reference output.
+
+### Verification
+```
+Rust: 1011 bytes
+C++:  1011 bytes
+Total differences: 0
+SHA256 match: True
+```
+
+### Critical Fixes
+
+#### 1. Property Order in All Schemas
+**Problem**: Properties were written in Rust iteration order, not C++ order.
+
+**C++ order** (PolyMesh example from OPolyMeshSchema.cpp):
+1. `P` (positions)
+2. `.selfBnds` (self bounds)
+3. `.faceIndices`
+4. `.faceCounts`
+5. `uv` (if present)
+6. `N` (normals, if present)
+7. `velocity` (if present)
+
+**Solution**: Explicit property ordering matching C++ destructor call order in all schema writers.
+
+#### 2. Indexed Metadata Order
+**Problem**: `.selfBnds` was being written before `P` in indexed metadata.
+
+**C++ behavior**: Properties are added to indexed metadata in creation order. `P` is created first in OPolyMeshSchema constructor.
+
+**Solution**: Ensured `P` property header appears first in indexed metadata, then `.selfBnds`.
+
+#### 3. App String Copying
+**Problem**: Writer was using hardcoded app string instead of copying from source file.
+
+**Solution**: `copy2` command now extracts and preserves the original app metadata string:
+```rust
+let app_str = archive.app_info().unwrap_or_default();
+let writer = OArchive::new_with_app(&output_path, &app_str)?;
+```
+
+#### 4. Time Sampling Copying
+**Problem**: Time sampling data was not being copied from source archive.
+
+**Solution**: Added time sampling extraction and application in copy2:
+- Extract time sampling from source properties
+- Apply matching time sampling index to output properties
+- Preserve acyclic vs cyclic time sampling types
+
+#### 5. Compound Property Hash Computation
+**Problem**: Nested compound properties had incorrect hash computation.
+
+**C++ behavior** (CpwImpl::~CpwImpl):
+```cpp
+// For nested compounds:
+// 1. computeHash(hash) - updates with m_hashes (child property hashes)
+// 2. HashPropertyHeader(header, hash) - adds property name + metadata
+// 3. hash.Final() - produces final hash
+```
+
+**Solution**: Modified `finalize_property_group` to return raw property hashes, then recompute compound hash with property header:
+```rust
+let (pos, _, _, raw_prop_hashes) = self.write_properties_with_data(sub_props)?;
+
+// Recompute hash: child_hashes + property_header
+let mut hasher = SpookyHash::new(0, 0);
+let hash_bytes: Vec<u8> = raw_prop_hashes.iter()
+    .flat_map(|h| h.to_le_bytes())
+    .collect();
+hasher.update(&hash_bytes);
+hash_property_header(&mut hasher, prop, &time_sampling);
+let (h1, h2) = hasher.finalize();
+```
+
+#### 6. Deferred Mode Disabled (KEY FIX)
+**Problem**: Rust was using `deferred_mode: true` which wrote object groups at end of file, but C++ writes them inline.
+
+**C++ behavior**: Object groups are written when destructors run (inline with data).
+- C++: object groups at offset 519, indexed metadata at 543
+- Rust (deferred): indexed metadata at 519, object groups at 572+
+
+**Solution**: Disabled deferred_mode to write groups inline:
+```rust
+OArchiveBuilder {
+    deferred_mode: false,  // Disabled for binary parity
+    ...
+}
+```
+
+### Files Changed
+- `src/ogawa/writer.rs`:
+  - `write_properties_with_object_headers()` returns 5-tuple with raw prop hashes
+  - `finalize_property_group()` Compound branch recomputes hash
+  - `OArchiveBuilder::deferred_mode` set to `false`
+- `src/bin/alembic/main.rs`:
+  - `copy2_archive()` copies app string from source
+  - Added time sampling copying logic
+
+### Test Files
+Comparison tools in `tools/`:
+- `compare_files.ps1` - Byte-by-byte comparison
+- `dump_region.ps1` - Hex dump with ASCII
+- `decode_headers.ps1` - Property header analysis
+
+### C++ Reference Consulted
+- `_ref/alembic/lib/Alembic/AbcCoreOgawa/AwImpl.cpp` - Archive destructor order
+- `_ref/alembic/lib/Alembic/AbcCoreOgawa/CpwImpl.cpp` - Compound hash computation
+- `_ref/alembic/lib/Alembic/AbcCoreOgawa/OwData.cpp` - Object data/headers
+- `_ref/alembic/lib/Alembic/AbcCoreOgawa/WriteUtil.cpp` - HashPropertyHeader
+- `_ref/alembic/lib/Alembic/AbcGeom/OPolyMesh.cpp` - Property creation order
+
+---
+
 ## Session 2026-01-14: IBL (Image-Based Lighting) Fix
 
 ### Problem

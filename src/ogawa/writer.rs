@@ -172,6 +172,17 @@ pub struct OArchive {
     deferred_mode: bool,
 }
 
+/// Context for computing object headers inside write_properties.
+/// 
+/// Object headers depend on data_hash which is computed during property writing,
+/// so we need to pass the context to compute headers at the right moment.
+/// This struct is passed from write_object to write_properties_with_object_headers.
+struct ObjectHeadersContext<'a> {
+    children: &'a [OObject],
+    child_hash1: u64,
+    child_hash2: u64,
+}
+
 impl OArchive {
     /// Create a new Alembic file for writing.
     pub fn create(path: impl AsRef<Path>) -> Result<Self> {
@@ -202,7 +213,7 @@ impl OArchive {
             dedup_map: HashMap::new(),
             dedup_enabled: true,
             deferred_groups: Vec::new(),
-            deferred_mode: true,  // Enable C++ compatible mode by default
+            deferred_mode: false,  // Disabled for binary parity - write groups inline
         })
     }
     
@@ -602,16 +613,14 @@ impl OArchive {
         // Write all objects recursively, collect positions
         let (root_obj_pos, _, _) = self.write_object(root, "/")?;
 
-        // In deferred mode, flush all collected groups first
-        // This writes groups bottom-up like C++
-        // IMPORTANT: Must be done BEFORE writing archive metadata/time samplings/indexed metadata
-        // to match C++ layout where these come after all object groups
+        // C++ BINARY PARITY: Flush deferred groups FIRST.
+        // In C++, object groups are frozen when their destructors run.
+        // For "triangle" and "/" objects, their groups freeze during the
+        // OwData destructor cascade triggered by m_data.reset() in AwImpl::~AwImpl.
+        // This happens BEFORE archive metadata/time samplings/indexed metadata.
         let final_root_obj_pos = if self.deferred_mode {
-            // If root_obj_pos is a deferred placeholder, flush and resolve
             if Self::is_deferred_placeholder(root_obj_pos) {
-                // Flush all deferred groups - this writes them bottom-up
                 self.flush_deferred_groups()?;
-                // Now resolve the placeholder
                 let idx = Self::deferred_group_index(root_obj_pos);
                 self.deferred_groups[idx].final_pos
                     .ok_or_else(|| Error::invalid("Root object group not written"))?
@@ -622,7 +631,7 @@ impl OArchive {
             root_obj_pos
         };
 
-        // Write archive metadata AFTER flushing groups (C++ parity)
+        // Write archive metadata AFTER flushing object groups (C++ parity)
         // Include application_writer if not already set via set_app_name
         let mut archive_meta = self.archive_metadata.clone();
         if archive_meta.get("_ai_Application").is_none() && !self.application_writer.is_empty() {
@@ -639,11 +648,11 @@ impl OArchive {
             self.write_data(archive_meta_str.as_bytes())?
         };
 
-        // Serialize time samplings AFTER flushing groups (C++ parity)
+        // Serialize time samplings
         let ts_data = self.serialize_time_samplings();
         let ts_pos = self.write_data(&ts_data)?;
 
-        // Serialize indexed metadata AFTER flushing groups (C++ parity)
+        // Serialize indexed metadata
         let idx_meta_data = self.serialize_indexed_metadata();
         let idx_meta_pos = if idx_meta_data.is_empty() {
             0
@@ -699,12 +708,12 @@ impl OArchive {
             format!("{}/{}", parent_path, obj.name)
         };
         
-        // Write properties compound and get property hash (dataHash)
-        let (props_pos, data_hash1, data_hash2) = self.write_properties_with_data(&obj.properties)?;
-        
-        // Write child objects and collect their hashes
+        // C++ BINARY PARITY: Process child objects FIRST to get their hashes.
+        // We need child_hashes before calling write_properties_with_object_headers
+        // because object headers (which includes child info) must be written
+        // BEFORE parent property headers, but AFTER child compound groups.
         let mut child_positions = Vec::new();
-        let mut child_hashes: Vec<u64> = Vec::new(); // pairs of (hash1, hash2)
+        let mut child_hashes: Vec<u64> = Vec::new();
         for child in &obj.children {
             let (child_pos, h1, h2) = self.write_object(child, &full_path)?;
             child_positions.push(child_pos);
@@ -713,7 +722,6 @@ impl OArchive {
         }
         
         // Compute child objects hash (ioHash) matching C++ OwData::writeHeaders()
-        // ioHash.Update(&m_hashes.front(), m_hashes.size() * 8)
         let (child_hash1, child_hash2) = if child_hashes.is_empty() {
             (0u64, 0u64)
         } else {
@@ -725,17 +733,17 @@ impl OArchive {
             hasher.finalize()
         };
         
-        // Write object headers (for children) with 32-byte hash suffix
-        let headers_data = self.serialize_object_headers_with_hash(
-            &obj.children,
-            data_hash1, data_hash2,
-            child_hash1, child_hash2,
-        );
-        let headers_pos = if headers_data.is_empty() {
-            0
-        } else {
-            self.write_data(&headers_data)?
+        // Write properties compound WITH object headers context.
+        // Object headers will be written inside, between nested compound groups
+        // and parent property headers, matching C++ destructor order.
+        let obj_ctx = ObjectHeadersContext {
+            children: &obj.children,
+            child_hash1,
+            child_hash2,
         };
+        let (props_pos, data_hash1, data_hash2, headers_pos, _) = 
+            self.write_properties_with_object_headers(&obj.properties, Some(obj_ctx))?;
+        
         
         // Build object group:
         // Child 0: properties compound (group)
@@ -758,7 +766,7 @@ impl OArchive {
             }
         }
         
-        if !headers_data.is_empty() {
+        if headers_pos != 0 {
             children.push(make_data_offset(headers_pos));
         }
         
@@ -806,28 +814,70 @@ impl OArchive {
     /// Write properties compound and return its position.
     #[allow(dead_code)]
     fn write_properties(&mut self, props: &[OProperty]) -> Result<u64> {
-        let (pos, _, _) = self.write_properties_with_data(props)?;
+        let (pos, _, _, _) = self.write_properties_with_data(props)?;
         Ok(pos)
     }
     
-    /// Write properties compound and return (position, hash1, hash2).
+    /// Write properties compound and return (position, hash1, hash2, raw_prop_hashes).
     /// 
     /// Matches C++ CpwData::computeHash() approach:
     /// - Collects (hash1, hash2) pairs from each child property
     /// - Updates hash with all child hashes
-    fn write_properties_with_data(&mut self, props: &[OProperty]) -> Result<(u64, u64, u64)> {
+    /// 
+    /// IMPORTANT: For NESTED compound properties, the caller must re-hash
+    /// the returned prop_hashes WITH the property header (name + metadata)
+    /// to match C++ CpwImpl::~CpwImpl behavior.
+    fn write_properties_with_data(&mut self, props: &[OProperty]) -> Result<(u64, u64, u64, Vec<u64>)> {
+        // Wrapper that calls internal without object headers (for recursive compound calls)
+        let (pos, h1, h2, _, raw_hashes) = self.write_properties_with_object_headers(props, None)?;
+        Ok((pos, h1, h2, raw_hashes))
+    }
+    
+    /// Write properties compound with optional object headers context.
+    /// 
+    /// In C++, when an object (OwImpl) destructor runs, it writes object headers
+    /// BEFORE the property compound (CpwImpl) destructor writes property headers.
+    /// This means object headers must be written between:
+    /// - Phase 2 (finalize nested compound groups) 
+    /// - Phase 3 (write parent property headers)
+    /// 
+    /// The obj_ctx parameter is only passed from write_object for top-level
+    /// property compounds, not for nested compound properties.
+    /// 
+    /// Returns (props_pos, data_hash1, data_hash2, object_headers_pos)
+    /// Write properties compound with optional object headers.
+    /// 
+    /// Returns (props_pos, data_hash1, data_hash2, object_headers_pos, raw_prop_hashes).
+    /// 
+    /// The raw_prop_hashes are needed for NESTED compounds to recompute the hash
+    /// with property header (matching C++ CpwImpl::~CpwImpl behavior).
+    fn write_properties_with_object_headers(
+        &mut self,
+        props: &[OProperty],
+        obj_ctx: Option<ObjectHeadersContext<'_>>,
+    ) -> Result<(u64, u64, u64, u64, Vec<u64>)> {
         if props.is_empty() {
-            // Empty compound - use deferred or immediate depending on mode
-            let pos = if self.deferred_mode {
-                self.add_deferred_group(Vec::new())
-            } else {
-                self.write_group(&[])?
-            };
+            // Empty compound - but we may still need to write object headers!
             // C++ calls dataHash.Final() even for empty compound, which returns non-zero
             // SpookyHash::new(0,0).finalize() matches C++ SpookyHash::Final() with no updates
             let hasher = SpookyHash::new(0, 0);
             let (h1, h2) = hasher.finalize();
-            return Ok((pos, h1, h2));
+            
+            // Write object headers if context provided (for root object with children but no props)
+            let obj_headers_pos = if let Some(ctx) = obj_ctx {
+                let obj_headers = self.serialize_object_headers_with_hash(
+                    ctx.children,
+                    h1, h2,  // data_hash for empty compound
+                    ctx.child_hash1, ctx.child_hash2,
+                );
+                self.write_data(&obj_headers)?
+            } else {
+                0
+            };
+            
+            // Write empty compound group
+            let pos = self.write_group(&[])?;
+            return Ok((pos, h1, h2, obj_headers_pos, Vec::new()));
         }
         
         // Create sorted indices by data_write_order for data writing order
@@ -835,12 +885,23 @@ impl OArchive {
         let mut sorted_indices: Vec<usize> = (0..props.len()).collect();
         sorted_indices.sort_by_key(|&i| props[i].data_write_order);
         
-        // Write properties in data_write_order, store positions indexed by original order
+        // C++ binary parity: write ALL sample data first, then ALL property groups
+        // Phase 1: Write sample data for all properties, collect group children
+        let mut prop_states: Vec<(Vec<u64>, Option<(u64, u64)>)> = vec![(Vec::new(), None); props.len()];
+        
+        for &idx in &sorted_indices {
+            let state = self.collect_property_sample_data(&props[idx])?;
+            prop_states[idx] = state;
+        }
+        
+        // Phase 2: Write property groups in REVERSE compound order
+        // C++ writes groups during destruction, which is reverse of creation order
         let mut prop_positions = vec![0u64; props.len()];
         let mut prop_hashes_pairs = vec![(0u64, 0u64); props.len()];
         
-        for &idx in &sorted_indices {
-            let (pos, h1, h2) = self.write_property_with_data(&props[idx])?;
+        for idx in (0..props.len()).rev() {
+            let (children, sample_hash) = std::mem::take(&mut prop_states[idx]);
+            let (pos, h1, h2) = self.finalize_property_group(&props[idx], children, sample_hash)?;
             prop_positions[idx] = pos;
             prop_hashes_pairs[idx] = (h1, h2);
         }
@@ -851,6 +912,38 @@ impl OArchive {
             prop_hashes.push(*h1);
             prop_hashes.push(*h2);
         }
+        
+        // C++ BINARY PARITY: Write object headers BEFORE property headers.
+        // In C++, the OwImpl destructor body calls m_data->finalize()->writeHeaders()
+        // which writes object headers. Then member destructors run, and CpwData
+        // destructor writes property headers. So object headers come first.
+        //
+        // Now that we have data_hash (computed from prop_hashes), we can compute
+        // and write object headers if context was provided.
+        // Compute compound hash matching C++ CpwData::computeHash()
+        // hash.Update(&m_hashes.front(), m_hashes.size() * 8)
+        // Note: For non-empty compounds, this computes hash of child hashes.
+        // For empty compounds, C++ returns (0, 0) - but we don't reach here for empty.
+        let (data_h1, data_h2) = {
+            let hash_bytes: Vec<u8> = prop_hashes.iter()
+                .flat_map(|h| h.to_le_bytes())
+                .collect();
+            let mut hasher = SpookyHash::new(0, 0);
+            hasher.update(&hash_bytes);
+            hasher.finalize()
+        };
+        
+        let obj_headers_pos = if let Some(ctx) = obj_ctx {
+            let obj_headers = self.serialize_object_headers_with_hash(
+                ctx.children,
+                data_h1, data_h2,
+                ctx.child_hash1, ctx.child_hash2,
+            );
+            let pos = self.write_data(&obj_headers)?;
+            pos
+        } else {
+            0
+        };
         
         // Write property headers
         let headers_data = self.serialize_property_headers(props);
@@ -867,26 +960,16 @@ impl OArchive {
         }
         children.push(make_data_offset(headers_pos));
         
-        let pos = if self.deferred_mode {
-            self.add_deferred_group(children)
-        } else {
-            self.write_group(&children)?
-        };
+        // IMPORTANT: Property compound groups must be written INLINE (not deferred)
+        // to match C++ destructor ordering. In C++, when a CpwImpl destructor runs,
+        // it writes property headers and then the OGroup destructor freezes the group.
+        // This happens BEFORE the parent compound can continue writing.
+        // Deferred mode is only for OBJECT groups, not property compound groups.
+        let pos = self.write_group(&children)?;
         
-        // Compute compound hash matching C++ CpwData::computeHash()
-        // hash.Update(&m_hashes.front(), m_hashes.size() * 8)
-        let (h1, h2) = if prop_hashes.is_empty() {
-            (0u64, 0u64)
-        } else {
-            let hash_bytes: Vec<u8> = prop_hashes.iter()
-                .flat_map(|h| h.to_le_bytes())
-                .collect();
-            let mut hasher = SpookyHash::new(0, 0);
-            hasher.update(&hash_bytes);
-            hasher.finalize()
-        };
-        
-        Ok((pos, h1, h2))
+        // data_h1, data_h2 already computed above before object headers
+        // Return raw prop_hashes for nested compounds to recompute hash with property header
+        Ok((pos, data_h1, data_h2, obj_headers_pos, prop_hashes))
     }
     
     /// Write a single property and return its position.
@@ -894,6 +977,142 @@ impl OArchive {
     fn write_property(&mut self, prop: &OProperty) -> Result<u64> {
         let (pos, _, _) = self.write_property_with_data(prop)?;
         Ok(pos)
+    }
+    
+    /// Phase 1: Collect sample data for a property without writing the group.
+    /// Returns (group_children, sample_hash) for later finalization.
+    fn collect_property_sample_data(&mut self, prop: &OProperty) -> Result<(Vec<u64>, Option<(u64, u64)>)> {
+        let ts_idx = prop.time_sampling_index;
+        
+        match &prop.data {
+            OPropertyData::Scalar(samples) => {
+                self.update_max_samples(ts_idx, samples.len() as u32);
+                
+                let mut sample_hash: Option<(u64, u64)> = None;
+                let mut children = Vec::new();
+                
+                for sample in samples {
+                    let content_key = crate::core::ArraySampleContentKey::from_data(sample);
+                    let digest = content_key.digest();
+                    let d0 = u64::from_le_bytes(digest[0..8].try_into().unwrap());
+                    let d1 = u64::from_le_bytes(digest[8..16].try_into().unwrap());
+                    
+                    sample_hash = match sample_hash {
+                        None => Some((d0, d1)),
+                        Some((h0, h1)) => Some(SpookyHash::short_end_mix(h0, h1, d0, d1)),
+                    };
+                    
+                    let pos = self.write_keyed_data(sample)?;
+                    children.push(make_data_offset(pos));
+                }
+                Ok((children, sample_hash))
+            }
+            OPropertyData::Array(samples) => {
+                self.update_max_samples(ts_idx, samples.len() as u32);
+                
+                let mut sample_hash: Option<(u64, u64)> = None;
+                let mut children = Vec::new();
+                
+                for (data, dims) in samples {
+                    let content_key = crate::core::ArraySampleContentKey::from_data(data);
+                    let digest = content_key.digest();
+                    let mut d = (
+                        u64::from_le_bytes(digest[0..8].try_into().unwrap()),
+                        u64::from_le_bytes(digest[8..16].try_into().unwrap()),
+                    );
+                    hash_dimensions(dims, &mut d);
+                    
+                    sample_hash = match sample_hash {
+                        None => Some(d),
+                        Some((h0, h1)) => Some(SpookyHash::short_end_mix(h0, h1, d.0, d.1)),
+                    };
+                    
+                    let data_pos = self.write_keyed_data(data)?;
+                    
+                    let dims_offset = if dims.len() <= 1 && 
+                        !matches!(prop.data_type.pod, PlainOldDataType::String | PlainOldDataType::Wstring) 
+                    {
+                        EMPTY_DATA
+                    } else {
+                        let dims_data: Vec<u8> = dims.iter()
+                            .flat_map(|dim| (*dim as u64).to_le_bytes())
+                            .collect();
+                        make_data_offset(self.write_data(&dims_data)?)
+                    };
+                    
+                    children.push(make_data_offset(data_pos));
+                    children.push(dims_offset);
+                }
+                Ok((children, sample_hash))
+            }
+            OPropertyData::Compound(_) => {
+                // Compounds are handled recursively in finalize_property_group
+                Ok((Vec::new(), None))
+            }
+        }
+    }
+    
+    /// Phase 2: Finalize a property by writing its group and computing hash.
+    fn finalize_property_group(
+        &mut self, 
+        prop: &OProperty, 
+        children: Vec<u64>, 
+        sample_hash: Option<(u64, u64)>
+    ) -> Result<(u64, u64, u64)> {
+        let ts_idx = prop.time_sampling_index;
+        let time_sampling = self.time_samplings.get(ts_idx as usize)
+            .cloned()
+            .unwrap_or_else(TimeSampling::identity);
+        
+        match &prop.data {
+            OPropertyData::Scalar(_) | OPropertyData::Array(_) => {
+                // Write the property group INLINE (not deferred!)
+                // This matches C++ destructor order: property groups are written
+                // during property destruction, which happens in reverse compound order.
+                // The compound group itself may be deferred, but individual property
+                // groups must be written inline to maintain exact C++ binary parity.
+                let pos = self.write_group(&children)?;
+                
+                // Compute final hash
+                let mut hasher = SpookyHash::new(0, 0);
+                hash_property_header(&mut hasher, prop, &time_sampling);
+                
+                if let Some((sh0, sh1)) = sample_hash {
+                    let mut sample_bytes = Vec::with_capacity(16);
+                    sample_bytes.extend_from_slice(&sh0.to_le_bytes());
+                    sample_bytes.extend_from_slice(&sh1.to_le_bytes());
+                    hasher.update(&sample_bytes);
+                }
+                
+                let (h1, h2) = hasher.finalize();
+                Ok((pos, h1, h2))
+            }
+            OPropertyData::Compound(sub_props) => {
+                // C++ CpwImpl::~CpwImpl for NESTED compounds:
+                // 1. computeHash(hash) - updates with m_hashes (child property hashes)
+                // 2. HashPropertyHeader(header, hash) - adds property name + metadata
+                // 3. hash.Final() - produces final hash
+                //
+                // write_properties_with_data returns raw prop_hashes so we can
+                // recompute hash WITH property header for correct C++ parity.
+                let (pos, _, _, raw_prop_hashes) = self.write_properties_with_data(sub_props)?;
+                
+                // Recompute hash: child_hashes + property_header
+                let mut hasher = SpookyHash::new(0, 0);
+                
+                // First: hash child property hashes (m_hashes in C++)
+                let hash_bytes: Vec<u8> = raw_prop_hashes.iter()
+                    .flat_map(|h| h.to_le_bytes())
+                    .collect();
+                hasher.update(&hash_bytes);
+                
+                // Second: hash property header (name + metadata)
+                hash_property_header(&mut hasher, prop, &time_sampling);
+                
+                let (h1, h2) = hasher.finalize();
+                Ok((pos, h1, h2))
+            }
+        }
     }
     
     /// Write a single property and return (position, hash1, hash2).
@@ -937,11 +1156,9 @@ impl OArchive {
                     let pos = self.write_keyed_data(sample)?;
                     children.push(make_data_offset(pos));
                 }
-                let pos = if self.deferred_mode {
-                    self.add_deferred_group(children)
-                } else {
-                    self.write_group(&children)?
-                };
+                // C++ writes property groups inline (not deferred) for binary parity
+                // Only compound groups are deferred
+                let pos = self.write_group(&children)?;
                 
                 // Final hash: HashPropertyHeader + sample hash
                 let mut hasher = SpookyHash::new(0, 0);
@@ -1005,11 +1222,9 @@ impl OArchive {
                     children.push(make_data_offset(data_pos));
                     children.push(dims_offset);
                 }
-                let pos = if self.deferred_mode {
-                    self.add_deferred_group(children)
-                } else {
-                    self.write_group(&children)?
-                };
+                // C++ writes property groups inline (not deferred) for binary parity
+                // Only compound groups are deferred
+                let pos = self.write_group(&children)?;
                 
                 // Final hash: HashPropertyHeader + sample hash
                 let mut hasher = SpookyHash::new(0, 0);
@@ -1026,7 +1241,19 @@ impl OArchive {
                 Ok((pos, h1, h2))
             }
             OPropertyData::Compound(sub_props) => {
-                self.write_properties_with_data(sub_props)
+                // Same as finalize_property_group Compound branch:
+                // C++ CpwImpl::~CpwImpl hashes child hashes + property header
+                let (pos, _, _, raw_prop_hashes) = self.write_properties_with_data(sub_props)?;
+                
+                let mut hasher = SpookyHash::new(0, 0);
+                let hash_bytes: Vec<u8> = raw_prop_hashes.iter()
+                    .flat_map(|h| h.to_le_bytes())
+                    .collect();
+                hasher.update(&hash_bytes);
+                hash_property_header(&mut hasher, prop, &time_sampling);
+                
+                let (h1, h2) = hasher.finalize();
+                Ok((pos, h1, h2))
             }
         }
     }
@@ -1177,8 +1404,18 @@ impl OArchive {
             // Extent (bits 12-19)
             info |= (prop.data_type.extent as u32 & 0xff) << 12;
 
-            // Is homogenous (bit 10) - always true for now
-            info |= 0x400;
+            // Is homogenous (bit 10)
+            // C++ Alembic has a bug: WrittenSampleID stores extent * numPoints,
+            // but comparison uses dims.numPoints(). For extent > 1 on first sample,
+            // these differ and isHomogenous becomes false.
+            // For scalar properties: always true
+            // For array properties with extent > 1: false (matching C++ bug)
+            // For array properties with extent == 1: true
+            let is_array = matches!(prop.data, OPropertyData::Array(_));
+            let is_homogenous = !is_array || prop.data_type.extent == 1;
+            if is_homogenous {
+                info |= 0x400;
+            }
 
             // Time sampling index flag (bit 8)
             if prop.time_sampling_index != 0 {
@@ -1702,24 +1939,30 @@ impl OPolyMesh {
         
         // First ensure all properties exist in correct compound order
         // (only creates on first sample, subsequent calls find existing)
+        // Compound order: .selfBnds → P → .faceIndices → .faceCounts
+        // Data write order: P(0) → .faceIndices(1) → .faceCounts(2) → .selfBnds(3)
         let mut bnds_meta = MetaData::new();
         bnds_meta.set("interpretation", "box");
-        let _ = self.get_or_create_scalar_with_meta(".selfBnds",
+        let bnds_prop = self.get_or_create_scalar_with_meta(".selfBnds",
             DataType::new(PlainOldDataType::Float64, 6), bnds_meta);
+        bnds_prop.data_write_order = 3;
         
         let mut p_meta = MetaData::new();
         p_meta.set("geoScope", "vtx");
         p_meta.set("interpretation", "point");
-        let _ = self.get_or_create_array_with_meta("P", 
+        let p_prop = self.get_or_create_array_with_meta("P", 
             DataType::new(PlainOldDataType::Float32, 3), p_meta);
+        p_prop.data_write_order = 0;
         
-        let _ = self.get_or_create_array_with_ts(".faceIndices",
+        let fi_prop = self.get_or_create_array_with_ts(".faceIndices",
             DataType::new(PlainOldDataType::Int32, 1));
+        fi_prop.data_write_order = 1;
         
-        let _ = self.get_or_create_scalar_like_array_with_ts(".faceCounts",
+        let fc_prop = self.get_or_create_scalar_like_array_with_ts(".faceCounts",
             DataType::new(PlainOldDataType::Int32, 1));
+        fc_prop.data_write_order = 2;
         
-        // Now write data in C++ setSample() order: P → .faceIndices → .faceCounts → .selfBnds
+        // Add data (order here doesn't matter, data_write_order controls file layout)
         let positions_prop = self.get_or_create_array_with_meta("P", 
             DataType::new(PlainOldDataType::Float32, 3), MetaData::new());
         positions_prop.add_array_pod(&sample.positions);

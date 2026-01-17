@@ -500,6 +500,30 @@ mod tests {
     use super::*;
     
     #[test]
+    fn test_data_hash_input() {
+        // Test with the exact input we're seeing in alembic-rs
+        // Input: .geom hash values d7d35c38a0e54568 and ee465c7985e555db
+        let h1: u64 = 0xd7d35c38a0e54568;
+        let h2: u64 = 0xee465c7985e555db;
+        
+        // Create 16-byte input (little-endian)
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&h1.to_le_bytes());
+        bytes.extend_from_slice(&h2.to_le_bytes());
+        
+        println!("Input bytes: {:02x?}", bytes);
+        println!("Input len: {}", bytes.len());
+        
+        let (result_h1, result_h2) = SpookyHash::hash128(&bytes, 0, 0);
+        println!("SpookyHash result: {:016x} {:016x}", result_h1, result_h2);
+        
+        // Expected from Rust run: bcc4c6c609917194 734a3741fb6e744a
+        // Expected from C++:       8a28910dc3f75add 4eeb8728e3c376c2
+        println!("Expected (Rust):  bcc4c6c609917194 734a3741fb6e744a");
+        println!("Expected (C++):   8a28910dc3f75add 4eeb8728e3c376c2");
+    }
+    
+    #[test]
     fn test_empty() {
         let (h1, h2) = SpookyHash::hash128(b"", 0, 0);
         // Known values for empty string with seed (0, 0)
