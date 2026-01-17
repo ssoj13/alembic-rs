@@ -186,12 +186,30 @@ pub fn geom_property_names(object: &IObject<'_>) -> Vec<String> {
 use crate::core::CompoundPropertyReader;
 
 /// Read a Vec3 array property from a compound.
+/// Handles both simple arrays and GeomParam compounds (with .vals inside).
 pub fn read_vec3_array(
     geom: &dyn CompoundPropertyReader,
     prop_name: &str,
     index: usize,
 ) -> Option<Vec<glam::Vec3>> {
     let prop = geom.getPropertyByName(prop_name)?;
+    
+    // Try as GeomParam compound first (has .vals inside)
+    if let Some(compound) = prop.asCompound() {
+        if let Some(vals_prop) = compound.getPropertyByName(".vals") {
+            if let Some(array) = vals_prop.asArray() {
+                if let Ok(data) = array.getSampleVec(index) {
+                    if let Ok(floats) = bytemuck::try_cast_slice::<u8, f32>(&data) {
+                        return Some(floats.chunks_exact(3)
+                            .map(|c| glam::vec3(c[0], c[1], c[2]))
+                            .collect());
+                    }
+                }
+            }
+        }
+    }
+    
+    // Fall back to simple array
     let array = prop.asArray()?;
     let data = array.getSampleVec(index).ok()?;
     let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;
@@ -210,12 +228,30 @@ pub fn read_vec3_array_opt(
 }
 
 /// Read a Vec2 array property from a compound.
+/// Handles both simple arrays and GeomParam compounds (with .vals inside).
 pub fn read_vec2_array(
     geom: &dyn CompoundPropertyReader,
     prop_name: &str,
     index: usize,
 ) -> Option<Vec<glam::Vec2>> {
     let prop = geom.getPropertyByName(prop_name)?;
+    
+    // Try as GeomParam compound first (has .vals inside)
+    if let Some(compound) = prop.asCompound() {
+        if let Some(vals_prop) = compound.getPropertyByName(".vals") {
+            if let Some(array) = vals_prop.asArray() {
+                if let Ok(data) = array.getSampleVec(index) {
+                    if let Ok(floats) = bytemuck::try_cast_slice::<u8, f32>(&data) {
+                        return Some(floats.chunks_exact(2)
+                            .map(|c| glam::vec2(c[0], c[1]))
+                            .collect());
+                    }
+                }
+            }
+        }
+    }
+    
+    // Fall back to simple array
     let array = prop.asArray()?;
     let data = array.getSampleVec(index).ok()?;
     let floats: &[f32] = bytemuck::try_cast_slice(&data).ok()?;

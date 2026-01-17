@@ -1821,6 +1821,22 @@ impl OProperty {
         }
     }
     
+    /// Get or create a compound child property by name.
+    /// 
+    /// If a property with the given name exists, returns it.
+    /// Otherwise creates a new compound property and returns it.
+    pub fn get_or_create_compound_child(&mut self, name: &str) -> &mut OProperty {
+        if let OPropertyData::Compound(children) = &mut self.data {
+            if let Some(idx) = children.iter().position(|p| p.name == name) {
+                return &mut children[idx];
+            }
+            children.push(OProperty::compound(name));
+            children.last_mut().unwrap()
+        } else {
+            panic!("get_or_create_compound_child called on non-compound property")
+        }
+    }
+    
     /// Get number of samples.
     pub fn getNumSamples(&self) -> usize {
         match &self.data {
@@ -1987,21 +2003,40 @@ impl OPolyMesh {
             vel_prop.add_array_pod(vels);
         }
         
-        // Normals (optional)
+        // Normals (optional) - write as GeomParam compound: N/.vals
         if let Some(ref normals) = sample.normals {
-            let normal_prop = self.get_or_create_array_with_ts("N",
+            // Create or get compound property "N"
+            let n_compound = self.geom_compound.get_or_create_compound_child("N");
+            // Set metadata for GeomParam
+            n_compound.meta_data.set("isGeomParam", "true");
+            n_compound.meta_data.set("podName", "float32_t");
+            n_compound.meta_data.set("podExtent", "3");
+            n_compound.meta_data.set("geoScope", "fvr"); // facevarying
+            // Create .vals array inside compound
+            let vals_prop = n_compound.get_or_create_array_child(".vals",
                 DataType::new(PlainOldDataType::Float32, 3));
-            normal_prop.add_array_pod(normals);
+            vals_prop.time_sampling_index = self.time_sampling_index;
+            vals_prop.add_array_pod(normals);
         }
         
-        // UVs (optional) - stored in .arbGeomParams
+        // UVs (optional) - write as GeomParam compound: .arbGeomParams/uv/.vals
         if let Some(ref uvs) = sample.uvs {
             if self.arb_geom_compound.is_none() {
                 self.arb_geom_compound = Some(OProperty::compound(".arbGeomParams"));
             }
-            let uv_prop = self.get_or_create_arb_array("uv",
+            // Create or get compound property "uv"
+            let arb = self.arb_geom_compound.as_mut().unwrap();
+            let uv_compound = arb.get_or_create_compound_child("uv");
+            // Set metadata for GeomParam
+            uv_compound.meta_data.set("isGeomParam", "true");
+            uv_compound.meta_data.set("podName", "float32_t");
+            uv_compound.meta_data.set("podExtent", "2");
+            uv_compound.meta_data.set("geoScope", "fvr"); // facevarying
+            // Create .vals array inside compound
+            let vals_prop = uv_compound.get_or_create_array_child(".vals",
                 DataType::new(PlainOldDataType::Float32, 2));
-            uv_prop.add_array_pod(uvs);
+            vals_prop.time_sampling_index = self.time_sampling_index;
+            vals_prop.add_array_pod(uvs);
         }
     }
     
@@ -2225,9 +2260,10 @@ impl OXform {
             }
             
             if let OPropertyData::Compound(children) = &mut geom.data {
-                children.push(vals);
-                children.push(ops);
+                // Order must match C++ Alembic: .inherits, .ops, .vals
                 children.push(inherits);
+                children.push(ops);
+                children.push(vals);
             }
             
             self.object.properties.push(geom);
@@ -2383,16 +2419,30 @@ impl OCurves {
             w_prop.add_array_pod(widths);
         }
         
-        // Normals (optional)
+        // Normals (optional) - write as GeomParam compound: N/.vals
         if let Some(ref normals) = sample.normals {
-            let n_prop = self.geom_compound.get_or_create_array_child("N", DataType::new(PlainOldDataType::Float32, 3));
-            n_prop.add_array_pod(normals);
+            let n_compound = self.geom_compound.get_or_create_compound_child("N");
+            n_compound.meta_data.set("isGeomParam", "true");
+            n_compound.meta_data.set("podName", "float32_t");
+            n_compound.meta_data.set("podExtent", "3");
+            n_compound.meta_data.set("geoScope", "vtx");
+            let vals_prop = n_compound.get_or_create_array_child(".vals",
+                DataType::new(PlainOldDataType::Float32, 3));
+            vals_prop.time_sampling_index = self.time_sampling_index;
+            vals_prop.add_array_pod(normals);
         }
         
-        // UVs (optional)
+        // UVs (optional) - write as GeomParam compound: uv/.vals
         if let Some(ref uvs) = sample.uvs {
-            let uv_prop = self.geom_compound.get_or_create_array_child("uv", DataType::new(PlainOldDataType::Float32, 2));
-            uv_prop.add_array_pod(uvs);
+            let uv_compound = self.geom_compound.get_or_create_compound_child("uv");
+            uv_compound.meta_data.set("isGeomParam", "true");
+            uv_compound.meta_data.set("podName", "float32_t");
+            uv_compound.meta_data.set("podExtent", "2");
+            uv_compound.meta_data.set("geoScope", "vtx");
+            let vals_prop = uv_compound.get_or_create_array_child(".vals",
+                DataType::new(PlainOldDataType::Float32, 2));
+            vals_prop.time_sampling_index = self.time_sampling_index;
+            vals_prop.add_array_pod(uvs);
         }
         
         // Knots (optional, for NURBS)
@@ -2674,6 +2724,8 @@ pub struct OSubDSample {
     pub holes: Option<Vec<i32>>,
     pub uvs: Option<Vec<glam::Vec2>>,
     pub uv_indices: Option<Vec<i32>>,
+    pub normals: Option<Vec<glam::Vec3>>,
+    pub normal_indices: Option<Vec<i32>>,
 }
 
 impl OSubDSample {
@@ -2693,6 +2745,8 @@ impl OSubDSample {
             holes: None,
             uvs: None,
             uv_indices: None,
+            normals: None,
+            normal_indices: None,
         }
     }
     
@@ -2808,14 +2862,44 @@ impl OSubD {
             prop.add_array_pod(holes);
         }
         
-        // UVs (optional)
+        // UVs (optional) - write as GeomParam compound: uv/.vals and uv/.indices
         if let Some(ref uvs) = sample.uvs {
-            let prop = self.geom_compound.get_or_create_array_child("uv", DataType::new(PlainOldDataType::Float32, 2));
-            prop.add_array_pod(uvs);
+            let uv_compound = self.geom_compound.get_or_create_compound_child("uv");
+            uv_compound.meta_data.set("isGeomParam", "true");
+            uv_compound.meta_data.set("podName", "float32_t");
+            uv_compound.meta_data.set("podExtent", "2");
+            uv_compound.meta_data.set("geoScope", "fvr");
+            let vals_prop = uv_compound.get_or_create_array_child(".vals",
+                DataType::new(PlainOldDataType::Float32, 2));
+            vals_prop.time_sampling_index = self.time_sampling_index;
+            vals_prop.add_array_pod(uvs);
+            
+            if let Some(ref uvi) = sample.uv_indices {
+                let idx_prop = uv_compound.get_or_create_array_child(".indices",
+                    DataType::new(PlainOldDataType::Int32, 1));
+                idx_prop.time_sampling_index = self.time_sampling_index;
+                idx_prop.add_array_pod(uvi);
+            }
         }
-        if let Some(ref uvi) = sample.uv_indices {
-            let prop = self.geom_compound.get_or_create_array_child(".uvIndices", DataType::new(PlainOldDataType::Int32, 1));
-            prop.add_array_pod(uvi);
+        
+        // Normals (optional) - write as GeomParam compound: N/.vals and N/.indices
+        if let Some(ref normals) = sample.normals {
+            let n_compound = self.geom_compound.get_or_create_compound_child("N");
+            n_compound.meta_data.set("isGeomParam", "true");
+            n_compound.meta_data.set("podName", "float32_t");
+            n_compound.meta_data.set("podExtent", "3");
+            n_compound.meta_data.set("geoScope", "fvr");
+            let vals_prop = n_compound.get_or_create_array_child(".vals",
+                DataType::new(PlainOldDataType::Float32, 3));
+            vals_prop.time_sampling_index = self.time_sampling_index;
+            vals_prop.add_array_pod(normals);
+            
+            if let Some(ref ni) = sample.normal_indices {
+                let idx_prop = n_compound.get_or_create_array_child(".indices",
+                    DataType::new(PlainOldDataType::Int32, 1));
+                idx_prop.time_sampling_index = self.time_sampling_index;
+                idx_prop.add_array_pod(ni);
+            }
         }
     }
     
@@ -3108,16 +3192,30 @@ impl ONuPatch {
             prop.add_array_pod(vels);
         }
         
-        // UVs (optional)
+        // UVs (optional) - write as GeomParam compound: uv/.vals
         if let Some(ref uvs) = sample.uvs {
-            let prop = self.geom_compound.get_or_create_array_child("uv", DataType::new(PlainOldDataType::Float32, 2));
-            prop.add_array_pod(uvs);
+            let uv_compound = self.geom_compound.get_or_create_compound_child("uv");
+            uv_compound.meta_data.set("isGeomParam", "true");
+            uv_compound.meta_data.set("podName", "float32_t");
+            uv_compound.meta_data.set("podExtent", "2");
+            uv_compound.meta_data.set("geoScope", "fvr");
+            let vals_prop = uv_compound.get_or_create_array_child(".vals",
+                DataType::new(PlainOldDataType::Float32, 2));
+            vals_prop.time_sampling_index = self.time_sampling_index;
+            vals_prop.add_array_pod(uvs);
         }
         
-        // Normals (optional)
+        // Normals (optional) - write as GeomParam compound: N/.vals
         if let Some(ref normals) = sample.normals {
-            let prop = self.geom_compound.get_or_create_array_child("N", DataType::new(PlainOldDataType::Float32, 3));
-            prop.add_array_pod(normals);
+            let n_compound = self.geom_compound.get_or_create_compound_child("N");
+            n_compound.meta_data.set("isGeomParam", "true");
+            n_compound.meta_data.set("podName", "float32_t");
+            n_compound.meta_data.set("podExtent", "3");
+            n_compound.meta_data.set("geoScope", "fvr");
+            let vals_prop = n_compound.get_or_create_array_child(".vals",
+                DataType::new(PlainOldDataType::Float32, 3));
+            vals_prop.time_sampling_index = self.time_sampling_index;
+            vals_prop.add_array_pod(normals);
         }
     }
     
@@ -3244,6 +3342,11 @@ impl OLight {
             
             // Camera schema embedded in light
             let mut cam_compound = OProperty::compound(".camera");
+            // Camera compound needs its own schema metadata
+            let mut cam_meta = MetaData::new();
+            cam_meta.set("schema", "AbcGeom_Camera_v1");
+            cam_compound.meta_data = cam_meta;
+            
             let mut core = OProperty::scalar(".core", DataType::new(PlainOldDataType::Float64, 16));
             core.time_sampling_index = self.time_sampling_index;
             

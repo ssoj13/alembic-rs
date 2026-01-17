@@ -1035,6 +1035,7 @@ fn copy2_polymesh(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -
                 );
                 out_sample.velocities = sample.velocities.clone();
                 out_sample.normals = sample.normals.clone();
+                out_sample.uvs = sample.uvs.clone();
                 out_mesh.add_sample(&out_sample);
             }
         }
@@ -1095,6 +1096,12 @@ fn copy2_subd(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> Op
                 if !sample.holes.is_empty() {
                     out_sample.holes = Some(sample.holes.clone());
                 }
+                // Copy UVs
+                out_sample.uvs = sample.uvs.clone();
+                out_sample.uv_indices = sample.uv_indices.clone();
+                // Copy normals
+                out_sample.normals = sample.normals.clone();
+                out_sample.normal_indices = sample.normal_indices.clone();
                 out_sd.add_sample(&out_sample);
             }
         }

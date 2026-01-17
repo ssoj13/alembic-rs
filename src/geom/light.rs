@@ -73,16 +73,19 @@ impl<'a> ILight<'a> {
     
     /// Get number of samples.
     pub fn getNumSamples(&self) -> usize {
-        // Lights may not have animated properties, default to 1
+        // Lights store samples in .geom/.camera/.core
         let props = self.object.getProperties();
         
-        // Check for camera-like properties
         if let Some(geom_prop) = props.getPropertyByName(".geom") {
             if let Some(geom) = geom_prop.asCompound() {
-                // Check focalLength as it's commonly animated
-                if let Some(fl_prop) = geom.getPropertyByName("focalLength") {
-                    if let Some(scalar) = fl_prop.asScalar() {
-                        return scalar.getNumSamples();
+                // Check .camera/.core for sample count
+                if let Some(cam_prop) = geom.getPropertyByName(".camera") {
+                    if let Some(cam) = cam_prop.asCompound() {
+                        if let Some(core_prop) = cam.getPropertyByName(".core") {
+                            if let Some(scalar) = core_prop.asScalar() {
+                                return scalar.getNumSamples();
+                            }
+                        }
                     }
                 }
             }
@@ -142,11 +145,15 @@ impl<'a> ILight<'a> {
         
         let props = self.object.getProperties();
         
-        // Try to read camera-like properties from .geom
+        // Try to read camera-like properties from .geom/.camera/.core
         if let Some(geom_prop) = props.getPropertyByName(".geom") {
             if let Some(geom) = geom_prop.asCompound() {
-                // Read camera parameters
-                sample.camera = Self::read_camera_params(&geom, index);
+                // Read camera parameters from embedded camera schema
+                if let Some(cam_prop) = geom.getPropertyByName(".camera") {
+                    if let Some(cam) = cam_prop.asCompound() {
+                        sample.camera = Self::read_camera_core(&cam, index);
+                    }
+                }
                 
                 // Read .childBnds if present
                 if let Some(bnds_prop) = geom.getPropertyByName(".childBnds") {
@@ -169,46 +176,39 @@ impl<'a> ILight<'a> {
         Ok(sample)
     }
     
-    /// Read camera-like parameters from a compound property.
-    fn read_camera_params(geom: &crate::abc::ICompoundProperty<'_>, index: usize) -> CameraSample {
-        let mut cam = CameraSample::default();
+    /// Read camera parameters from .core scalar property.
+    fn read_camera_core(cam: &crate::abc::ICompoundProperty<'_>, index: usize) -> CameraSample {
+        let mut sample = CameraSample::default();
         
-        // Helper to read f64 property
-        let read_f64 = |name: &str| -> Option<f64> {
-            let prop = geom.getPropertyByName(name)?;
-            let scalar = prop.asScalar()?;
-            let mut buf = [0u8; 8];
-            scalar.getSample(index, &mut buf).ok()?;
-            Some(f64::from_le_bytes(buf))
-        };
+        // Read .core (combined camera parameters as 16 doubles)
+        if let Some(core_prop) = cam.getPropertyByName(".core") {
+            if let Some(scalar) = core_prop.asScalar() {
+                let mut buf = vec![0u8; 16 * 8]; // 16 doubles
+                if scalar.getSample(index, &mut buf).is_ok() {
+                    let doubles: &[f64] = bytemuck::try_cast_slice(&buf).unwrap_or(&[]);
+                    if doubles.len() >= 16 {
+                        sample.focal_length = doubles[0];
+                        sample.horizontal_aperture = doubles[1];
+                        sample.horizontal_film_offset = doubles[2];
+                        sample.vertical_aperture = doubles[3];
+                        sample.vertical_film_offset = doubles[4];
+                        sample.lens_squeeze_ratio = doubles[5];
+                        sample.overscan_left = doubles[6];
+                        sample.overscan_right = doubles[7];
+                        sample.overscan_top = doubles[8];
+                        sample.overscan_bottom = doubles[9];
+                        sample.f_stop = doubles[10];
+                        sample.focus_distance = doubles[11];
+                        sample.shutter_open = doubles[12];
+                        sample.shutter_close = doubles[13];
+                        sample.near_clipping_plane = doubles[14];
+                        sample.far_clipping_plane = doubles[15];
+                    }
+                }
+            }
+        }
         
-        // Core lens parameters
-        if let Some(v) = read_f64("focalLength") { cam.focal_length = v; }
-        if let Some(v) = read_f64("horizontalAperture") { cam.horizontal_aperture = v; }
-        if let Some(v) = read_f64("verticalAperture") { cam.vertical_aperture = v; }
-        if let Some(v) = read_f64("horizontalFilmOffset") { cam.horizontal_film_offset = v; }
-        if let Some(v) = read_f64("verticalFilmOffset") { cam.vertical_film_offset = v; }
-        if let Some(v) = read_f64("lensSqueezeRatio") { cam.lens_squeeze_ratio = v; }
-        
-        // Overscan parameters
-        if let Some(v) = read_f64("overscanLeft") { cam.overscan_left = v; }
-        if let Some(v) = read_f64("overscanRight") { cam.overscan_right = v; }
-        if let Some(v) = read_f64("overscanTop") { cam.overscan_top = v; }
-        if let Some(v) = read_f64("overscanBottom") { cam.overscan_bottom = v; }
-        
-        // Focus/DOF parameters
-        if let Some(v) = read_f64("fStop") { cam.f_stop = v; }
-        if let Some(v) = read_f64("focusDistance") { cam.focus_distance = v; }
-        
-        // Shutter parameters
-        if let Some(v) = read_f64("shutterOpen") { cam.shutter_open = v; }
-        if let Some(v) = read_f64("shutterClose") { cam.shutter_close = v; }
-        
-        // Clipping planes
-        if let Some(v) = read_f64("nearClippingPlane") { cam.near_clipping_plane = v; }
-        if let Some(v) = read_f64("farClippingPlane") { cam.far_clipping_plane = v; }
-        
-        cam
+        sample
     }
     
     /// Check if this light has child bounds.

@@ -381,7 +381,7 @@ impl<'a> ICamera<'a> {
     /// Get property names.
     pub fn getPropertyNames(&self) -> Vec<String> {
         let props = self.object.getProperties();
-        if let Some(cam_prop) = props.getPropertyByName(".camera") {
+        if let Some(cam_prop) = props.getPropertyByName(".geom") {
             if let Some(cam) = cam_prop.asCompound() {
                 return cam.getPropertyNames();
             }
@@ -392,7 +392,7 @@ impl<'a> ICamera<'a> {
     /// Get number of samples.
     pub fn getNumSamples(&self) -> usize {
         let props = self.object.getProperties();
-        let Some(cam_prop) = props.getPropertyByName(".camera") else { return 1 };
+        let Some(cam_prop) = props.getPropertyByName(".geom") else { return 1 };
         let Some(cam) = cam_prop.asCompound() else { return 1 };
         let Some(core_prop) = cam.getPropertyByName(".core") else { return 1 };
         let Some(scalar) = core_prop.asScalar() else { return 1 };
@@ -409,10 +409,10 @@ impl<'a> ICamera<'a> {
         use crate::util::Error;
         
         let props = self.object.getProperties();
-        let cam_prop = props.getPropertyByName(".camera")
-            .ok_or_else(|| Error::invalid("No .camera property"))?;
+        let cam_prop = props.getPropertyByName(".geom")
+            .ok_or_else(|| Error::invalid("No .geom property"))?;
         let cam = cam_prop.asCompound()
-            .ok_or_else(|| Error::invalid(".camera is not compound"))?;
+            .ok_or_else(|| Error::invalid(".geom is not compound"))?;
         
         let mut sample = CameraSample::new();
         
@@ -455,7 +455,7 @@ impl<'a> ICamera<'a> {
     /// Check if this camera has child bounds property.
     pub fn has_child_bounds(&self) -> bool {
         let props = self.object.getProperties();
-        let Some(cam_prop) = props.getPropertyByName(".camera") else {
+        let Some(cam_prop) = props.getPropertyByName(".geom") else {
             return false;
         };
         let Some(cam) = cam_prop.asCompound() else {
@@ -467,7 +467,7 @@ impl<'a> ICamera<'a> {
     /// Read child bounds at the given sample index.
     pub fn child_bounds(&self, index: usize) -> Option<crate::util::BBox3d> {
         let props = self.object.getProperties();
-        let cam_prop = props.getPropertyByName(".camera")?;
+        let cam_prop = props.getPropertyByName(".geom")?;
         let cam = cam_prop.asCompound()?;
         let bnds_prop = cam.getPropertyByName(".childBnds")?;
         let scalar = bnds_prop.asScalar()?;
@@ -488,7 +488,7 @@ impl<'a> ICamera<'a> {
     /// Get the number of child bounds samples.
     pub fn child_bounds_num_samples(&self) -> usize {
         let props = self.object.getProperties();
-        let Some(cam_prop) = props.getPropertyByName(".camera") else { return 0 };
+        let Some(cam_prop) = props.getPropertyByName(".geom") else { return 0 };
         let Some(cam) = cam_prop.asCompound() else { return 0 };
         let Some(bnds_prop) = cam.getPropertyByName(".childBnds") else { return 0 };
         let Some(scalar) = bnds_prop.asScalar() else { return 0 };
@@ -498,7 +498,7 @@ impl<'a> ICamera<'a> {
     /// Get time sampling index from core properties.
     pub fn getTimeSamplingIndex(&self) -> u32 {
         let props = self.object.getProperties();
-        let Some(cam_prop) = props.getPropertyByName(".camera") else { return 0 };
+        let Some(cam_prop) = props.getPropertyByName(".geom") else { return 0 };
         let Some(cam) = cam_prop.asCompound() else { return 0 };
         let Some(core_prop) = cam.getPropertyByName(".core") else { return 0 };
         core_prop.getHeader().time_sampling_index
@@ -507,7 +507,7 @@ impl<'a> ICamera<'a> {
     /// Get the time sampling index for child bounds property.
     pub fn child_bounds_time_sampling_index(&self) -> u32 {
         let props = self.object.getProperties();
-        let Some(cam_prop) = props.getPropertyByName(".camera") else { return 0 };
+        let Some(cam_prop) = props.getPropertyByName(".geom") else { return 0 };
         let Some(cam) = cam_prop.asCompound() else { return 0 };
         let Some(bnds_prop) = cam.getPropertyByName(".childBnds") else { return 0 };
         bnds_prop.getHeader().time_sampling_index
@@ -516,7 +516,7 @@ impl<'a> ICamera<'a> {
     /// Check if this camera has arbitrary geometry parameters.
     pub fn has_arb_geom_params(&self) -> bool {
         let props = self.object.getProperties();
-        let Some(cam_prop) = props.getPropertyByName(".camera") else {
+        let Some(cam_prop) = props.getPropertyByName(".geom") else {
             return false;
         };
         let Some(cam) = cam_prop.asCompound() else {
@@ -528,7 +528,7 @@ impl<'a> ICamera<'a> {
     /// Get names of arbitrary geometry parameters.
     pub fn arb_geom_param_names(&self) -> Vec<String> {
         let props = self.object.getProperties();
-        let Some(cam_prop) = props.getPropertyByName(".camera") else {
+        let Some(cam_prop) = props.getPropertyByName(".geom") else {
             return Vec::new();
         };
         let Some(cam) = cam_prop.asCompound() else {
@@ -546,7 +546,7 @@ impl<'a> ICamera<'a> {
     /// Check if this camera has user properties.
     pub fn has_user_properties(&self) -> bool {
         let props = self.object.getProperties();
-        let Some(cam_prop) = props.getPropertyByName(".camera") else {
+        let Some(cam_prop) = props.getPropertyByName(".geom") else {
             return false;
         };
         let Some(cam) = cam_prop.asCompound() else {
@@ -558,7 +558,7 @@ impl<'a> ICamera<'a> {
     /// Get names of user properties.
     pub fn user_property_names(&self) -> Vec<String> {
         let props = self.object.getProperties();
-        let Some(cam_prop) = props.getPropertyByName(".camera") else {
+        let Some(cam_prop) = props.getPropertyByName(".geom") else {
             return Vec::new();
         };
         let Some(cam) = cam_prop.asCompound() else {
