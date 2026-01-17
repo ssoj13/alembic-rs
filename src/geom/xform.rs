@@ -121,16 +121,15 @@ impl XformSample {
                     }
                 }
                 XformOpType::Matrix => {
-                    // Alembic uses row-major storage for row-vector convention (v' = v * M)
-                    // glam uses column-major storage for column-vector convention (v' = M * v)
-                    // These are mathematically equivalent - just read bytes directly
-                    // Row 0,1,2 = rotation/scale, Row 3 = translation
+                    // Alembic row-major (row-vector v*M) and glam column-major (column-vector M*v)
+                    // have the SAME flat layout: columns stored sequentially, translation at indices 12-14
+                    // So we can read directly as glam column-major
                     let v: Vec<f32> = op.values.iter().map(|&x| x as f32).collect();
                     glam::Mat4::from_cols(
-                        glam::vec4(v[0], v[1], v[2], v[3]),     // col 0 = Alembic row 0
-                        glam::vec4(v[4], v[5], v[6], v[7]),     // col 1 = Alembic row 1
-                        glam::vec4(v[8], v[9], v[10], v[11]),   // col 2 = Alembic row 2
-                        glam::vec4(v[12], v[13], v[14], v[15]), // col 3 = Alembic row 3 (translation)
+                        glam::vec4(v[0], v[1], v[2], v[3]),     // col 0 (x_axis)
+                        glam::vec4(v[4], v[5], v[6], v[7]),     // col 1 (y_axis)
+                        glam::vec4(v[8], v[9], v[10], v[11]),   // col 2 (z_axis)
+                        glam::vec4(v[12], v[13], v[14], v[15]), // col 3 (w_axis = translation)
                     )
                 }
             };

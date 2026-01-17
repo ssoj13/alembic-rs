@@ -1,6 +1,7 @@
 //! Alembic CLI - Tool for inspecting and manipulating Alembic files.
 
 use alembic::prelude::{IObject, IPolyMesh, ISubD, ICurves, IPoints, ICamera, IXform, INuPatch, ILight, IFaceSet};
+use alembic::abc::ICompoundProperty;
 use alembic::abc::IArchive as AbcIArchive;
 use alembic::ogawa::writer::{
     OArchive, OObject, OPolyMesh, OPolyMeshSample, OXform, OXformSample,
@@ -136,6 +137,17 @@ fn main() {
             cmd_dump(filtered_args[1], pattern, json_mode);
         }
         
+        // Meta command - show object/property metadata
+        "meta" | "m" => {
+            if filtered_args.len() < 2 {
+                eprintln!("Error: missing file argument");
+                eprintln!("Usage: alembic meta <file.abc> [object_pattern]");
+                std::process::exit(1);
+            }
+            let pattern = filtered_args.get(2).copied();
+            cmd_meta(filtered_args[1], pattern);
+        }
+        
         // Copy command - round-trip test
         "copy" | "c" => {
             if filtered_args.len() < 3 {
@@ -185,6 +197,7 @@ fn print_help() {
     println!("    t, tree   <file>              Show full object hierarchy");
     println!("    s, stats  <file>              Show detailed statistics with timing info");
     println!("    d, dump   <file> [pattern]    Dump xform transforms (filter by pattern)");
+    println!("    m, meta   <file> [pattern]    Show object/property metadata");
     println!("    c, copy   <in> <out>          Copy archive (Xform + PolyMesh only)");
     println!("    c2, copy2 <in> <out>          Full re-write using our writer (ALL types)");
     println!("    h, help                       Show this help");
@@ -428,6 +441,108 @@ fn schema_to_type(schema: &str) -> &str {
     else if schema.contains("Material") { "Material" }
     else if schema.is_empty() { "Group" }
     else { schema }
+}
+
+fn cmd_meta(path: &str, pattern: Option<&str>) {
+    info!("Opening archive: {}", path);
+    
+    let archive = match AbcIArchive::open(path) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Failed to open {}: {}", path, e);
+            std::process::exit(1);
+        }
+    };
+    
+    println!("Archive: {}", path);
+    println!("Version: {}", archive.getArchiveVersion());
+    
+    // Archive metadata
+    let meta = archive.getArchiveMetaData();
+    println!("\nArchive Metadata:");
+    for (k, v) in meta.iter() {
+        println!("  {}: {}", k, v);
+    }
+    
+    // Time samplings
+    println!("\nTime Samplings: {}", archive.getNumTimeSamplings());
+    for i in 0..archive.getNumTimeSamplings() {
+        if let Some(ts) = archive.getTimeSampling(i) {
+            println!("  [{}] {:?}", i, ts);
+        }
+    }
+    
+    println!("\nObject Metadata{}", if let Some(p) = pattern { format!(" (filter: {})", p) } else { String::new() });
+    let root = archive.getTop();
+    dump_object_meta(&root, 0, pattern);
+}
+
+fn dump_object_meta(obj: &IObject, depth: usize, pattern: Option<&str>) {
+    let indent = "  ".repeat(depth);
+    let name = obj.getName();
+    let full_name = obj.getFullName();
+    
+    let matches = pattern.map(|p| full_name.contains(p) || name.contains(p)).unwrap_or(true);
+    
+    if matches {
+        let meta = obj.getMetaData();
+        let schema = meta.get("schema").unwrap_or_default();
+        let type_str = schema_to_type(&schema);
+        
+        println!("{}[{}] {}", indent, type_str, name);
+        
+        // Print object metadata
+        if !meta.is_empty() {
+            println!("{}  metadata:", indent);
+            for (k, v) in meta.iter() {
+                println!("{}    {}: {}", indent, k, v);
+            }
+        }
+        
+        // Print properties
+        let props = obj.getProperties();
+        let num_props = props.getNumProperties();
+        if num_props > 0 {
+            println!("{}  properties: {}", indent, num_props);
+            dump_properties(&props, depth + 2);
+        }
+        println!();
+    }
+    
+    for child in obj.getChildren() {
+        dump_object_meta(&child, depth + 1, pattern);
+    }
+}
+
+fn dump_properties(props: &ICompoundProperty, depth: usize) {
+    let indent = "  ".repeat(depth);
+    
+    for i in 0..props.getNumProperties() {
+        if let Some(header) = props.getPropertyHeader(i) {
+            let prop_type = if header.is_compound() { "compound" }
+                else if header.is_array() { "array" }
+                else { "scalar" };
+            
+            let dtype = format!("{:?}", header.data_type);
+            println!("{}[{}] {} ({})", indent, prop_type, header.name, dtype);
+            
+            // Print property metadata if any
+            if !header.meta_data.is_empty() {
+                for (k, v) in header.meta_data.iter() {
+                    println!("{}  {}: {}", indent, k, v);
+                }
+            }
+            
+            // Recurse into compound
+            if header.is_compound() {
+                if let Some(prop) = props.getPropertyByName(&header.name) {
+                    if let Some(child) = prop.asCompound() {
+                        dump_properties(&child, depth + 1);
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn cmd_dump(path: &str, pattern: Option<&str>, json_mode: bool) {

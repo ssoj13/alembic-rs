@@ -2186,29 +2186,38 @@ impl OXform {
             geom_meta.set("schema", "AbcGeom_Xform_v3");
             geom.meta_data = geom_meta;
             
-            // .vals - the matrix values
-            // Alembic uses row-major for row-vectors (v' = v * M)
-            // glam uses column-major for column-vectors (v' = M * v)
-            // These are mathematically equivalent - just write bytes directly
-            let mut vals = OProperty::array(".vals", DataType::new(PlainOldDataType::Float64, 1));
+            // Per IXform.cpp: .ops is scalar with extent = num_ops
+            // .vals is scalar with extent = total_num_values (16 for Matrix)
+            // For Matrix4x4 operation: extent=16 for vals, extent=1 for ops
+            
+            // .vals - scalar with extent=16 for 4x4 matrix
+            // Alembic row-major (row-vector v*M) and glam column-major (column-vector M*v)
+            // have the SAME flat layout for translation: indices 12-14
+            // So we can write glam's column-major directly
+            let mut vals = OProperty::scalar(".vals", DataType::new(PlainOldDataType::Float64, 16));
             vals.time_sampling_index = self.time_sampling_index;
             for sample in &self.samples {
-                let cols = sample.matrix.to_cols_array();
-                let doubles: Vec<f64> = cols.iter().map(|f| *f as f64).collect();
-                vals.add_array_pod(&doubles);
+                let m = sample.matrix;
+                // Write glam column-major directly - same layout as Alembic row-major
+                let mat_f64: [f64; 16] = [
+                    m.x_axis.x as f64, m.x_axis.y as f64, m.x_axis.z as f64, m.x_axis.w as f64,
+                    m.y_axis.x as f64, m.y_axis.y as f64, m.y_axis.z as f64, m.y_axis.w as f64,
+                    m.z_axis.x as f64, m.z_axis.y as f64, m.z_axis.z as f64, m.z_axis.w as f64,
+                    m.w_axis.x as f64, m.w_axis.y as f64, m.w_axis.z as f64, m.w_axis.w as f64,
+                ];
+                vals.add_scalar_sample(bytemuck::cast_slice(&mat_f64));
             }
             
-            // .ops - operation types
-            let mut ops = OProperty::array(".ops", DataType::new(PlainOldDataType::Uint8, 1));
-            ops.time_sampling_index = self.time_sampling_index;
+            // .ops - scalar with extent=1 (one Matrix op)
             // Op encoding: (type << 4) | hint
             // Matrix = type 3, hint 0 -> (3 << 4) | 0 = 0x30
-            let op_data = vec![0x30u8; 1];
+            let mut ops = OProperty::scalar(".ops", DataType::new(PlainOldDataType::Uint8, 1));
+            ops.time_sampling_index = self.time_sampling_index;
             for _ in &self.samples {
-                ops.add_array_sample(&op_data, &[1]);
+                ops.add_scalar_pod(&0x30u8);
             }
             
-            // .inherits
+            // .inherits - scalar with extent=1
             let mut inherits = OProperty::scalar(".inherits", DataType::new(PlainOldDataType::Boolean, 1));
             inherits.time_sampling_index = self.time_sampling_index;
             for sample in &self.samples {
@@ -2933,8 +2942,9 @@ impl OCamera {
             geom_meta.set("schema", "AbcGeom_Camera_v1");
             geom.meta_data = geom_meta;
             
-            // Core properties stored as array of 16 f64s
-            let mut core = OProperty::array(".core", DataType::new(PlainOldDataType::Float64, 1));
+            // Core properties stored as scalar with extent=16 (16 f64s per sample)
+            let mut core = OProperty::scalar(".core", DataType::new(PlainOldDataType::Float64, 16));
+            core.time_sampling_index = self.time_sampling_index;
             for sample in &self.samples {
                 let props: [f64; 16] = [
                     sample.focal_length,
@@ -2954,7 +2964,7 @@ impl OCamera {
                     sample.near_clipping_plane,
                     sample.far_clipping_plane,
                 ];
-                core.add_array_pod(&props);
+                core.add_scalar_sample(bytemuck::cast_slice(&props));
             }
             
             if let OPropertyData::Compound(children) = &mut geom.data {
@@ -3234,7 +3244,8 @@ impl OLight {
             
             // Camera schema embedded in light
             let mut cam_compound = OProperty::compound(".camera");
-            let mut core = OProperty::array(".core", DataType::new(PlainOldDataType::Float64, 1));
+            let mut core = OProperty::scalar(".core", DataType::new(PlainOldDataType::Float64, 16));
+            core.time_sampling_index = self.time_sampling_index;
             
             for sample in &self.camera_samples {
                 let props: [f64; 16] = [
@@ -3255,7 +3266,7 @@ impl OLight {
                     sample.near_clipping_plane,
                     sample.far_clipping_plane,
                 ];
-                core.add_array_pod(&props);
+                core.add_scalar_sample(bytemuck::cast_slice(&props));
             }
             
             if let OPropertyData::Compound(children) = &mut cam_compound.data {

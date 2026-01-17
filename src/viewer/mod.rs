@@ -3,6 +3,7 @@
 mod app;
 mod camera;
 mod environment;
+pub mod export;
 mod mesh_converter;
 mod renderer;
 mod settings;

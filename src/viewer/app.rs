@@ -163,6 +163,13 @@ impl ViewerApp {
                     ui.close();
                 }
                 
+                // Export As... (only enabled when file is loaded)
+                let has_file = self.current_file.is_some();
+                if ui.add_enabled(has_file, egui::Button::new("Export As...")).clicked() {
+                    self.export_file_dialog();
+                    ui.close();
+                }
+                
                 // Recent files submenu
                 if !recent.is_empty() {
                     ui.menu_button("Recent", |ui| {
@@ -891,6 +898,45 @@ impl ViewerApp {
             .pick_file()
         {
             self.load_environment(path);
+        }
+    }
+    
+    /// Export current archive to a new file using the Rust writer
+    fn export_file_dialog(&mut self) {
+        let archive = match &self.archive {
+            Some(a) => a.clone(),
+            None => {
+                self.status_message = "No file loaded to export".into();
+                return;
+            }
+        };
+        
+        // Suggest output filename based on input
+        let default_name = self.current_file
+            .as_ref()
+            .and_then(|p| p.file_stem())
+            .map(|s| format!("{}_export.abc", s.to_string_lossy()))
+            .unwrap_or_else(|| "export.abc".to_string());
+        
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Alembic", &["abc"])
+            .set_file_name(&default_name)
+            .save_file()
+        {
+            self.status_message = "Exporting...".into();
+            
+            match super::export::export_archive(&archive, &path) {
+                Ok(stats) => {
+                    self.status_message = format!(
+                        "Exported {} objects to {}",
+                        stats.total(),
+                        path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()
+                    );
+                }
+                Err(e) => {
+                    self.status_message = format!("Export failed: {}", e);
+                }
+            }
         }
     }
 
