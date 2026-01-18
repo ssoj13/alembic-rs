@@ -8,13 +8,15 @@
 /// 
 /// This matches the Alembic C++ implementation exactly.
 /// Returns 128-bit hash as (h1, h2).
+/// If `seed` is None, behaves like seed = 0.
 #[inline]
-pub fn hash128(data: &[u8]) -> (u64, u64) {
+pub fn hash128(data: &[u8], seed: Option<u32>) -> (u64, u64) {
     let len = data.len();
     let nblocks = len / 16;
     
-    let mut h1: u64 = 0;
-    let mut h2: u64 = 0;
+    let seed = seed.unwrap_or(0) as u64;
+    let mut h1: u64 = seed;
+    let mut h2: u64 = seed;
     
     const C1: u64 = 0x87c37b91114253d5;
     const C2: u64 = 0x4cf5ad432745937f;
@@ -333,8 +335,8 @@ fn fmix64(mut h: u64) -> u64 {
 
 /// Compute hash and return as 16-byte array (little-endian).
 #[inline]
-pub fn hash128_bytes(data: &[u8]) -> [u8; 16] {
-    let (h1, h2) = hash128(data);
+pub fn hash128_bytes(data: &[u8], seed: Option<u32>) -> [u8; 16] {
+    let (h1, h2) = hash128(data, seed);
     let mut result = [0u8; 16];
     result[0..8].copy_from_slice(&h1.to_le_bytes());
     result[8..16].copy_from_slice(&h2.to_le_bytes());
@@ -347,14 +349,14 @@ mod tests {
     
     #[test]
     fn test_empty() {
-        let (h1, h2) = hash128(&[]);
+        let (h1, h2) = hash128(&[], None);
         // Empty string should produce consistent non-zero hash
         assert_ne!(h1, 0);
     }
     
     #[test]
     fn test_short() {
-        let (h1, h2) = hash128(b"hello");
+        let (h1, h2) = hash128(b"hello", None);
         // Just verify it produces something
         assert_ne!(h1, 0);
     }
@@ -362,21 +364,21 @@ mod tests {
     #[test]
     fn test_longer() {
         let data: Vec<u8> = (0..100).collect();
-        let (h1, h2) = hash128(&data);
+        let (h1, h2) = hash128(&data, None);
         assert_ne!(h1, 0);
     }
     
     #[test]
     fn test_block_aligned() {
         // Exactly 16 bytes
-        let (h1, h2) = hash128(b"0123456789abcdef");
+        let (h1, h2) = hash128(b"0123456789abcdef", None);
         assert_ne!(h1, 0);
     }
     
     #[test]
     fn test_bytes_roundtrip() {
-        let (h1, h2) = hash128(b"test");
-        let bytes = hash128_bytes(b"test");
+        let (h1, h2) = hash128(b"test", None);
+        let bytes = hash128_bytes(b"test", None);
         
         let h1_check = u64::from_le_bytes(bytes[0..8].try_into().unwrap());
         let h2_check = u64::from_le_bytes(bytes[8..16].try_into().unwrap());

@@ -15,8 +15,8 @@ pub type SampleDigest = [u8; 16];
 /// Compute MurmurHash3 x64_128 digest of data.
 /// This matches the C++ Alembic implementation for binary compatibility.
 #[inline]
-pub fn compute_digest(data: &[u8]) -> SampleDigest {
-    murmur3::hash128_bytes(data)
+pub fn compute_digest(data: &[u8], seed: Option<u32>) -> SampleDigest {
+    murmur3::hash128_bytes(data, seed)
 }
 
 /// Key for cache entries (position-based for reading).
@@ -36,10 +36,10 @@ impl ArraySampleKey {
 }
 
 /// Content-based key for write deduplication.
-/// Uses MD5 digest of the actual data content.
+/// Uses MurmurHash3 x64_128 digest of the actual data content.
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug)]
 pub struct ArraySampleContentKey {
-    /// 128-bit MD5 digest of the data.
+    /// 128-bit MurmurHash3 digest of the data.
     pub digest: SampleDigest,
     /// Size of the data in bytes (for collision detection).
     pub size: usize,
@@ -47,9 +47,9 @@ pub struct ArraySampleContentKey {
 
 impl ArraySampleContentKey {
     /// Create a new content key from data.
-    pub fn from_data(data: &[u8]) -> Self {
+    pub fn from_data(data: &[u8], seed: Option<u32>) -> Self {
         Self {
-            digest: compute_digest(data),
+            digest: compute_digest(data, seed),
             size: data.len(),
         }
     }

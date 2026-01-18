@@ -1,13 +1,15 @@
 //! Alembic CLI - Tool for inspecting and manipulating Alembic files.
 
 use alembic::prelude::{IObject, IPolyMesh, ISubD, ICurves, IPoints, ICamera, IXform, INuPatch, ILight, IFaceSet};
-use alembic::abc::ICompoundProperty;
+use alembic::abc::{ICompoundProperty, IProperty};
 use alembic::abc::IArchive as AbcIArchive;
 use alembic::ogawa::writer::{
     OArchive, OObject, OPolyMesh, OPolyMeshSample, OXform, OXformSample,
     OSubD, OSubDSample, OCurves, OCurvesSample, OPoints, OPointsSample,
     OCamera, ONuPatch, ONuPatchSample, OLight, OFaceSet, OFaceSetSample,
+    OProperty, OPropertyData,
 };
+use alembic::util::PlainOldDataType;
 use std::env;
 use std::path::Path;
 
@@ -861,64 +863,118 @@ fn get_object_info(obj: &IObject, schema: &str) -> String {
 // copy2 - Full re-write using our writer (ALL schema types)
 // ============================================================================
 
-/// Copy root object properties from source to destination.
-/// This copies Maya-specific metadata like .childBnds, statistics, N.samples.
-fn copy_root_properties(root: &IObject, out_root: &mut OObject) {
-    use alembic::ogawa::writer::OProperty;
-    use alembic::util::{DataType, PlainOldDataType};
-    use alembic::core::PropertyType;
-    
-    let props = root.getProperties();
+fn map_ts(
+    ts_map: &std::collections::HashMap<u32, u32>,
+    src_idx: u32,
+) -> u32 {
+    *ts_map.get(&src_idx).unwrap_or(&src_idx)
+}
+
+fn merge_property(target: &mut Vec<OProperty>, prop: OProperty) {
+    if let Some(existing) = target.iter_mut().find(|p| p.name == prop.name) {
+        match (&mut existing.data, prop.data) {
+            (OPropertyData::Compound(dst_children), OPropertyData::Compound(src_children)) => {
+                for child in src_children {
+                    merge_property(dst_children, child);
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+    target.push(prop);
+}
+
+fn copy_property_recursive(
+    prop: &IProperty<'_>,
+    ts_map: &std::collections::HashMap<u32, u32>,
+) -> Option<OProperty> {
+    let header = prop.getHeader();
+    let name = &header.name;
+    let data_type = header.data_type;
+    let ts_idx = map_ts(ts_map, header.time_sampling_index);
+    let meta = header.meta_data.clone();
+
+    if let Some(compound) = prop.asCompound() {
+        let mut out = OProperty::compound(name);
+        out.meta_data = meta;
+        out.time_sampling_index = ts_idx;
+        let num = compound.getNumProperties();
+        for i in 0..num {
+            if let Some(child) = compound.getProperty(i) {
+                if let Some(out_child) = copy_property_recursive(&child, ts_map) {
+                    out.add_child(out_child);
+                }
+            }
+        }
+        return Some(out);
+    }
+
+    if let Some(scalar) = prop.asScalar() {
+        let mut out = OProperty::scalar(name, data_type);
+        out.meta_data = meta;
+        out.time_sampling_index = ts_idx;
+        let num_samples = scalar.getNumSamples();
+        let is_string = matches!(
+            data_type.pod,
+            PlainOldDataType::String | PlainOldDataType::Wstring
+        );
+        for i in 0..num_samples {
+            if is_string {
+                if let Ok(buf) = scalar.getSampleVec(i) {
+                    out.add_scalar_sample(&buf);
+                }
+            } else {
+                let sample_size = data_type.num_bytes();
+                let mut buf = vec![0u8; sample_size];
+                if scalar.getSample(i, &mut buf).is_ok() {
+                    out.add_scalar_sample(&buf);
+                }
+            }
+        }
+        return Some(out);
+    }
+
+    if let Some(array) = prop.asArray() {
+        let mut out = OProperty::array(name, data_type);
+        out.meta_data = meta;
+        out.time_sampling_index = ts_idx;
+        let num_samples = array.getNumSamples();
+        for i in 0..num_samples {
+            if let (Ok(data), Ok(dims)) = (array.getSampleVec(i), array.getDimensions(i)) {
+                out.add_array_sample(&data, &dims);
+            }
+        }
+        return Some(out);
+    }
+
+    None
+}
+
+fn copy_properties_from(
+    props: &ICompoundProperty<'_>,
+    out_props: &mut Vec<OProperty>,
+    ts_map: &std::collections::HashMap<u32, u32>,
+) {
     let num_props = props.getNumProperties();
-    
     for i in 0..num_props {
         if let Some(prop) = props.getProperty(i) {
-            let header = prop.getHeader();
-            let name = &header.name;
-            
-            // Skip compound properties (schemas are handled separately)
-            if header.property_type == PropertyType::Compound {
-                continue;
+            if let Some(out_prop) = copy_property_recursive(&prop, ts_map) {
+                merge_property(out_props, out_prop);
             }
-            
-            // Copy scalar properties
-            if let Some(scalar) = prop.asScalar() {
-                let num_samples = scalar.getNumSamples();
-                let pod = header.data_type.pod;
-                let data_type = DataType::new(pod, header.data_type.extent);
-                
-                let mut out_prop = OProperty::scalar(name, data_type);
-                out_prop.time_sampling_index = header.time_sampling_index;
-                out_prop.meta_data = header.meta_data.clone().into();
-                
-                // Read and write all samples
-                // For strings, use getSampleVec(); for POD types, use fixed buffer
-                let is_string = pod == PlainOldDataType::String || pod == PlainOldDataType::Wstring;
-                
-                for s in 0..num_samples {
-                    if is_string {
-                        // String: use getSampleVec which handles variable length
-                        // Need to add null terminator back (Alembic stores strings with \0)
-                        if let Ok(mut buf) = scalar.getSampleVec(s) {
-                            buf.push(0); // Add null terminator
-                            out_prop.add_scalar_sample(&buf);
-                        }
-                    } else {
-                        // Fixed POD type: use known size
-                        let sample_size = header.data_type.num_bytes();
-                        let mut buf = vec![0u8; sample_size];
-                        if scalar.getSample(s, &mut buf).is_ok() {
-                            out_prop.add_scalar_sample(&buf);
-                        }
-                    }
-                }
-                
-                out_root.add_property(out_prop);
-                debug!("Copied root property: {} ({} samples, ts_idx={})", name, num_samples, header.time_sampling_index);
-            }
-            // Note: Array properties on root are less common, skip for now
         }
     }
+}
+
+/// Copy root object properties from source to destination.
+/// This copies Maya-specific metadata like .childBnds, statistics, N.samples.
+fn copy_root_properties(
+    root: &IObject,
+    out_root: &mut OObject,
+    ts_map: &std::collections::HashMap<u32, u32>,
+) {
+    let props = root.getProperties();
+    copy_properties_from(&props, &mut out_root.properties, ts_map);
 }
 
 fn cmd_copy2(input: &str, output: &str) {
@@ -945,11 +1001,13 @@ fn cmd_copy2(input: &str, output: &str) {
     out_archive.set_library_version(archive.getArchiveVersion());
     out_archive.set_indexed_metadata(archive.getIndexedMetaData());
     
-    // Copy time samplings from input archive
-    // Skip index 0 (identity time sampling - always present)
+    // Copy time samplings from input archive and build index map
+    let mut ts_map = std::collections::HashMap::new();
+    ts_map.insert(0, 0);
     for i in 1..archive.getNumTimeSamplings() {
         if let Some(ts) = archive.getTimeSampling(i) {
-            out_archive.addTimeSampling(ts.clone());
+            let new_idx = out_archive.addTimeSampling(ts.clone());
+            ts_map.insert(i as u32, new_idx);
         }
     }
     
@@ -957,13 +1015,13 @@ fn cmd_copy2(input: &str, output: &str) {
     let mut out_root = OObject::new("");
     
     // Copy root object properties (Maya metadata: .childBnds, statistics, N.samples)
-    copy_root_properties(&root, &mut out_root);
+    copy_root_properties(&root, &mut out_root, &ts_map);
     
     let mut stats = CopyStats::default();
     
     // Copy children recursively
     for child in root.getChildren() {
-        if let Some(out_child) = copy2_object(&child, &archive, &mut stats) {
+        if let Some(out_child) = copy2_object(&child, &archive, &ts_map, &mut stats) {
             out_root.add_child(out_child);
         }
     }
@@ -1009,7 +1067,12 @@ impl CopyStats {
     }
 }
 
-fn copy2_object(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_object(
+    obj: &IObject,
+    archive: &AbcIArchive,
+    ts_map: &std::collections::HashMap<u32, u32>,
+    stats: &mut CopyStats,
+) -> Option<OObject> {
     let name = obj.getName();
     let schema = obj.getMetaData().get("schema").unwrap_or_default();
     
@@ -1017,44 +1080,52 @@ fn copy2_object(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> 
     
     // Handle different schema types
     if schema.contains("Xform") {
-        return copy2_xform(obj, archive, stats);
+        return copy2_xform(obj, archive, ts_map, stats);
     } else if schema.contains("PolyMesh") {
-        return copy2_polymesh(obj, archive, stats);
+        return copy2_polymesh(obj, archive, ts_map, stats);
     } else if schema.contains("SubD") {
-        return copy2_subd(obj, archive, stats);
+        return copy2_subd(obj, archive, ts_map, stats);
     } else if schema.contains("Curve") {
-        return copy2_curves(obj, archive, stats);
+        return copy2_curves(obj, archive, ts_map, stats);
     } else if schema.contains("Points") {
-        return copy2_points(obj, archive, stats);
+        return copy2_points(obj, archive, ts_map, stats);
     } else if schema.contains("Camera") {
-        return copy2_camera(obj, archive, stats);
+        return copy2_camera(obj, archive, ts_map, stats);
     } else if schema.contains("NuPatch") {
-        return copy2_nupatch(obj, archive, stats);
+        return copy2_nupatch(obj, archive, ts_map, stats);
     } else if schema.contains("Light") {
-        return copy2_light(obj, archive, stats);
+        return copy2_light(obj, archive, ts_map, stats);
     } else if schema.contains("FaceSet") {
-        return copy2_faceset(obj, archive, stats);
+        return copy2_faceset(obj, archive, ts_map, stats);
     }
     
     // Generic object - just copy children
     stats.other += 1;
     let mut out_obj = OObject::new(name);
+    let props = obj.getProperties();
+    copy_properties_from(&props, &mut out_obj.properties, ts_map);
     for child in obj.getChildren() {
-        if let Some(out_child) = copy2_object(&child, archive, stats) {
+        if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
             out_obj.add_child(out_child);
         }
     }
     Some(out_obj)
 }
 
-fn copy2_xform(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_xform(
+    obj: &IObject,
+    archive: &AbcIArchive,
+    ts_map: &std::collections::HashMap<u32, u32>,
+    stats: &mut CopyStats,
+) -> Option<OObject> {
     let name = obj.getName();
     if let Some(xform) = IXform::new(obj) {
         stats.xform += 1;
         let mut out_xform = OXform::new(name);
         
         // Copy time sampling
-        out_xform.set_time_sampling(xform.getTimeSamplingIndex());
+        let ts_idx = xform.getTimeSamplingIndex();
+        out_xform.set_time_sampling(map_ts(ts_map, ts_idx));
         
         for i in 0..xform.getNumSamples() {
             if let Ok(sample) = xform.getSample(i) {
@@ -1065,7 +1136,8 @@ fn copy2_xform(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> O
         
         // Copy child bounds if present
         if xform.has_child_bounds() {
-            out_xform.set_child_bounds_time_sampling(xform.child_bounds_time_sampling_index());
+            let child_ts = xform.child_bounds_time_sampling_index();
+            out_xform.set_child_bounds_time_sampling(map_ts(ts_map, child_ts));
             for i in 0..xform.child_bounds_num_samples() {
                 if let Some(bounds) = xform.child_bounds(i) {
                     out_xform.add_child_bounds(bounds);
@@ -1074,8 +1146,10 @@ fn copy2_xform(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> O
         }
         
         let mut out_obj = out_xform.build();
+        let props = obj.getProperties();
+        copy_properties_from(&props, &mut out_obj.properties, ts_map);
         for child in obj.getChildren() {
-            if let Some(out_child) = copy2_object(&child, archive, stats) {
+            if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
                 out_obj.add_child(out_child);
             }
         }
@@ -1084,22 +1158,30 @@ fn copy2_xform(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> O
     // Schema check passed but IXform::new failed - fallback to generic copy with children
     debug!("copy2_xform: IXform::new failed for {}, using generic copy", name);
     let mut out_obj = OObject::new(name);
+    let props = obj.getProperties();
+    copy_properties_from(&props, &mut out_obj.properties, ts_map);
     for child in obj.getChildren() {
-        if let Some(out_child) = copy2_object(&child, archive, stats) {
+        if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
             out_obj.add_child(out_child);
         }
     }
     Some(out_obj)
 }
 
-fn copy2_polymesh(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_polymesh(
+    obj: &IObject,
+    archive: &AbcIArchive,
+    ts_map: &std::collections::HashMap<u32, u32>,
+    stats: &mut CopyStats,
+) -> Option<OObject> {
     let name = obj.getName();
     if let Some(mesh) = IPolyMesh::new(obj) {
         stats.polymesh += 1;
         let mut out_mesh = OPolyMesh::new(name);
         
         // Copy time sampling
-        out_mesh.set_time_sampling(mesh.getTimeSamplingIndex());
+        let ts_idx = mesh.getTimeSamplingIndex();
+        out_mesh.set_time_sampling(map_ts(ts_map, ts_idx));
         
         for i in 0..mesh.getNumSamples() {
             if let Ok(sample) = mesh.getSample(i) {
@@ -1118,9 +1200,11 @@ fn copy2_polymesh(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -
         }
         
         let mut out_obj = out_mesh.build();
+        let props = obj.getProperties();
+        copy_properties_from(&props, &mut out_obj.properties, ts_map);
         // Copy child FaceSets if any
         for child in obj.getChildren() {
-            if let Some(out_child) = copy2_object(&child, archive, stats) {
+            if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
                 out_obj.add_child(out_child);
             }
         }
@@ -1129,22 +1213,30 @@ fn copy2_polymesh(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -
     // Fallback
     debug!("copy2_polymesh: IPolyMesh::new failed for {}", name);
     let mut out_obj = OObject::new(name);
+    let props = obj.getProperties();
+    copy_properties_from(&props, &mut out_obj.properties, ts_map);
     for child in obj.getChildren() {
-        if let Some(out_child) = copy2_object(&child, archive, stats) {
+        if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
             out_obj.add_child(out_child);
         }
     }
     Some(out_obj)
 }
 
-fn copy2_subd(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_subd(
+    obj: &IObject,
+    archive: &AbcIArchive,
+    ts_map: &std::collections::HashMap<u32, u32>,
+    stats: &mut CopyStats,
+) -> Option<OObject> {
     let name = obj.getName();
     if let Some(sd) = ISubD::new(obj) {
         stats.subd += 1;
         let mut out_sd = OSubD::new(name);
         
         // Copy time sampling
-        out_sd.set_time_sampling(sd.getTimeSamplingIndex());
+        let ts_idx = sd.getTimeSamplingIndex();
+        out_sd.set_time_sampling(map_ts(ts_map, ts_idx));
         
         for i in 0..sd.getNumSamples() {
             if let Ok(sample) = sd.getSample(i) {
@@ -1184,24 +1276,40 @@ fn copy2_subd(obj: &IObject, archive: &AbcIArchive, stats: &mut CopyStats) -> Op
         }
         
         let mut out_obj = out_sd.build();
+        let props = obj.getProperties();
+        copy_properties_from(&props, &mut out_obj.properties, ts_map);
         for child in obj.getChildren() {
-            if let Some(out_child) = copy2_object(&child, archive, stats) {
+            if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
                 out_obj.add_child(out_child);
             }
         }
         return Some(out_obj);
     }
-    None
+    let mut out_obj = OObject::new(name);
+    let props = obj.getProperties();
+    copy_properties_from(&props, &mut out_obj.properties, ts_map);
+    for child in obj.getChildren() {
+        if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
+            out_obj.add_child(out_child);
+        }
+    }
+    Some(out_obj)
 }
 
-fn copy2_curves(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_curves(
+    obj: &IObject,
+    archive: &AbcIArchive,
+    ts_map: &std::collections::HashMap<u32, u32>,
+    stats: &mut CopyStats,
+) -> Option<OObject> {
     let name = obj.getName();
     if let Some(curves) = ICurves::new(obj) {
         stats.curves += 1;
         let mut out_curves = OCurves::new(name);
         
         // Copy time sampling
-        out_curves.set_time_sampling(curves.getTimeSamplingIndex());
+        let ts_idx = curves.getTimeSamplingIndex();
+        out_curves.set_time_sampling(map_ts(ts_map, ts_idx));
         
         for i in 0..curves.getNumSamples() {
             if let Ok(sample) = curves.getSample(i) {
@@ -1227,19 +1335,41 @@ fn copy2_curves(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) ->
             }
         }
         
-        return Some(out_curves.build());
+        let mut out_obj = out_curves.build();
+        let props = obj.getProperties();
+        copy_properties_from(&props, &mut out_obj.properties, ts_map);
+        for child in obj.getChildren() {
+            if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
+                out_obj.add_child(out_child);
+            }
+        }
+        return Some(out_obj);
     }
-    None
+    let mut out_obj = OObject::new(name);
+    let props = obj.getProperties();
+    copy_properties_from(&props, &mut out_obj.properties, ts_map);
+    for child in obj.getChildren() {
+        if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
+            out_obj.add_child(out_child);
+        }
+    }
+    Some(out_obj)
 }
 
-fn copy2_points(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_points(
+    obj: &IObject,
+    archive: &AbcIArchive,
+    ts_map: &std::collections::HashMap<u32, u32>,
+    stats: &mut CopyStats,
+) -> Option<OObject> {
     let name = obj.getName();
     if let Some(points) = IPoints::new(obj) {
         stats.points += 1;
         let mut out_points = OPoints::new(name);
         
         // Copy time sampling
-        out_points.set_time_sampling(points.getTimeSamplingIndex());
+        let ts_idx = points.getTimeSamplingIndex();
+        out_points.set_time_sampling(map_ts(ts_map, ts_idx));
         
         for i in 0..points.getNumSamples() {
             if let Ok(sample) = points.getSample(i) {
@@ -1258,19 +1388,41 @@ fn copy2_points(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) ->
             }
         }
         
-        return Some(out_points.build());
+        let mut out_obj = out_points.build();
+        let props = obj.getProperties();
+        copy_properties_from(&props, &mut out_obj.properties, ts_map);
+        for child in obj.getChildren() {
+            if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
+                out_obj.add_child(out_child);
+            }
+        }
+        return Some(out_obj);
     }
-    None
+    let mut out_obj = OObject::new(name);
+    let props = obj.getProperties();
+    copy_properties_from(&props, &mut out_obj.properties, ts_map);
+    for child in obj.getChildren() {
+        if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
+            out_obj.add_child(out_child);
+        }
+    }
+    Some(out_obj)
 }
 
-fn copy2_camera(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_camera(
+    obj: &IObject,
+    archive: &AbcIArchive,
+    ts_map: &std::collections::HashMap<u32, u32>,
+    stats: &mut CopyStats,
+) -> Option<OObject> {
     let name = obj.getName();
     if let Some(cam) = ICamera::new(obj) {
         stats.camera += 1;
         let mut out_cam = OCamera::new(name);
         
         // Copy time sampling
-        out_cam.set_time_sampling(cam.getTimeSamplingIndex());
+        let ts_idx = cam.getTimeSamplingIndex();
+        out_cam.set_time_sampling(map_ts(ts_map, ts_idx));
         
         for i in 0..cam.getNumSamples() {
             if let Ok(sample) = cam.getSample(i) {
@@ -1278,19 +1430,41 @@ fn copy2_camera(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) ->
             }
         }
         
-        return Some(out_cam.build());
+        let mut out_obj = out_cam.build();
+        let props = obj.getProperties();
+        copy_properties_from(&props, &mut out_obj.properties, ts_map);
+        for child in obj.getChildren() {
+            if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
+                out_obj.add_child(out_child);
+            }
+        }
+        return Some(out_obj);
     }
-    None
+    let mut out_obj = OObject::new(name);
+    let props = obj.getProperties();
+    copy_properties_from(&props, &mut out_obj.properties, ts_map);
+    for child in obj.getChildren() {
+        if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
+            out_obj.add_child(out_child);
+        }
+    }
+    Some(out_obj)
 }
 
-fn copy2_nupatch(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_nupatch(
+    obj: &IObject,
+    archive: &AbcIArchive,
+    ts_map: &std::collections::HashMap<u32, u32>,
+    stats: &mut CopyStats,
+) -> Option<OObject> {
     let name = obj.getName();
     if let Some(nup) = INuPatch::new(obj) {
         stats.nupatch += 1;
         let mut out_nup = ONuPatch::new(name);
         
         // Copy time sampling
-        out_nup.set_time_sampling(nup.getTimeSamplingIndex());
+        let ts_idx = nup.getTimeSamplingIndex();
+        out_nup.set_time_sampling(map_ts(ts_map, ts_idx));
         
         for i in 0..nup.getNumSamples() {
             if let Ok(sample) = nup.getSample(i) {
@@ -1313,19 +1487,41 @@ fn copy2_nupatch(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -
             }
         }
         
-        return Some(out_nup.build());
+        let mut out_obj = out_nup.build();
+        let props = obj.getProperties();
+        copy_properties_from(&props, &mut out_obj.properties, ts_map);
+        for child in obj.getChildren() {
+            if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
+                out_obj.add_child(out_child);
+            }
+        }
+        return Some(out_obj);
     }
-    None
+    let mut out_obj = OObject::new(name);
+    let props = obj.getProperties();
+    copy_properties_from(&props, &mut out_obj.properties, ts_map);
+    for child in obj.getChildren() {
+        if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
+            out_obj.add_child(out_child);
+        }
+    }
+    Some(out_obj)
 }
 
-fn copy2_light(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_light(
+    obj: &IObject,
+    archive: &AbcIArchive,
+    ts_map: &std::collections::HashMap<u32, u32>,
+    stats: &mut CopyStats,
+) -> Option<OObject> {
     let name = obj.getName();
     if let Some(light) = ILight::new(obj) {
         stats.light += 1;
         let mut out_light = OLight::new(name);
         
         // Copy time sampling
-        out_light.set_time_sampling(light.getTimeSamplingIndex());
+        let ts_idx = light.getTimeSamplingIndex();
+        out_light.set_time_sampling(map_ts(ts_map, ts_idx));
         
         // Light contains camera-like samples directly
         for i in 0..light.getNumSamples() {
@@ -1334,19 +1530,41 @@ fn copy2_light(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -> 
             }
         }
         
-        return Some(out_light.build());
+        let mut out_obj = out_light.build();
+        let props = obj.getProperties();
+        copy_properties_from(&props, &mut out_obj.properties, ts_map);
+        for child in obj.getChildren() {
+            if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
+                out_obj.add_child(out_child);
+            }
+        }
+        return Some(out_obj);
     }
-    None
+    let mut out_obj = OObject::new(name);
+    let props = obj.getProperties();
+    copy_properties_from(&props, &mut out_obj.properties, ts_map);
+    for child in obj.getChildren() {
+        if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
+            out_obj.add_child(out_child);
+        }
+    }
+    Some(out_obj)
 }
 
-fn copy2_faceset(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -> Option<OObject> {
+fn copy2_faceset(
+    obj: &IObject,
+    archive: &AbcIArchive,
+    ts_map: &std::collections::HashMap<u32, u32>,
+    stats: &mut CopyStats,
+) -> Option<OObject> {
     let name = obj.getName();
     if let Some(fs) = IFaceSet::new(obj) {
         stats.faceset += 1;
         let mut out_fs = OFaceSet::new(name);
         
         // Copy time sampling
-        out_fs.set_time_sampling(fs.getTimeSamplingIndex());
+        let ts_idx = fs.getTimeSamplingIndex();
+        out_fs.set_time_sampling(map_ts(ts_map, ts_idx));
         
         for i in 0..fs.getNumSamples() {
             if let Ok(sample) = fs.getSample(i) {
@@ -1355,7 +1573,23 @@ fn copy2_faceset(obj: &IObject, _archive: &AbcIArchive, stats: &mut CopyStats) -
             }
         }
         
-        return Some(out_fs.build());
+        let mut out_obj = out_fs.build();
+        let props = obj.getProperties();
+        copy_properties_from(&props, &mut out_obj.properties, ts_map);
+        for child in obj.getChildren() {
+            if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
+                out_obj.add_child(out_child);
+            }
+        }
+        return Some(out_obj);
     }
-    None
+    let mut out_obj = OObject::new(name);
+    let props = obj.getProperties();
+    copy_properties_from(&props, &mut out_obj.properties, ts_map);
+    for child in obj.getChildren() {
+        if let Some(out_child) = copy2_object(&child, archive, ts_map, stats) {
+            out_obj.add_child(out_child);
+        }
+    }
+    Some(out_obj)
 }

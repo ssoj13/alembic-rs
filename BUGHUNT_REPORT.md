@@ -418,6 +418,78 @@ Updated prelude to export `ogawa::OObject` instead of removed `abc::OObject`.
 | Extract UV/normal expansion (IPolyMesh/ISubD) | Not started | Medium |
 | Refactor ICamera to use geom::util | Not started | Low |
 | Viewport TODO (scene bounds) | Not started | Low |
+
+---
+
+## 4. Writer Parity Audit (2026-01-15)
+
+### 4.1 Findings (Ordered by Severity)
+
+1) **CRITICAL: Sample key digest does not match reference**  
+   - **Evidence**: `ArraySampleContentKey` hashes raw data only (no POD-size seed).  
+     `src/core/cache.rs:18` and `src/core/cache.rs:52`  
+     Reference: `ArraySample::Key` uses `MurmurHash3_x64_128(data, len, PODNumBytes)`  
+     `_ref/alembic/lib/Alembic/AbcCoreAbstract/ArraySample.cpp:73`  
+   - **Impact**: Data block keys, property hashes, and object header hashes differ.  
+     Deduplication and binary parity fail across all data types.  
+   - **Recommendation**: Implement digest generation identical to reference
+     (POD-size seed + correct string/wstring encoding).
+
+2) **CRITICAL: String/Wstring samples written without null-terminators**  
+   - **Evidence**: schema builders write `as_bytes()` directly for string properties.  
+     `src/ogawa/writer.rs:3669`, `src/ogawa/writer.rs:3681`, `src/ogawa/writer.rs:3690`  
+     Reference encodes string samples with trailing `\0` and hashes that representation.  
+     `_ref/alembic/lib/Alembic/AbcCoreAbstract/ArraySample.cpp:87`  
+   - **Impact**: On-disk string payload differs; all keys and hashes differ.  
+   - **Recommendation**: Encode string/wstring samples with null separators, matching reference.
+
+3) **HIGH: `isHomogenous` flag computed incorrectly for arrays**  
+   - **Evidence**: Forced false for any array with extent > 1.  
+     `src/ogawa/writer.rs:1451`  
+     Reference toggles `isHomogenous` only when sample point counts change.  
+     `_ref/alembic/lib/Alembic/AbcCoreOgawa/ApwImpl.cpp:198`  
+   - **Impact**: Property header info differs; binary parity breaks.  
+   - **Recommendation**: Track `isHomogenous` based on `dims.numPoints()` changes.
+
+4) **HIGH: Property change indices initialized incorrectly**  
+   - **Evidence**: scalar/array properties start `first=1,last=0`.  
+     `src/ogawa/writer.rs:1726`, `src/ogawa/writer.rs:1741`  
+     Reference initializes both to 0.  
+     `_ref/alembic/lib/Alembic/AbcCoreOgawa/Foundation.h:71`  
+   - **Impact**: Zero-sample properties emit invalid headers and flags.  
+   - **Recommendation**: Initialize to 0 and update per reference logic.
+
+5) **HIGH: Copy logic skips arbitrary and array properties**  
+   - **Evidence**: `copy_root_properties` copies only scalar non-compounds.  
+     `src/bin/alembic/main.rs:866`  
+     Tests `convert_object` only copy schema-specific properties.  
+     `tests/write_tests.rs:498`, `tests/copy_heart_test.rs:94`  
+   - **Impact**: Root and custom properties (e.g., `.childBnds`, `statistics`, `1.samples`) are lost.  
+   - **Recommendation**: Implement full property tree copy (compound + scalar + array),
+     with time sampling remap.
+
+6) **MEDIUM: Indexed metadata capacity off-by-one**  
+   - **Evidence**: `indexed_metadata.len() >= 254` returns inline too early.  
+     `src/ogawa/writer.rs:358`  
+     Reference allows 254 entries (plus empty).  
+     `_ref/alembic/lib/Alembic/AbcCoreOgawa/MetaDataMap.cpp:41`  
+   - **Impact**: Metadata indices differ; binary parity breaks.  
+   - **Recommendation**: Allow 254 entries (empty + 254) before forcing inline.
+
+7) **MEDIUM: Property data ordering uses unstable sort on ties**  
+   - **Evidence**: `sort_by_key` on `data_write_order` (unstable).  
+     `src/ogawa/writer.rs:922`  
+   - **Impact**: Tie-order can change relative to creation order.  
+   - **Recommendation**: Use stable sort or secondary index.
+
+8) **MEDIUM: `_ai_AlembicVersion` hardcoded**  
+   - **Evidence**: fixed string in `write_archive`.  
+     `src/ogawa/writer.rs:677`  
+     Reference uses build date/time string.  
+     `_ref/alembic/lib/Alembic/AbcCoreAbstract/Foundation.cpp:65`  
+   - **Impact**: Archive metadata differs unless overridden by `set_archive_metadata`.  
+   - **Recommendation**: Derive from build-time or copy from source metadata.
+
 | Review viewer dead code | Documented | Info |
 
 ---

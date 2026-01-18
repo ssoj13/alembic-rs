@@ -128,6 +128,26 @@ User Data (vertices, indices, transforms...)
 .abc file
 ```
 
+## Writer Parity Notes (Ogawa / AbcCoreOgawa)
+
+```
+Object Write Order (reference)
+  1) Child objects written first (hashes available)
+  2) Property sample data written
+  3) Property groups written in reverse creation order
+  4) Object headers written (include data-hash + child-hash suffix)
+  5) Property headers written
+  6) Object group frozen (properties + children + headers)
+
+Archive Finalization Order
+  - Version data
+  - Library version data
+  - Root object group
+  - Archive metadata
+  - Time samplings (max samples + stored times)
+  - Indexed metadata table
+```
+
 ## Viewer Pipeline
 
 ```

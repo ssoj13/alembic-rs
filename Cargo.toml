@@ -49,6 +49,9 @@ image = { version = "0.25", default-features = false, features = ["hdr", "exr"],
 [dev-dependencies]
 tempfile = "3"
 
+[build-dependencies]
+time = { version = "0.3", features = ["formatting"] }
+
 [[bin]]
 name = "alembic-cli"
 path = "src/bin/alembic/main.rs"

@@ -1,6 +1,6 @@
 //! Integration tests for writing Alembic files and verifying round-trip.
 
-use alembic::abc::IArchive;
+use alembic::abc::{IArchive, ICompoundProperty, IProperty};
 use alembic::geom::{
     IXform, IPolyMesh, ICurves, IPoints, ISubD, ICamera, ILight, INuPatch, IFaceSet,
     XFORM_SCHEMA, POLYMESH_SCHEMA, CURVES_SCHEMA, POINTS_SCHEMA, SUBD_SCHEMA,
@@ -9,8 +9,9 @@ use alembic::geom::{
 use alembic::ogawa::writer::{
     OArchive, OObject, OPolyMesh, OPolyMeshSample, OXform, OXformSample,
     OCurves, OCurvesSample, OPoints, OPointsSample, OSubD, OSubDSample,
-    OCamera, ONuPatch, ONuPatchSample, OLight, OFaceSet, OFaceSetSample,
+    OCamera, ONuPatch, ONuPatchSample, OLight, OFaceSet, OFaceSetSample, OProperty, OPropertyData,
 };
+use alembic::util::PlainOldDataType;
 
 use tempfile::NamedTempFile;
 
@@ -492,6 +493,106 @@ fn vec_to_opt<T: Clone>(v: &Vec<T>) -> Option<Vec<T>> {
     if v.is_empty() { None } else { Some(v.clone()) }
 }
 
+fn map_ts(ts_map: &std::collections::HashMap<u32, u32>, src_idx: u32) -> u32 {
+    *ts_map.get(&src_idx).unwrap_or(&src_idx)
+}
+
+fn merge_property(target: &mut Vec<OProperty>, prop: OProperty) {
+    if let Some(existing) = target.iter_mut().find(|p| p.name == prop.name) {
+        match (&mut existing.data, prop.data) {
+            (OPropertyData::Compound(dst_children), OPropertyData::Compound(src_children)) => {
+                for child in src_children {
+                    merge_property(dst_children, child);
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+    target.push(prop);
+}
+
+fn copy_property_recursive(
+    prop: &IProperty<'_>,
+    ts_map: &std::collections::HashMap<u32, u32>,
+) -> Option<OProperty> {
+    let header = prop.getHeader();
+    let name = &header.name;
+    let data_type = header.data_type;
+    let ts_idx = map_ts(ts_map, header.time_sampling_index);
+    let meta = header.meta_data.clone();
+
+    if let Some(compound) = prop.asCompound() {
+        let mut out = OProperty::compound(name);
+        out.meta_data = meta;
+        out.time_sampling_index = ts_idx;
+        let num = compound.getNumProperties();
+        for i in 0..num {
+            if let Some(child) = compound.getProperty(i) {
+                if let Some(out_child) = copy_property_recursive(&child, ts_map) {
+                    out.add_child(out_child);
+                }
+            }
+        }
+        return Some(out);
+    }
+
+    if let Some(scalar) = prop.asScalar() {
+        let mut out = OProperty::scalar(name, data_type);
+        out.meta_data = meta;
+        out.time_sampling_index = ts_idx;
+        let num_samples = scalar.getNumSamples();
+        let is_string = matches!(
+            data_type.pod,
+            PlainOldDataType::String | PlainOldDataType::Wstring
+        );
+        for i in 0..num_samples {
+            if is_string {
+                if let Ok(buf) = scalar.getSampleVec(i) {
+                    out.add_scalar_sample(&buf);
+                }
+            } else {
+                let sample_size = data_type.num_bytes();
+                let mut buf = vec![0u8; sample_size];
+                if scalar.getSample(i, &mut buf).is_ok() {
+                    out.add_scalar_sample(&buf);
+                }
+            }
+        }
+        return Some(out);
+    }
+
+    if let Some(array) = prop.asArray() {
+        let mut out = OProperty::array(name, data_type);
+        out.meta_data = meta;
+        out.time_sampling_index = ts_idx;
+        let num_samples = array.getNumSamples();
+        for i in 0..num_samples {
+            if let (Ok(data), Ok(dims)) = (array.getSampleVec(i), array.getDimensions(i)) {
+                out.add_array_sample(&data, &dims);
+            }
+        }
+        return Some(out);
+    }
+
+    None
+}
+
+fn copy_properties_from(
+    props: &ICompoundProperty<'_>,
+    out_props: &mut Vec<OProperty>,
+    ts_map: &std::collections::HashMap<u32, u32>,
+) {
+    let num_props = props.getNumProperties();
+    for i in 0..num_props {
+        if let Some(prop) = props.getProperty(i) {
+            if let Some(out_prop) = copy_property_recursive(&prop, ts_map) {
+                merge_property(out_props, out_prop);
+            }
+        }
+    }
+}
+
 /// Convert IObject hierarchy to OObject hierarchy with full data preservation.
 /// Copies ALL schemas: Xform, PolyMesh, Curves, Points, SubD, Camera, Light, NuPatch, FaceSet.
 /// Preserves time sampling via ts_map.
@@ -754,6 +855,8 @@ fn convert_object(
         }
     }
     
+    copy_properties_from(&obj.getProperties(), &mut out.properties, ts_map);
+    
     // Recurse children
     for child in obj.getChildren() {
         let child_out = convert_object(&child, src_archive, ts_map);
@@ -814,6 +917,7 @@ fn test_bmw_roundtrip() {
         
         // Convert hierarchy with full schema support
         let mut out_root = OObject::new("");
+        copy_properties_from(&orig_root.getProperties(), &mut out_root.properties, &ts_map);
         for child in orig_root.getChildren() {
             out_root.children.push(convert_object(&child, &original, &ts_map));
         }
@@ -1194,6 +1298,7 @@ fn test_bmw_binary_comparison() {
         let ts_map = copy_time_samplings(&original, &mut archive);
         
         let mut out_root = OObject::new("");
+        copy_properties_from(&orig_root.getProperties(), &mut out_root.properties, &ts_map);
         for child in orig_root.getChildren() {
             out_root.children.push(convert_object(&child, &original, &ts_map));
         }
@@ -1424,6 +1529,7 @@ fn test_format_self_consistency() {
         let ts_map = copy_time_samplings(&original, &mut archive);
         
         let mut out_root = OObject::new("");
+        copy_properties_from(&orig_root.getProperties(), &mut out_root.properties, &ts_map);
         for child in orig_root.getChildren() {
             out_root.children.push(convert_object(&child, &original, &ts_map));
         }
@@ -1439,6 +1545,7 @@ fn test_format_self_consistency() {
         let ts_map = copy_time_samplings(&pass1, &mut archive);
         
         let mut out_root = OObject::new("");
+        copy_properties_from(&pass1_root.getProperties(), &mut out_root.properties, &ts_map);
         for child in pass1_root.getChildren() {
             out_root.children.push(convert_object(&child, &pass1, &ts_map));
         }
@@ -1505,6 +1612,7 @@ fn test_binary_diff_analysis() {
         
         // Convert with time sampling mapping
         let mut out_root = OObject::new("");
+        copy_properties_from(&orig_root.getProperties(), &mut out_root.properties, &ts_map);
         for child in orig_root.getChildren() {
             out_root.children.push(convert_object(&child, &original, &ts_map));
         }

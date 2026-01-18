@@ -2,13 +2,12 @@
 //! 
 //! This test validates binary parity between original Alembic files and our output.
 
-use alembic::abc::IArchive;
+use alembic::abc::{IArchive, ICompoundProperty, IProperty};
 use alembic::ogawa::writer::{
-    OArchive, OObject, OPolyMesh, OPolyMeshSample, OProperty, OXform, OXformSample,
+    OArchive, OObject, OPolyMesh, OPolyMeshSample, OProperty, OPropertyData, OXform, OXformSample,
 };
 use alembic::geom::{IXform, IPolyMesh, XFORM_SCHEMA, POLYMESH_SCHEMA};
-use alembic::core::PropertyType;
-use alembic::util::{DataType, PlainOldDataType};
+use alembic::util::PlainOldDataType;
 use std::path::Path;
 use std::collections::HashMap;
 
@@ -28,6 +27,103 @@ fn copy_time_samplings(src: &IArchive, dst: &mut OArchive) -> HashMap<u32, u32> 
     mapping
 }
 
+fn map_ts(ts_map: &HashMap<u32, u32>, src_idx: u32) -> u32 {
+    *ts_map.get(&src_idx).unwrap_or(&src_idx)
+}
+
+fn merge_property(target: &mut Vec<OProperty>, prop: OProperty) {
+    if let Some(existing) = target.iter_mut().find(|p| p.name == prop.name) {
+        match (&mut existing.data, prop.data) {
+            (OPropertyData::Compound(dst_children), OPropertyData::Compound(src_children)) => {
+                for child in src_children {
+                    merge_property(dst_children, child);
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+    target.push(prop);
+}
+
+fn copy_property_recursive(prop: &IProperty<'_>, ts_map: &HashMap<u32, u32>) -> Option<OProperty> {
+    let header = prop.getHeader();
+    let name = &header.name;
+    let data_type = header.data_type;
+    let ts_idx = map_ts(ts_map, header.time_sampling_index);
+    let meta = header.meta_data.clone();
+
+    if let Some(compound) = prop.asCompound() {
+        let mut out = OProperty::compound(name);
+        out.meta_data = meta;
+        out.time_sampling_index = ts_idx;
+        let num = compound.getNumProperties();
+        for i in 0..num {
+            if let Some(child) = compound.getProperty(i) {
+                if let Some(out_child) = copy_property_recursive(&child, ts_map) {
+                    out.add_child(out_child);
+                }
+            }
+        }
+        return Some(out);
+    }
+
+    if let Some(scalar) = prop.asScalar() {
+        let mut out = OProperty::scalar(name, data_type);
+        out.meta_data = meta;
+        out.time_sampling_index = ts_idx;
+        let num_samples = scalar.getNumSamples();
+        let is_string = matches!(
+            data_type.pod,
+            PlainOldDataType::String | PlainOldDataType::Wstring
+        );
+        for i in 0..num_samples {
+            if is_string {
+                if let Ok(buf) = scalar.getSampleVec(i) {
+                    out.add_scalar_sample(&buf);
+                }
+            } else {
+                let sample_size = data_type.num_bytes();
+                let mut buf = vec![0u8; sample_size];
+                if scalar.getSample(i, &mut buf).is_ok() {
+                    out.add_scalar_sample(&buf);
+                }
+            }
+        }
+        return Some(out);
+    }
+
+    if let Some(array) = prop.asArray() {
+        let mut out = OProperty::array(name, data_type);
+        out.meta_data = meta;
+        out.time_sampling_index = ts_idx;
+        let num_samples = array.getNumSamples();
+        for i in 0..num_samples {
+            if let (Ok(data), Ok(dims)) = (array.getSampleVec(i), array.getDimensions(i)) {
+                out.add_array_sample(&data, &dims);
+            }
+        }
+        return Some(out);
+    }
+
+    None
+}
+
+fn copy_properties_from(
+    props: &ICompoundProperty<'_>,
+    out_props: &mut Vec<OProperty>,
+    ts_map: &HashMap<u32, u32>,
+) {
+    let num_props = props.getNumProperties();
+    for i in 0..num_props {
+        if let Some(prop) = props.getProperty(i) {
+            if let Some(out_prop) = copy_property_recursive(&prop, ts_map) {
+                merge_property(out_props, out_prop);
+            }
+        }
+    }
+}
+
 /// Copy root object properties (Maya metadata: .childBnds, statistics, N.samples)
 fn copy_root_properties(
     root: &alembic::abc::IObject,
@@ -35,60 +131,7 @@ fn copy_root_properties(
     ts_map: &HashMap<u32, u32>,
 ) {
     let props = root.getProperties();
-    let num_props = props.getNumProperties();
-    
-    println!("\n=== ROOT PROPERTIES (total: {}) ===", num_props);
-    
-    for i in 0..num_props {
-        if let Some(prop) = props.getProperty(i) {
-            let header = prop.getHeader();
-            let name = &header.name;
-            
-            println!("  Property {}: '{}' type={:?} pod={:?} ext={}",
-                i, name, header.property_type, header.data_type.pod, header.data_type.extent);
-            
-            // Skip compound properties (schemas handled separately)
-            if header.property_type == PropertyType::Compound {
-                println!("    -> COMPOUND, skipping");
-                continue;
-            }
-            
-            // Copy scalar properties
-            if let Some(scalar) = prop.asScalar() {
-                let num_samples = scalar.getNumSamples();
-                let pod = header.data_type.pod;
-                let data_type = DataType::new(pod, header.data_type.extent);
-                
-                let mut out_prop = OProperty::scalar(name, data_type);
-                // Map time sampling index
-                let src_ts_idx = header.time_sampling_index;
-                out_prop.time_sampling_index = *ts_map.get(&src_ts_idx).unwrap_or(&src_ts_idx);
-                out_prop.meta_data = header.meta_data.clone().into();
-                
-                let is_string = pod == PlainOldDataType::String || pod == PlainOldDataType::Wstring;
-                
-                for s in 0..num_samples {
-                    if is_string {
-                        if let Ok(mut buf) = scalar.getSampleVec(s) {
-                            println!("  String sample {} len={}, data={:?}", s, buf.len(), String::from_utf8_lossy(&buf));
-                            buf.push(0); // Add null terminator
-                            out_prop.add_scalar_sample(&buf);
-                        }
-                    } else {
-                        let sample_size = header.data_type.num_bytes();
-                        let mut buf = vec![0u8; sample_size];
-                        if scalar.getSample(s, &mut buf).is_ok() {
-                            println!("  Sample {} size={}", s, buf.len());
-                            out_prop.add_scalar_sample(&buf);
-                        }
-                    }
-                }
-                
-                out_root.add_property(out_prop);
-                println!("Copied root property: {} ({} samples, ts_idx={})", name, num_samples, src_ts_idx);
-            }
-        }
-    }
+    copy_properties_from(&props, &mut out_root.properties, ts_map);
 }
 
 fn convert_object(
@@ -162,6 +205,8 @@ fn convert_object(
             out.properties = built.properties;
         }
     }
+
+    copy_properties_from(&obj.getProperties(), &mut out.properties, ts_map);
     
     // Recurse for children
     for child in obj.getChildren() {

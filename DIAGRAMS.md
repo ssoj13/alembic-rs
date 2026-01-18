@@ -128,7 +128,31 @@ sequenceDiagram
     OW->>File: Write index + close
 ```
 
-## 5. Geometry Schema Hierarchy
+## 5. Writer Parity Order (Ogawa)
+
+```mermaid
+sequenceDiagram
+    participant App as Application
+    participant OA as OArchive
+    participant OW as OgawaWriter
+    participant Obj as OObject
+    participant Props as OProperty
+
+    App->>OA: write_archive(root)
+    OA->>OW: write version + library version
+    OW->>Obj: write children first
+    Obj->>Props: write sample data
+    Props-->>Obj: property groups (reverse order)
+    Obj->>OW: object headers (data hash + child hash)
+    Obj->>OW: property headers
+    OW->>OW: finalize object group
+    OW->>OW: write archive metadata
+    OW->>OW: write time samplings
+    OW->>OW: write indexed metadata
+    OW->>OW: write root group + frozen flag
+```
+
+## 6. Geometry Schema Hierarchy
 
 ```mermaid
 classDiagram
@@ -180,7 +204,7 @@ classDiagram
     IGeomBase <|-- ISubD
 ```
 
-## 6. Viewer Render Pipeline
+## 7. Viewer Render Pipeline
 
 ```mermaid
 graph LR

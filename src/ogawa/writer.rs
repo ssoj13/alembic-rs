@@ -354,8 +354,8 @@ impl OArchive {
             return idx as u8;
         }
         
-        // Check if fits in indexed metadata (max 254 entries, max 255 bytes each)
-        if self.indexed_metadata.len() >= 254 || serialized.len() > 255 {
+        // Check if fits in indexed metadata (max 254 entries + empty, max 255 bytes each)
+        if self.indexed_metadata.len() >= 255 || serialized.len() > 255 {
             return 0xff; // Use inline metadata
         }
         
@@ -416,13 +416,14 @@ impl OArchive {
     /// 
     /// If identical data was already written, returns the existing position.
     /// Otherwise writes the data and returns the new position.
-    pub fn write_keyed_data(&mut self, data: &[u8]) -> Result<u64> {
+    pub fn write_keyed_data(&mut self, data: &[u8], pod: PlainOldDataType) -> Result<u64> {
         if self.frozen {
             return Err(Error::Frozen);
         }
         
-        // Compute content key for deduplication
-        let content_key = ArraySampleContentKey::from_data(data);
+        let encoded = encode_sample_for_pod(data, pod);
+        let seed = pod_seed(pod);
+        let content_key = ArraySampleContentKey::from_data(&encoded, seed);
         
         // Check for duplicate if deduplication is enabled
         if self.dedup_enabled {
@@ -432,13 +433,13 @@ impl OArchive {
         }
         
         let pos = self.stream.pos();
-        // Total size = 16 (key) + data.len()
-        let total_size = DATA_KEY_SIZE + data.len();
+        // Total size = 16 (key) + encoded.len()
+        let total_size = DATA_KEY_SIZE + encoded.len();
         self.stream.write_u64(total_size as u64)?;
         
         // Write the MD5 digest as key
         self.stream.write_bytes(content_key.digest())?;
-        self.stream.write_bytes(data)?;
+        self.stream.write_bytes(&encoded)?;
         
         // Store in dedup map
         if self.dedup_enabled {
@@ -675,7 +676,8 @@ impl OArchive {
         }
         // Also set the Alembic version as in the reference implementation
         if archive_meta.get("_ai_AlembicVersion").is_none() {
-            archive_meta.set("_ai_AlembicVersion", "Alembic 1.8.8 (built Aug  4 2025 10:01:52)");
+            let version = format_alembic_version(self.library_version);
+            archive_meta.set("_ai_AlembicVersion", &version);
         }
         let archive_meta_str = archive_meta.serialize();
         let archive_meta_pos = if archive_meta_str.is_empty() {
@@ -919,7 +921,7 @@ impl OArchive {
         // Create sorted indices by data_write_order for data writing order
         // But keep original compound order for group children
         let mut sorted_indices: Vec<usize> = (0..props.len()).collect();
-        sorted_indices.sort_by_key(|&i| props[i].data_write_order);
+        sorted_indices.sort_by_key(|&i| (props[i].data_write_order, i));
         
         // C++ binary parity: write ALL sample data first, then ALL property groups
         // Phase 1: Write sample data for all properties, collect group children
@@ -1028,7 +1030,9 @@ impl OArchive {
                 let mut children = Vec::new();
                 
                 for sample in samples {
-                    let content_key = crate::core::ArraySampleContentKey::from_data(sample);
+                    let encoded = encode_sample_for_pod(sample, prop.data_type.pod);
+                    let seed = pod_seed(prop.data_type.pod);
+                    let content_key = crate::core::ArraySampleContentKey::from_data(&encoded, seed);
                     let digest = content_key.digest();
                     let d0 = u64::from_le_bytes(digest[0..8].try_into().unwrap());
                     let d1 = u64::from_le_bytes(digest[8..16].try_into().unwrap());
@@ -1038,7 +1042,7 @@ impl OArchive {
                         Some((h0, h1)) => Some(SpookyHash::short_end_mix(h0, h1, d0, d1)),
                     };
                     
-                    let pos = self.write_keyed_data(sample)?;
+                    let pos = self.write_keyed_data(&encoded, prop.data_type.pod)?;
                     children.push(make_data_offset(pos));
                 }
                 Ok((children, sample_hash))
@@ -1050,7 +1054,9 @@ impl OArchive {
                 let mut children = Vec::new();
                 
                 for (data, dims) in samples {
-                    let content_key = crate::core::ArraySampleContentKey::from_data(data);
+                    let encoded = encode_sample_for_pod(data, prop.data_type.pod);
+                    let seed = pod_seed(prop.data_type.pod);
+                    let content_key = crate::core::ArraySampleContentKey::from_data(&encoded, seed);
                     let digest = content_key.digest();
                     let mut d = (
                         u64::from_le_bytes(digest[0..8].try_into().unwrap()),
@@ -1063,7 +1069,7 @@ impl OArchive {
                         Some((h0, h1)) => Some(SpookyHash::short_end_mix(h0, h1, d.0, d.1)),
                     };
                     
-                    let data_pos = self.write_keyed_data(data)?;
+                    let data_pos = self.write_keyed_data(&encoded, prop.data_type.pod)?;
                     
                     let dims_offset = if dims.len() <= 1 && 
                         !matches!(prop.data_type.pod, PlainOldDataType::String | PlainOldDataType::Wstring) 
@@ -1178,7 +1184,9 @@ impl OArchive {
                 let mut children = Vec::new();
                 for sample in samples {
                     // Compute sample digest (MD5-based key)
-                    let content_key = crate::core::ArraySampleContentKey::from_data(sample);
+                    let encoded = encode_sample_for_pod(sample, prop.data_type.pod);
+                    let seed = pod_seed(prop.data_type.pod);
+                    let content_key = crate::core::ArraySampleContentKey::from_data(&encoded, seed);
                     let digest = content_key.digest();
                     let d0 = u64::from_le_bytes(digest[0..8].try_into().unwrap());
                     let d1 = u64::from_le_bytes(digest[8..16].try_into().unwrap());
@@ -1189,7 +1197,7 @@ impl OArchive {
                         Some((h0, h1)) => Some(SpookyHash::short_end_mix(h0, h1, d0, d1)),
                     };
                     
-                    let pos = self.write_keyed_data(sample)?;
+                    let pos = self.write_keyed_data(&encoded, prop.data_type.pod)?;
                     children.push(make_data_offset(pos));
                 }
                 // C++ writes property groups inline (not deferred) for binary parity
@@ -1224,7 +1232,9 @@ impl OArchive {
                 let mut children = Vec::new();
                 for (data, dims) in samples {
                     // Compute sample digest
-                    let content_key = crate::core::ArraySampleContentKey::from_data(data);
+                    let encoded = encode_sample_for_pod(data, prop.data_type.pod);
+                    let seed = pod_seed(prop.data_type.pod);
+                    let content_key = crate::core::ArraySampleContentKey::from_data(&encoded, seed);
                     let digest = content_key.digest();
                     let mut d = (
                         u64::from_le_bytes(digest[0..8].try_into().unwrap()),
@@ -1240,7 +1250,7 @@ impl OArchive {
                         Some((h0, h1)) => Some(SpookyHash::short_end_mix(h0, h1, d.0, d.1)),
                     };
                     
-                    let data_pos = self.write_keyed_data(data)?;
+                    let data_pos = self.write_keyed_data(&encoded, prop.data_type.pod)?;
                     
                     // C++ WriteDimensions: use EMPTY_DATA for rank <= 1 (non-string types)
                     // This allows dimensions to be inferred from data size
@@ -1441,14 +1451,18 @@ impl OArchive {
             info |= (prop.data_type.extent as u32 & 0xff) << 12;
 
             // Is homogenous (bit 10)
-            // C++ Alembic has a bug: WrittenSampleID stores extent * numPoints,
-            // but comparison uses dims.numPoints(). For extent > 1 on first sample,
-            // these differ and isHomogenous becomes false.
-            // For scalar properties: always true
-            // For array properties with extent > 1: false (matching C++ bug)
-            // For array properties with extent == 1: true
-            let is_array = matches!(prop.data, OPropertyData::Array(_));
-            let is_homogenous = !is_array || prop.data_type.extent == 1;
+            // Matches C++: set false only if dims.numPoints() differs between samples.
+        let is_homogenous = match &prop.data {
+            OPropertyData::Array(samples) => {
+                if samples.is_empty() {
+                    true
+                } else {
+                    let first = samples[0].1.iter().product::<usize>();
+                    samples.iter().all(|(_, dims)| dims.iter().product::<usize>() == first)
+                }
+            }
+            _ => true,
+        };
             if is_homogenous {
                 info |= 0x400;
             }
@@ -1520,6 +1534,68 @@ fn pod_to_u8(pod: PlainOldDataType) -> u8 {
 /// Push f64 (chrono_t) to buffer as little-endian bytes.
 fn push_chrono(buf: &mut Vec<u8>, value: f64) {
     buf.extend_from_slice(&value.to_le_bytes());
+}
+
+/// Get POD-size seed for MurmurHash3 (matches Alembic PODNumBytes behavior).
+fn pod_seed(pod: PlainOldDataType) -> Option<u32> {
+    let size = match pod {
+        PlainOldDataType::Boolean => 1,
+        PlainOldDataType::Uint8 => 1,
+        PlainOldDataType::Int8 => 1,
+        PlainOldDataType::Uint16 => 2,
+        PlainOldDataType::Int16 => 2,
+        PlainOldDataType::Uint32 => 4,
+        PlainOldDataType::Int32 => 4,
+        PlainOldDataType::Uint64 => 8,
+        PlainOldDataType::Int64 => 8,
+        PlainOldDataType::Float16 => 2,
+        PlainOldDataType::Float32 => 4,
+        PlainOldDataType::Float64 => 8,
+        PlainOldDataType::String => 1,
+        PlainOldDataType::Wstring => 4,
+        PlainOldDataType::Unknown => return None,
+    };
+    Some(size)
+}
+
+/// Format Alembic version string matching GetLibraryVersion().
+fn format_alembic_version(version: i32) -> String {
+    let major = version / 10000;
+    let minor = (version / 100) % 100;
+    let patch = version % 100;
+    let date = option_env!("ALEMBIC_BUILD_DATE").unwrap_or("unknown");
+    let time = option_env!("ALEMBIC_BUILD_TIME").unwrap_or("unknown");
+    format!("Alembic {}.{}.{} (built {} {})", major, minor, patch, date, time)
+}
+
+/// Encode string samples to Alembic format (null-terminated).
+/// For non-string PODs this returns the input bytes unchanged.
+fn encode_sample_for_pod(data: &[u8], pod: PlainOldDataType) -> Vec<u8> {
+    match pod {
+        PlainOldDataType::String => {
+            let mut out = data.to_vec();
+            if out.last().copied() != Some(0) {
+                out.push(0);
+            }
+            if out.is_empty() {
+                out.push(0);
+            }
+            out
+        }
+        PlainOldDataType::Wstring => {
+            let mut out = data.to_vec();
+            let needs_term = out.len() < 4
+                || out[out.len().saturating_sub(4)..].iter().any(|b| *b != 0);
+            if needs_term {
+                out.extend_from_slice(&[0, 0, 0, 0]);
+            }
+            if out.is_empty() {
+                out.extend_from_slice(&[0, 0, 0, 0]);
+            }
+            out
+        }
+        _ => data.to_vec(),
+    }
 }
 
 /// Hash a property header matching C++ HashPropertyHeader().
@@ -1723,7 +1799,7 @@ impl OProperty {
             data_type,
             meta_data: MetaData::new(),
             time_sampling_index: 0,
-            first_changed_index: 1,
+            first_changed_index: 0,
             last_changed_index: 0,
             data: OPropertyData::Scalar(Vec::new()),
             is_scalar_like: true,
@@ -1738,10 +1814,10 @@ impl OProperty {
             data_type,
             meta_data: MetaData::new(),
             time_sampling_index: 0,
-            first_changed_index: 1,
+            first_changed_index: 0,
             last_changed_index: 0,
             data: OPropertyData::Array(Vec::new()),
-            is_scalar_like: false,
+            is_scalar_like: true,
             data_write_order: u32::MAX,
         }
     }
@@ -1753,7 +1829,7 @@ impl OProperty {
             data_type,
             meta_data: MetaData::new(),
             time_sampling_index: 0,
-            first_changed_index: 1,
+            first_changed_index: 0,
             last_changed_index: 0,
             data: OPropertyData::Array(Vec::new()),
             is_scalar_like: true,
@@ -1791,8 +1867,18 @@ impl OProperty {
     /// Add a scalar sample.
     pub fn add_scalar_sample(&mut self, data: &[u8]) {
         if let OPropertyData::Scalar(samples) = &mut self.data {
+            let sample_index = samples.len() as u32;
+            let is_same = samples.last().map_or(false, |prev| prev == data);
             samples.push(data.to_vec());
-            self.update_changed_indices();
+            if sample_index == 0 {
+                self.first_changed_index = 0;
+                self.last_changed_index = 0;
+            } else if !is_same {
+                if self.first_changed_index == 0 {
+                    self.first_changed_index = sample_index;
+                }
+                self.last_changed_index = sample_index;
+            }
         }
     }
     
@@ -1804,8 +1890,23 @@ impl OProperty {
     /// Add an array sample.
     pub fn add_array_sample(&mut self, data: &[u8], dims: &[usize]) {
         if let OPropertyData::Array(samples) = &mut self.data {
+            let sample_index = samples.len() as u32;
+            let is_same = samples.last().map_or(false, |(prev_data, prev_dims)| {
+                prev_data == data && prev_dims.as_slice() == dims
+            });
             samples.push((data.to_vec(), dims.to_vec()));
-            self.update_changed_indices();
+            if self.is_scalar_like && dims.iter().product::<usize>() != 1 {
+                self.is_scalar_like = false;
+            }
+            if sample_index == 0 {
+                self.first_changed_index = 0;
+                self.last_changed_index = 0;
+            } else if !is_same {
+                if self.first_changed_index == 0 {
+                    self.first_changed_index = sample_index;
+                }
+                self.last_changed_index = sample_index;
+            }
         }
     }
     
@@ -1882,22 +1983,6 @@ impl OProperty {
         }
     }
     
-    /// Update changed indices based on samples.
-    fn update_changed_indices(&mut self) {
-        let n = self.getNumSamples() as u32;
-        if n == 0 {
-            self.first_changed_index = 0;
-            self.last_changed_index = 0;
-        } else if n == 1 {
-            // Single sample = all samples same (static property)
-            self.first_changed_index = 0;
-            self.last_changed_index = 0;
-        } else {
-            // Multiple samples - assume all change (animation)
-            self.first_changed_index = 1;
-            self.last_changed_index = n - 1;
-        }
-    }
 }
 
 // ============================================================================
@@ -2124,23 +2209,6 @@ impl OPolyMesh {
             }
             // Create new with time sampling
             let mut prop = OProperty::array(prop_name, data_type);
-            prop.time_sampling_index = ts_idx;
-            children.push(prop);
-            children.last_mut().unwrap()
-        } else {
-            unreachable!()
-        }
-    }
-    
-    /// Get or create scalar-like array property with time sampling index set.
-    /// Scalar-like arrays have property type 3 (bit 0 set) indicating they behave like scalars.
-    fn get_or_create_scalar_like_array_with_ts(&mut self, prop_name: &str, data_type: DataType) -> &mut OProperty {
-        let ts_idx = self.time_sampling_index;
-        if let OPropertyData::Compound(children) = &mut self.geom_compound.data {
-            if let Some(idx) = children.iter().position(|p| p.name == prop_name) {
-                return &mut children[idx];
-            }
-            let mut prop = OProperty::scalar_like_array(prop_name, data_type);
             prop.time_sampling_index = ts_idx;
             children.push(prop);
             children.last_mut().unwrap()
