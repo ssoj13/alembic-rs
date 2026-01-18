@@ -193,6 +193,10 @@ impl ArchiveReader for OgawaArchiveReader {
         &self.root_header.meta_data
     }
     
+    fn getIndexedMetaData(&self) -> &[MetaData] {
+        &self.indexed_metadata
+    }
+    
     fn findObject(&self, path: &str) -> Option<Box<dyn ObjectReader + '_>> {
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         if parts.is_empty() {
@@ -558,7 +562,7 @@ impl OgawaPropertyReader {
         indexed_metadata: Arc<Vec<MetaData>>,
         cache: Arc<ReadArraySampleCache>,
     ) -> Self {
-        let header = match parsed.property_type {
+        let mut header = match parsed.property_type {
             PropertyType::Compound => PropertyHeader::compound(&parsed.name),
             PropertyType::Scalar => PropertyHeader::scalar(
                 &parsed.name,
@@ -569,6 +573,9 @@ impl OgawaPropertyReader {
                 parsed.data_type,
             ),
         };
+        // Copy time_sampling_index and metadata from parsed header
+        header.time_sampling_index = parsed.time_sampling_index;
+        header.meta_data = parsed.metadata.clone();
         
         Self { 
             header, 

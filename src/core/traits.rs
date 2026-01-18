@@ -59,6 +59,13 @@ pub trait ArchiveReader: Send + Sync {
     ///
     /// Note: Extended method for archive metadata access.
     fn getArchiveMetaData(&self) -> &MetaData;
+    
+    /// Get the indexed metadata table (for binary-compatible copying).
+    ///
+    /// Returns the metadata entries used for indexed metadata serialization.
+    fn getIndexedMetaData(&self) -> &[MetaData] {
+        &[]
+    }
 
     /// Find an object by full path.
     fn findObject(&self, path: &str) -> Option<Box<dyn ObjectReader + '_>> {

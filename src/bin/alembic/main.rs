@@ -866,7 +866,7 @@ fn get_object_info(obj: &IObject, schema: &str) -> String {
 fn copy_root_properties(root: &IObject, out_root: &mut OObject) {
     use alembic::ogawa::writer::OProperty;
     use alembic::util::{DataType, PlainOldDataType};
-    use alembic::core::{ScalarPropertyReader, PropertyType};
+    use alembic::core::PropertyType;
     
     let props = root.getProperties();
     let num_props = props.getNumProperties();
@@ -914,7 +914,7 @@ fn copy_root_properties(root: &IObject, out_root: &mut OObject) {
                 }
                 
                 out_root.add_property(out_prop);
-                debug!("Copied root property: {} ({} samples)", name, num_samples);
+                debug!("Copied root property: {} ({} samples, ts_idx={})", name, num_samples, header.time_sampling_index);
             }
             // Note: Array properties on root are less common, skip for now
         }
@@ -940,8 +940,10 @@ fn cmd_copy2(input: &str, output: &str) {
         }
     };
     
-    // Copy archive metadata from source file
+    // Copy archive metadata, version, and indexed metadata from source file
     out_archive.set_archive_metadata(archive.getArchiveMetaData().clone());
+    out_archive.set_library_version(archive.getArchiveVersion());
+    out_archive.set_indexed_metadata(archive.getIndexedMetaData());
     
     // Copy time samplings from input archive
     // Skip index 0 (identity time sampling - always present)

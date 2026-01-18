@@ -167,6 +167,11 @@ impl IArchive {
         self.reader.getArchiveMetaData()
     }
     
+    /// Get the indexed metadata table (for binary-compatible copying).
+    pub fn getIndexedMetaData(&self) -> &[MetaData] {
+        self.reader.getIndexedMetaData()
+    }
+    
     /// Get the combined bounding box of all geometry in the archive.
     /// 
     /// Computes the union of self_bounds from all geometry objects

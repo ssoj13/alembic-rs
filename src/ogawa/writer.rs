@@ -113,8 +113,8 @@ impl OStream {
     }
 }
 
-/// Library version for written archives (1.8.8).
-const ALEMBIC_LIBRARY_VERSION: i32 = 10808;
+/// Library version for written archives (1.8.10 - matches reference C++ Alembic).
+const ALEMBIC_LIBRARY_VERSION: i32 = 10810;
 
 /// Ogawa file version.
 /// Ogawa file format version - matches C++ ALEMBIC_OGAWA_FILE_VERSION = 0
@@ -170,6 +170,8 @@ pub struct OArchive {
     deferred_groups: Vec<DeferredGroup>,
     /// Use deferred group writing (C++ compatible mode)
     deferred_mode: bool,
+    /// Library version to write (default: 10808 = 1.8.8)
+    library_version: i32,
 }
 
 /// Context for computing object headers inside write_properties.
@@ -214,6 +216,7 @@ impl OArchive {
             dedup_enabled: true,
             deferred_groups: Vec::new(),
             deferred_mode: false,  // Disabled for binary parity - write groups inline
+            library_version: ALEMBIC_LIBRARY_VERSION,
         })
     }
     
@@ -263,6 +266,16 @@ impl OArchive {
         self.compression_hint
     }
     
+    /// Set the library version to write (for copying archives).
+    pub fn set_library_version(&mut self, version: i32) {
+        self.library_version = version;
+    }
+    
+    /// Get the library version.
+    pub fn library_version(&self) -> i32 {
+        self.library_version
+    }
+    
     /// Set the archive metadata (e.g. when copying from another file).
     /// This also clears the application_writer so we don't add our own app name.
     pub fn set_archive_metadata(&mut self, md: MetaData) {
@@ -309,7 +322,11 @@ impl OArchive {
     /// Update max samples for a time sampling.
     pub fn update_max_samples(&mut self, ts_index: u32, num_samples: u32) {
         if let Some(max) = self.max_samples.get_mut(ts_index as usize) {
+            let old = *max;
             *max = (*max).max(num_samples);
+            if *max != old {
+                eprintln!("[DEBUG] update_max_samples(ts_index={}, num_samples={}) -> max changed {} -> {}", ts_index, num_samples, old, *max);
+            }
         }
     }
     
@@ -346,6 +363,25 @@ impl OArchive {
         self.indexed_metadata.push(md.clone());
         self.metadata_map.insert(serialized, idx);
         idx as u8
+    }
+    
+    /// Set indexed metadata from source archive (for copying).
+    /// This replaces any existing indexed metadata.
+    pub fn set_indexed_metadata(&mut self, metadata: &[MetaData]) {
+        self.indexed_metadata.clear();
+        self.metadata_map.clear();
+        
+        // Index 0 is always empty metadata
+        self.indexed_metadata.push(MetaData::new());
+        
+        // Copy remaining metadata entries
+        for (i, md) in metadata.iter().enumerate().skip(1) {
+            self.indexed_metadata.push(md.clone());
+            let serialized = md.serialize();
+            if !serialized.is_empty() {
+                self.metadata_map.insert(serialized, i);
+            }
+        }
     }
 
     /// Check if the archive has been frozen (finalized).
@@ -608,7 +644,7 @@ impl OArchive {
         let version_pos = self.write_data(&OGAWA_FILE_VERSION.to_le_bytes())?;
 
         // Write library version data second (as per official implementation)
-        let file_version_pos = self.write_data(&ALEMBIC_LIBRARY_VERSION.to_le_bytes())?;
+        let file_version_pos = self.write_data(&self.library_version.to_le_bytes())?;
 
         // Write all objects recursively, collect positions
         let (root_obj_pos, _, _) = self.write_object(root, "/")?;
@@ -1975,8 +2011,8 @@ impl OPolyMesh {
             DataType::new(PlainOldDataType::Int32, 1));
         fi_prop.data_write_order = 1;
         
-        // 4. .faceCounts - fourth in file
-        let fc_prop = self.get_or_create_scalar_like_array_with_ts(".faceCounts",
+        // 4. .faceCounts - fourth in file (NOT scalar-like, matches Maya export)
+        let fc_prop = self.get_or_create_array_with_ts(".faceCounts",
             DataType::new(PlainOldDataType::Int32, 1));
         fc_prop.data_write_order = 2;
         
@@ -1989,7 +2025,8 @@ impl OPolyMesh {
             DataType::new(PlainOldDataType::Int32, 1));
         face_indices_prop.add_array_pod(&sample.face_indices);
         
-        let face_counts_prop = self.get_or_create_scalar_like_array_with_ts(".faceCounts",
+        // .faceCounts: regular array (NOT scalar-like) to match Maya export format
+        let face_counts_prop = self.get_or_create_array_with_ts(".faceCounts",
             DataType::new(PlainOldDataType::Int32, 1));
         face_counts_prop.add_array_pod(&sample.face_counts);
         
@@ -2014,9 +2051,14 @@ impl OPolyMesh {
         if let Some(ref normals) = sample.normals {
             if sample.normals_is_simple_array {
                 // Write as simple array N (matching original file format)
+                // Include GeomParam metadata for compatibility
                 let mut n_meta = MetaData::new();
+                n_meta.set("arrayExtent", "1");
                 n_meta.set("geoScope", "fvr"); // facevarying
                 n_meta.set("interpretation", "normal");
+                n_meta.set("isGeomParam", "true");
+                n_meta.set("podExtent", "3");
+                n_meta.set("podName", "float32_t");
                 let n_prop = self.get_or_create_array_with_meta("N",
                     DataType::new(PlainOldDataType::Float32, 3), n_meta);
                 n_prop.add_array_pod(normals);
@@ -2142,6 +2184,7 @@ impl OPolyMesh {
     }
     
     /// Get or create arb geom param array.
+    #[allow(dead_code)]
     fn get_or_create_arb_array(&mut self, prop_name: &str, data_type: DataType) -> &mut OProperty {
         let ts_idx = self.time_sampling_index;
         let arb = self.arb_geom_compound.get_or_insert_with(|| OProperty::compound(".arbGeomParams"));
