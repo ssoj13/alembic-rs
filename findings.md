@@ -18,7 +18,7 @@
    - Текущее: `as_bytes()` без `\0`.
    - Референс: строки сериализуются с `\0` между элементами.
    - Evidence:
-     - `src/ogawa/writer.rs:3669`
+     - `src/ogawa/writer/write_util.rs:86`
      - `_ref/alembic/lib/Alembic/AbcCoreAbstract/ArraySample.cpp:87`
    - Влияние: payload и digest отличаются.
 
@@ -28,21 +28,21 @@
    - Текущее: `false` для массивов с extent > 1.
    - Референс: сбрасывается только при изменении `dims.numPoints()` между семплами.
    - Evidence:
-     - `src/ogawa/writer.rs:1455`
+     - `src/ogawa/writer/archive.rs:998`
      - `_ref/alembic/lib/Alembic/AbcCoreOgawa/ApwImpl.cpp:198`
 
 4) **Инициализация `first_changed_index/last_changed_index`**
    - Текущее: `first=1, last=0` для scalar/array.
    - Референс: `first=0, last=0`.
    - Evidence:
-     - `src/ogawa/writer.rs:1802`
+     - `src/ogawa/writer/property.rs:55`
      - `_ref/alembic/lib/Alembic/AbcCoreOgawa/Foundation.h:71`
 
 5) **`first_changed_index/last_changed_index` вычисляются только по количеству семплов**
    - Текущее: при `n>1` всегда `first=1, last=n-1`, даже если семплы повторяются.
    - Референс: индексы обновляются только при смене key, повторения не двигают `lastChangedIndex`.
    - Evidence:
-     - `src/ogawa/writer.rs:1874`
+     - `src/ogawa/writer/property.rs:127`
      - `_ref/alembic/lib/Alembic/AbcCoreOgawa/SpwImpl.cpp:163`
      - `_ref/alembic/lib/Alembic/AbcCoreOgawa/ApwImpl.cpp:167`
 
@@ -59,19 +59,19 @@
    - Текущее: inline при `len >= 254`.
    - Референс: разрешено 254 entries + empty.
    - Evidence:
-     - `src/ogawa/writer.rs:358`
+     - `src/ogawa/writer/archive.rs:243`
      - `_ref/alembic/lib/Alembic/AbcCoreOgawa/MetaDataMap.cpp:41`
 
 8) **Нестабильная сортировка при `data_write_order` tie**
    - Текущее: `sort_by_key` (unstable), может менять порядок.
    - Evidence:
-     - `src/ogawa/writer.rs:922`
+     - `src/ogawa/writer/archive.rs:704`
 
 9) **`isScalarLike` для array по умолчанию неверен**
    - Текущее: array создаётся с `is_scalar_like = false`, флаг никогда не становится true.
    - Референс: `PropertyHeaderAndFriends` стартует `isScalarLike = true`, сбрасывается при `dims.numPoints() != 1`.
    - Evidence:
-     - `src/ogawa/writer.rs:1820`
+     - `src/ogawa/writer/property.rs:73`
      - `_ref/alembic/lib/Alembic/AbcCoreOgawa/Foundation.h:79`
      - `_ref/alembic/lib/Alembic/AbcCoreOgawa/ApwImpl.cpp:192`
 
@@ -79,7 +79,7 @@
    - Текущее: фиксированная строка.
    - Референс: `GetLibraryVersion()` (build date/time).
    - Evidence:
-     - `src/ogawa/writer.rs:678`
+     - `src/ogawa/writer/archive.rs:540`
      - `_ref/alembic/lib/Alembic/AbcCoreAbstract/Foundation.cpp:65`
 
 ## Корневая причина для heart.abc
