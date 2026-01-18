@@ -652,6 +652,8 @@ fn convert_object(
                         corner_indices: vec_to_opt(&sample.corner_indices),
                         corner_sharpnesses: vec_to_opt(&sample.corner_sharpnesses),
                         holes: vec_to_opt(&sample.holes),
+                        normals: sample.normals.clone(),
+                        normal_indices: sample.normal_indices.clone(),
                     };
                     osubd.add_sample(&out_sample);
                 }
