@@ -5,18 +5,29 @@
 //! Produces binary-compatible output with C++ Alembic on little-endian systems.
 
 /// Compute MurmurHash3 x64_128 hash.
-/// 
-/// This matches the Alembic C++ implementation exactly.
+///
+/// This matches Alembic's `MurmurHash3_x64_128` implementation.
+/// `pod_size` controls byte swapping on big-endian targets (C++ `podSize`).
 /// Returns 128-bit hash as (h1, h2).
-/// If `seed` is None, behaves like seed = 0.
+/// If `pod_size` is None, no swapping is applied.
 #[inline]
-pub fn hash128(data: &[u8], seed: Option<u32>) -> (u64, u64) {
+pub fn hash128(data: &[u8], pod_size: Option<usize>) -> (u64, u64) {
+    let pod_size = pod_size.unwrap_or(1);
+    let data = if cfg!(target_endian = "big") && pod_size > 1 {
+        let mut swapped = Vec::with_capacity(data.len());
+        for chunk in data.chunks(pod_size) {
+            swapped.extend(chunk.iter().rev());
+        }
+        swapped
+    } else {
+        data.to_vec()
+    };
+
     let len = data.len();
     let nblocks = len / 16;
-    
-    let seed = seed.unwrap_or(0) as u64;
-    let mut h1: u64 = seed;
-    let mut h2: u64 = seed;
+
+    let mut h1: u64 = 0;
+    let mut h2: u64 = 0;
     
     const C1: u64 = 0x87c37b91114253d5;
     const C2: u64 = 0x4cf5ad432745937f;
@@ -335,8 +346,8 @@ fn fmix64(mut h: u64) -> u64 {
 
 /// Compute hash and return as 16-byte array (little-endian).
 #[inline]
-pub fn hash128_bytes(data: &[u8], seed: Option<u32>) -> [u8; 16] {
-    let (h1, h2) = hash128(data, seed);
+pub fn hash128_bytes(data: &[u8], pod_size: Option<usize>) -> [u8; 16] {
+    let (h1, h2) = hash128(data, pod_size);
     let mut result = [0u8; 16];
     result[0..8].copy_from_slice(&h1.to_le_bytes());
     result[8..16].copy_from_slice(&h2.to_le_bytes());
