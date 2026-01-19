@@ -16,12 +16,6 @@ use crate::util::{PlainOldDataType, Result};
 use spooky_hash::SpookyHash;
 
 impl OArchive {
-    /// Write a properties group and return its position.
-    pub(super) fn write_properties(&mut self, props: &[OProperty]) -> Result<u64> {
-        let (pos, _, _, _) = self.write_properties_with_data(props)?;
-        Ok(pos)
-    }
-
     /// Write properties and return (pos, hash1, hash2, raw_hashes).
     pub(super) fn write_properties_with_data(
         &mut self,
@@ -301,8 +295,11 @@ impl OArchive {
                             make_data_offset(self.write_data(&dims_data)?)
                         };
 
-                        let num_points = sample.dims.iter().product::<usize>();
-                        if let Some(prev) = prev_num_points {
+                        let num_points = sample.dims.iter().product::<usize>()
+                            * prop.data_type.extent as usize;
+                        if prop.data_type.extent != 1 {
+                            state.is_homogenous = false;
+                        } else if let Some(prev) = prev_num_points {
                             if num_points != prev {
                                 state.is_homogenous = false;
                             }

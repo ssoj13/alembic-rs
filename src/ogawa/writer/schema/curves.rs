@@ -10,6 +10,7 @@ use crate::util::{DataType, PlainOldDataType};
 
 use super::super::object::OObject;
 use super::super::property::{OProperty, OPropertyData};
+use super::util::{bounds_meta, compute_bounds_vec3};
 
 /// Curves sample data for output.
 pub struct OCurvesSample {
@@ -96,35 +97,51 @@ impl OCurves {
 
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &OCurvesSample) {
+        // .selfBnds is created by OGeomBase before P in C++.
+        let bounds = compute_bounds_vec3(&sample.positions);
+        let self_bnds_prop = self.geom_compound.get_or_create_scalar_child(
+            ".selfBnds",
+            DataType::new(PlainOldDataType::Float64, 6),
+        );
+        self_bnds_prop.meta_data = bounds_meta();
+        self_bnds_prop.time_sampling_index = self.time_sampling_index;
+        self_bnds_prop.data_write_order = 6;
+        self_bnds_prop.add_scalar_pod(&bounds);
+
         let p_prop = self.get_or_create_array_with_meta(
             "P",
             DataType::new(PlainOldDataType::Float32, 3),
             Self::p_meta(),
         );
+        p_prop.data_write_order = 0;
         p_prop.add_array_pod(&sample.positions);
 
         let nverts = self.geom_compound.get_or_create_array_child(
             ".nVertices",
             DataType::new(PlainOldDataType::Int32, 1),
         );
+        nverts.data_write_order = 1;
         nverts.add_array_pod(&sample.num_vertices);
 
         let ctype = self.geom_compound.get_or_create_scalar_child(
             ".curveType",
             DataType::new(PlainOldDataType::String, 1),
         );
+        ctype.data_write_order = 2;
         ctype.add_scalar_string(&sample.curve_type.to_string());
 
         let wrap = self.geom_compound.get_or_create_scalar_child(
             ".wrap",
             DataType::new(PlainOldDataType::String, 1),
         );
+        wrap.data_write_order = 3;
         wrap.add_scalar_string(&sample.wrap.to_string());
 
         let basis = self.geom_compound.get_or_create_scalar_child(
             ".basis",
             DataType::new(PlainOldDataType::String, 1),
         );
+        basis.data_write_order = 4;
         basis.add_scalar_string(&sample.basis.to_string());
 
         if let Some(ref vels) = sample.velocities {
@@ -132,6 +149,7 @@ impl OCurves {
                 ".velocities",
                 DataType::new(PlainOldDataType::Float32, 3),
             );
+            prop.data_write_order = 5;
             prop.add_array_pod(vels);
         }
 
@@ -140,6 +158,7 @@ impl OCurves {
                 ".widths",
                 DataType::new(PlainOldDataType::Float32, 1),
             );
+            prop.data_write_order = 9;
             prop.add_array_pod(widths);
         }
 
@@ -148,6 +167,7 @@ impl OCurves {
                 "N",
                 DataType::new(PlainOldDataType::Float32, 3),
             );
+            prop.data_write_order = 8;
             prop.add_array_pod(normals);
         }
 
@@ -156,6 +176,7 @@ impl OCurves {
                 "uv",
                 DataType::new(PlainOldDataType::Float32, 2),
             );
+            prop.data_write_order = 7;
             prop.add_array_pod(uvs);
         }
 
@@ -164,6 +185,7 @@ impl OCurves {
                 ".knots",
                 DataType::new(PlainOldDataType::Float32, 1),
             );
+            prop.data_write_order = 11;
             prop.add_array_pod(knots);
         }
 
@@ -172,6 +194,7 @@ impl OCurves {
                 ".orders",
                 DataType::new(PlainOldDataType::Int32, 1),
             );
+            prop.data_write_order = 10;
             prop.add_array_pod(orders);
         }
     }

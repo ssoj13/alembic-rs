@@ -9,6 +9,7 @@ use crate::util::{DataType, PlainOldDataType};
 
 use super::super::object::OObject;
 use super::super::property::{OProperty, OPropertyData};
+use super::util::{bounds_meta, compute_bounds_vec3};
 
 /// Points sample data for output.
 pub struct OPointsSample {
@@ -58,17 +59,30 @@ impl OPoints {
 
     /// Add a sample.
     pub fn add_sample(&mut self, sample: &OPointsSample) {
+        // .selfBnds is created by OGeomBase before P in C++.
+        let bounds = compute_bounds_vec3(&sample.positions);
+        let self_bnds_prop = self.geom_compound.get_or_create_scalar_child(
+            ".selfBnds",
+            DataType::new(PlainOldDataType::Float64, 6),
+        );
+        self_bnds_prop.meta_data = bounds_meta();
+        self_bnds_prop.time_sampling_index = self.time_sampling_index;
+        self_bnds_prop.data_write_order = 4;
+        self_bnds_prop.add_scalar_pod(&bounds);
+
         let p_prop = self.get_or_create_array_with_meta(
             "P",
             DataType::new(PlainOldDataType::Float32, 3),
             Self::p_meta(),
         );
+        p_prop.data_write_order = 0;
         p_prop.add_array_pod(&sample.positions);
 
         let id_prop = self.geom_compound.get_or_create_array_child(
             "id",
             DataType::new(PlainOldDataType::Int64, 1),
         );
+        id_prop.data_write_order = 1;
         id_prop.add_array_pod(&sample.ids);
 
         if let Some(ref vels) = sample.velocities {
@@ -76,6 +90,7 @@ impl OPoints {
                 ".velocities",
                 DataType::new(PlainOldDataType::Float32, 3),
             );
+            prop.data_write_order = 2;
             prop.add_array_pod(vels);
         }
 
@@ -84,6 +99,7 @@ impl OPoints {
                 ".widths",
                 DataType::new(PlainOldDataType::Float32, 1),
             );
+            prop.data_write_order = 3;
             prop.add_array_pod(widths);
         }
     }

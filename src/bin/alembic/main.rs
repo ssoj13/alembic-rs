@@ -871,15 +871,24 @@ fn map_ts(
 }
 
 fn merge_property(target: &mut Vec<OProperty>, prop: OProperty) {
-    if let Some(existing) = target.iter_mut().find(|p| p.name == prop.name) {
-        match (&mut existing.data, prop.data) {
-            (OPropertyData::Compound(dst_children), OPropertyData::Compound(src_children)) => {
-                for child in src_children {
-                    merge_property(dst_children, child);
+    if let Some(idx) = target.iter().position(|p| p.name == prop.name) {
+        let existing = &mut target[idx];
+        if let OPropertyData::Compound(dst_children) = &mut existing.data {
+            if let OPropertyData::Compound(_) = &prop.data {
+                if let OPropertyData::Compound(src_children) = prop.data {
+                    for child in src_children {
+                        merge_property(dst_children, child);
+                    }
                 }
+                return;
             }
-            _ => {}
         }
+        // For parity, prefer the source property when names collide.
+        let mut incoming = prop;
+        if existing.data_write_order != u32::MAX && incoming.data_write_order == u32::MAX {
+            incoming.data_write_order = existing.data_write_order;
+        }
+        *existing = incoming;
         return;
     }
     target.push(prop);

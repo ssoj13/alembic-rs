@@ -96,6 +96,7 @@ impl OSubD {
             DataType::new(PlainOldDataType::Float64, 6),
             bounds_meta(),
         );
+        self_bnds_prop.data_write_order = 4;
         self_bnds_prop.add_scalar_pod(&bounds);
 
         let p_prop = self.get_or_create_array_with_meta(
@@ -103,24 +104,28 @@ impl OSubD {
             DataType::new(PlainOldDataType::Float32, 3),
             Self::p_meta(),
         );
+        p_prop.data_write_order = 0;
         p_prop.add_array_pod(&sample.positions);
 
         let fi_prop = self.geom_compound.get_or_create_array_child(
             ".faceIndices",
             DataType::new(PlainOldDataType::Int32, 1),
         );
+        fi_prop.data_write_order = 1;
         fi_prop.add_array_pod(&sample.face_indices);
 
         let fc_prop = self.geom_compound.get_or_create_array_child(
             ".faceCounts",
             DataType::new(PlainOldDataType::Int32, 1),
         );
+        fc_prop.data_write_order = 2;
         fc_prop.add_array_pod(&sample.face_counts);
 
         let scheme_prop = self.geom_compound.get_or_create_scalar_child(
             ".scheme",
             DataType::new(PlainOldDataType::String, 1),
         );
+        scheme_prop.data_write_order = 10;
         scheme_prop.add_scalar_string(&sample.subdivision_scheme);
 
         if let Some(ref vels) = sample.velocities {
@@ -128,6 +133,7 @@ impl OSubD {
                 ".velocities",
                 DataType::new(PlainOldDataType::Float32, 3),
             );
+            v_prop.data_write_order = 3;
             v_prop.add_array_pod(vels);
         }
 
@@ -136,6 +142,7 @@ impl OSubD {
                 ".creaseIndices",
                 DataType::new(PlainOldDataType::Int32, 1),
             );
+            prop.data_write_order = 11;
             prop.add_array_pod(indices);
         }
         if let Some(ref lengths) = sample.crease_lengths {
@@ -143,6 +150,7 @@ impl OSubD {
                 ".creaseLengths",
                 DataType::new(PlainOldDataType::Int32, 1),
             );
+            prop.data_write_order = 12;
             prop.add_array_pod(lengths);
         }
         if let Some(ref sharpnesses) = sample.crease_sharpnesses {
@@ -150,6 +158,7 @@ impl OSubD {
                 ".creaseSharpnesses",
                 DataType::new(PlainOldDataType::Float32, 1),
             );
+            prop.data_write_order = 13;
             prop.add_array_pod(sharpnesses);
         }
 
@@ -158,6 +167,7 @@ impl OSubD {
                 ".cornerIndices",
                 DataType::new(PlainOldDataType::Int32, 1),
             );
+            prop.data_write_order = 14;
             prop.add_array_pod(indices);
         }
         if let Some(ref sharpnesses) = sample.corner_sharpnesses {
@@ -165,6 +175,7 @@ impl OSubD {
                 ".cornerSharpnesses",
                 DataType::new(PlainOldDataType::Float32, 1),
             );
+            prop.data_write_order = 15;
             prop.add_array_pod(sharpnesses);
         }
 
@@ -173,6 +184,7 @@ impl OSubD {
                 ".holes",
                 DataType::new(PlainOldDataType::Int32, 1),
             );
+            prop.data_write_order = 16;
             prop.add_array_pod(holes);
         }
 
@@ -187,6 +199,7 @@ impl OSubD {
                 DataType::new(PlainOldDataType::Float32, 2),
             );
             vals_prop.time_sampling_index = self.time_sampling_index;
+            vals_prop.data_write_order = 5;
             vals_prop.add_array_pod(uvs);
 
             if let Some(ref uvi) = sample.uv_indices {
@@ -195,6 +208,7 @@ impl OSubD {
                     DataType::new(PlainOldDataType::Int32, 1),
                 );
                 idx_prop.time_sampling_index = self.time_sampling_index;
+                idx_prop.data_write_order = 6;
                 idx_prop.add_array_pod(uvi);
             }
         }
@@ -210,6 +224,7 @@ impl OSubD {
                 DataType::new(PlainOldDataType::Float32, 3),
             );
             vals_prop.time_sampling_index = self.time_sampling_index;
+            vals_prop.data_write_order = 7;
             vals_prop.add_array_pod(normals);
 
             if let Some(ref ni) = sample.normal_indices {
@@ -218,6 +233,7 @@ impl OSubD {
                     DataType::new(PlainOldDataType::Int32, 1),
                 );
                 idx_prop.time_sampling_index = self.time_sampling_index;
+                idx_prop.data_write_order = 8;
                 idx_prop.add_array_pod(ni);
             }
         }

@@ -92,6 +92,7 @@ impl ONuPatch {
             DataType::new(PlainOldDataType::Float64, 6),
             bounds_meta(),
         );
+        self_bnds_prop.data_write_order = 12;
         self_bnds_prop.add_scalar_pod(&bounds);
 
         let p_prop = self.get_or_create_array_with_meta(
@@ -99,42 +100,49 @@ impl ONuPatch {
             DataType::new(PlainOldDataType::Float32, 3),
             Self::p_meta(),
         );
+        p_prop.data_write_order = 0;
         p_prop.add_array_pod(&sample.positions);
 
         let nu_prop = self.geom_compound.get_or_create_scalar_child(
             "nu",
             DataType::new(PlainOldDataType::Int32, 1),
         );
+        nu_prop.data_write_order = 1;
         nu_prop.add_scalar_pod(&sample.num_u);
 
         let nv_prop = self.geom_compound.get_or_create_scalar_child(
             "nv",
             DataType::new(PlainOldDataType::Int32, 1),
         );
+        nv_prop.data_write_order = 2;
         nv_prop.add_scalar_pod(&sample.num_v);
 
         let uo_prop = self.geom_compound.get_or_create_scalar_child(
             "uOrder",
             DataType::new(PlainOldDataType::Int32, 1),
         );
+        uo_prop.data_write_order = 3;
         uo_prop.add_scalar_pod(&sample.u_order);
 
         let vo_prop = self.geom_compound.get_or_create_scalar_child(
             "vOrder",
             DataType::new(PlainOldDataType::Int32, 1),
         );
+        vo_prop.data_write_order = 4;
         vo_prop.add_scalar_pod(&sample.v_order);
 
         let uk_prop = self.geom_compound.get_or_create_array_child(
             "uKnot",
             DataType::new(PlainOldDataType::Float32, 1),
         );
+        uk_prop.data_write_order = 5;
         uk_prop.add_array_pod(&sample.u_knot);
 
         let vk_prop = self.geom_compound.get_or_create_array_child(
             "vKnot",
             DataType::new(PlainOldDataType::Float32, 1),
         );
+        vk_prop.data_write_order = 6;
         vk_prop.add_array_pod(&sample.v_knot);
 
         if let Some(ref weights) = sample.position_weights {
@@ -142,6 +150,7 @@ impl ONuPatch {
                 "w",
                 DataType::new(PlainOldDataType::Float32, 1),
             );
+            prop.data_write_order = 8;
             prop.add_array_pod(weights);
         }
 
@@ -150,6 +159,7 @@ impl ONuPatch {
                 ".velocities",
                 DataType::new(PlainOldDataType::Float32, 3),
             );
+            prop.data_write_order = 9;
             prop.add_array_pod(vels);
         }
 
@@ -164,6 +174,7 @@ impl ONuPatch {
                 DataType::new(PlainOldDataType::Float32, 2),
             );
             vals_prop.time_sampling_index = self.time_sampling_index;
+            vals_prop.data_write_order = 10;
             vals_prop.add_array_pod(uvs);
         }
 
@@ -178,6 +189,7 @@ impl ONuPatch {
                 DataType::new(PlainOldDataType::Float32, 3),
             );
             vals_prop.time_sampling_index = self.time_sampling_index;
+            vals_prop.data_write_order = 11;
             vals_prop.add_array_pod(normals);
         }
     }

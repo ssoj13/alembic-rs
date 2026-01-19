@@ -81,8 +81,8 @@ impl OPolyMesh {
 
     /// Add a sample (positions + topology + optional data).
     /// 
-    /// PROPERTY CREATION ORDER matches C++ init():
-    ///   P, .selfBnds, .faceIndices, .faceCounts, (velocities), (uvs), (normals)
+        /// PROPERTY CREATION ORDER matches C++ init():
+        ///   .selfBnds, P, .faceIndices, .faceCounts, (velocities), (uvs), (normals)
     /// 
     /// DATA WRITE ORDER matches C++ set():
     ///   P, .faceIndices, .faceCounts, (velocities), .selfBnds, (uvs), (normals)
@@ -99,7 +99,17 @@ impl OPolyMesh {
         // 4 = .selfBnds
         // 5 = N (normals, if simple array)
         
-        // P (created first in createPositionsProperty)
+        // .selfBnds (created first via OGeomBase)
+        {
+            let sb = self.get_or_create_scalar_with_meta(
+                ".selfBnds",
+                DataType::new(PlainOldDataType::Float64, 6),
+                MetaData::new(),
+            );
+            sb.data_write_order = 4; // Written AFTER faceIndices/faceCounts
+        }
+        
+        // P (created after .selfBnds in createPositionsProperty)
         let mut p_meta = MetaData::new();
         p_meta.set("geoScope", "vtx");
         p_meta.set("interpretation", "point");
@@ -110,16 +120,6 @@ impl OPolyMesh {
                 p_meta.clone(),
             );
             p.data_write_order = 0;
-        }
-        
-        // .selfBnds (created second, inside createPositionsProperty)
-        {
-            let sb = self.get_or_create_scalar_with_meta(
-                ".selfBnds",
-                DataType::new(PlainOldDataType::Float64, 6),
-                MetaData::new(),
-            );
-            sb.data_write_order = 4; // Written AFTER faceIndices/faceCounts
         }
         
         // .faceIndices (created third in init)
