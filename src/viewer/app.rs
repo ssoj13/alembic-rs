@@ -538,6 +538,25 @@ impl ViewerApp {
                 renderer.show_shadows = self.settings.show_shadows;
                 changed = true;
             }
+            if ui.checkbox(&mut self.settings.depth_prepass, "Depth Prepass").changed() {
+                renderer.use_depth_prepass = self.settings.depth_prepass;
+                changed = true;
+            }
+            if ui.checkbox(&mut self.settings.gbuffer, "G-Buffer").changed() {
+                renderer.use_gbuffer = self.settings.gbuffer;
+                changed = true;
+            }
+            if ui.checkbox(&mut self.settings.ssao, "SSAO").changed() {
+                renderer.use_ssao = self.settings.ssao;
+                changed = true;
+            }
+            ui.horizontal(|ui| {
+                ui.label("SSAO:");
+                if ui.add(egui::Slider::new(&mut self.settings.ssao_strength, 0.0..=2.0).step_by(0.05)).changed() {
+                    renderer.ssao_strength = self.settings.ssao_strength;
+                    changed = true;
+                }
+            });
             ui.horizontal(|ui| {
                 ui.label("Opacity:");
                 if ui.add(egui::Slider::new(&mut self.settings.xray_alpha, 0.01..=1.0).step_by(0.01)).changed() {
@@ -545,6 +564,10 @@ impl ViewerApp {
                     changed = true;
                 }
             });
+            if ui.checkbox(&mut self.settings.xray_ignore_depth, "X-Ray Ignore Depth").changed() {
+                renderer.xray_ignore_depth = self.settings.xray_ignore_depth;
+                changed = true;
+            }
             if ui.checkbox(&mut self.settings.double_sided, "Double Sided").changed() {
                 renderer.double_sided = self.settings.double_sided;
                 changed = true;
@@ -1754,8 +1777,13 @@ impl eframe::App for ViewerApp {
                     renderer.show_wireframe = self.settings.show_wireframe;
                     renderer.flat_shading = self.settings.flat_shading;
                     renderer.show_shadows = self.settings.show_shadows;
+                    renderer.use_depth_prepass = self.settings.depth_prepass;
+                    renderer.use_gbuffer = self.settings.gbuffer;
+                    renderer.use_ssao = self.settings.ssao;
+                    renderer.ssao_strength = self.settings.ssao_strength;
                     renderer.hdr_visible = self.settings.hdr_visible;
                     renderer.xray_alpha = self.settings.xray_alpha;
+                    renderer.xray_ignore_depth = self.settings.xray_ignore_depth;
                     renderer.double_sided = self.settings.double_sided;
                     renderer.auto_normals = self.settings.auto_normals;
                     renderer.background_color = self.settings.background_color;

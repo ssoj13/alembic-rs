@@ -326,6 +326,12 @@ fn compute_light(
     return result;
 }
 
+struct GBufferOutput {
+    @location(0) albedo_roughness: vec4<f32>,
+    @location(1) normal_metalness: vec4<f32>,
+    @location(2) occlusion: vec4<f32>,
+}
+
 @fragment
 fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
     // View direction (needed for backface detection)
@@ -454,6 +460,50 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
     let alpha = max(base_alpha * camera.xray_alpha, min(spec_brightness, 1.0));
 
     return vec4<f32>(color, alpha);
+}
+
+@fragment
+fn fs_gbuffer(in: VertexOutput, @builtin(front_facing) is_front: bool) -> GBufferOutput {
+    // View direction (needed for backface detection)
+    let V = normalize(camera.position - in.world_position);
+
+    // Normal: use face normal (flat) or interpolated vertex normal (smooth)
+    var N: vec3<f32>;
+    if camera.flat_shading > 0.5 {
+        // Flat shading: compute face normal from screen-space derivatives
+        let dpdx = dpdx(in.world_position);
+        let dpdy = dpdy(in.world_position);
+        N = normalize(cross(dpdx, dpdy));
+    } else {
+        N = normalize(in.world_normal);
+    }
+
+    // Ensure backfaces light correctly when culling is disabled.
+    if !is_front {
+        N = -N;
+    }
+
+    // Auto-flip normal if facing away from camera (handles inverted normals)
+    if camera.auto_normals > 0.5 && dot(N, V) < 0.0 {
+        N = -N;
+    }
+
+    // Material unpack
+    let base_color = material.base_color_weight.rgb;
+    let base = material.base_color_weight.a;
+    let specular_roughness = max(material.params1.z, 0.04);
+    let metalness = material.params1.y;
+
+    let effective_base = base_color * base;
+
+    // Encode normal from [-1,1] to [0,1]
+    let enc_n = N * 0.5 + vec3<f32>(0.5);
+
+    var out: GBufferOutput;
+    out.albedo_roughness = vec4<f32>(effective_base, specular_roughness);
+    out.normal_metalness = vec4<f32>(enc_n, metalness);
+    out.occlusion = vec4<f32>(1.0, 1.0, 1.0, 1.0);
+    return out;
 }
 
 // ============================================================================

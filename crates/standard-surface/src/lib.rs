@@ -167,6 +167,9 @@ pub struct Vertex {
 
 /// Create bind group layouts for the standard surface pipeline
 pub fn create_bind_group_layouts(device: &wgpu::Device) -> BindGroupLayouts {
+    let camera_uniform_size = std::num::NonZeroU64::new(std::mem::size_of::<CameraUniform>() as u64);
+    let light_uniform_size = std::num::NonZeroU64::new(std::mem::size_of::<LightRig>() as u64);
+
     // Group 0: Camera + Light
     let camera_light = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("standard_surface_camera_light"),
@@ -178,7 +181,7 @@ pub fn create_bind_group_layouts(device: &wgpu::Device) -> BindGroupLayouts {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    min_binding_size: camera_uniform_size,
                 },
                 count: None,
             },
@@ -189,7 +192,7 @@ pub fn create_bind_group_layouts(device: &wgpu::Device) -> BindGroupLayouts {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    min_binding_size: light_uniform_size,
                 },
                 count: None,
             },
@@ -342,6 +345,8 @@ pub struct BindGroupLayouts {
 /// Pipeline configuration
 #[derive(Clone, Debug)]
 pub struct PipelineConfig {
+    /// Debug label for the pipeline (defaults to "standard_surface_pipeline")
+    pub label: Option<&'static str>,
     /// Surface texture format
     pub format: wgpu::TextureFormat,
     /// Depth texture format (None to disable depth)
@@ -352,6 +357,8 @@ pub struct PipelineConfig {
     pub cull_mode: Option<wgpu::Face>,
     /// Use wireframe entry point
     pub wireframe: bool,
+    /// Custom fragment entry point (overrides wireframe/default)
+    pub fragment_entry: Option<&'static str>,
     /// Primitive topology (TriangleList, LineList, etc)
     pub topology: wgpu::PrimitiveTopology,
     /// Write to depth buffer (disable for transparency)
@@ -360,20 +367,28 @@ pub struct PipelineConfig {
     pub depth_only: bool,
     /// Use LessEqual depth compare (needed after depth prepass)
     pub depth_equal: bool,
+    /// Override depth compare function (None = use depth_equal/default)
+    pub depth_compare: Option<wgpu::CompareFunction>,
+    /// Override color target formats (None = use single config.format)
+    pub color_formats: Option<Vec<wgpu::TextureFormat>>,
 }
 
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
+            label: None,
             format: wgpu::TextureFormat::Bgra8UnormSrgb,
             depth_format: Some(wgpu::TextureFormat::Depth32Float),
             blend: false,
             cull_mode: Some(wgpu::Face::Back),
             wireframe: false,
+            fragment_entry: None,
             topology: wgpu::PrimitiveTopology::TriangleList,
             depth_write: true,
             depth_only: false,
             depth_equal: false,
+            depth_compare: None,
+            color_formats: None,
         }
     }
 }
@@ -585,7 +600,9 @@ pub fn create_pipeline(
         push_constant_ranges: &[],
     });
 
-    let fragment_entry = if config.wireframe {
+    let fragment_entry = if let Some(entry) = config.fragment_entry {
+        entry
+    } else if config.wireframe {
         "fs_wireframe"
     } else {
         "fs_main"
@@ -598,11 +615,31 @@ pub fn create_pipeline(
     };
 
     // Color targets for fragment shader (must outlive the pipeline descriptor)
-    let color_targets = [Some(wgpu::ColorTargetState {
+    let default_targets = [Some(wgpu::ColorTargetState {
         format: config.format,
         blend: blend_state,
         write_mask: wgpu::ColorWrites::ALL,
     })];
+
+    let mut custom_targets: Vec<Option<wgpu::ColorTargetState>> = Vec::new();
+    if let Some(formats) = &config.color_formats {
+        custom_targets = formats
+            .iter()
+            .map(|format| {
+                Some(wgpu::ColorTargetState {
+                    format: *format,
+                    blend: blend_state,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })
+            })
+            .collect();
+    }
+
+    let color_targets = if custom_targets.is_empty() {
+        &default_targets[..]
+    } else {
+        &custom_targets[..]
+    };
 
     let fragment_state = if config.depth_only {
         None  // Depth-only pass - no fragment shader
@@ -616,7 +653,7 @@ pub fn create_pipeline(
     };
 
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("standard_surface_pipeline"),
+        label: Some(config.label.unwrap_or("standard_surface_pipeline")),
         layout: Some(&pipeline_layout),
         vertex: wgpu::VertexState {
             module: &shader,
@@ -636,11 +673,13 @@ pub fn create_pipeline(
         depth_stencil: config.depth_format.map(|format| wgpu::DepthStencilState {
             format,
             depth_write_enabled: config.depth_write,
-            depth_compare: if config.depth_equal {
-                wgpu::CompareFunction::LessEqual
-            } else {
-                wgpu::CompareFunction::Less
-            },
+            depth_compare: config.depth_compare.unwrap_or_else(|| {
+                if config.depth_equal {
+                    wgpu::CompareFunction::LessEqual
+                } else {
+                    wgpu::CompareFunction::Less
+                }
+            }),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),

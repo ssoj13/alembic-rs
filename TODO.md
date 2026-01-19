@@ -33,5 +33,14 @@
 - Material inspection in UI (display scalar params and texture info).
 - Capture render stats (draw calls, materials, transparent count).
 
+## Phase 5 - Eevee-lite Roadmap
+- Depth prepass (opaque only): build depth buffer before shading for stability and future effects.
+- G-buffer lite (normals + albedo + roughness/metalness): minimal MRT layout to support SSAO and SSR.
+- SSAO (screen-space ambient occlusion): single-pass + blur, controlled by UI slider.
+- Tone mapping + LUT: filmic curve and optional 3D LUT for look-dev.
+- IBL improvements: prefiltered environment map + BRDF LUT for specular highlights.
+- SSR-lite (optional): reflection probe fallback to IBL when SSR fails.
+- Temporal AA (optional): basic TAA with jittered projection.
+
 ## Current Focus
 - Phase 1: explicit opaque/transparent passes; transparent meshes sorted back-to-front.
