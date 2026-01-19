@@ -212,7 +212,7 @@ struct Camera {
 
 fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
     let d = normalize(dir);
-    let phi = atan2(-d.z, d.x) + rotation;
+    let phi = atan2(-d.z, d.x) - rotation;
     let theta = acos(clamp(d.y, -1.0, 1.0));
     let u = (phi + PI) / (2.0 * PI);
     let v = 1.0 - (theta / PI);
