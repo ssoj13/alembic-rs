@@ -11,6 +11,7 @@ use crate::util::{DataType, PlainOldDataType};
 
 use super::super::object::OObject;
 use super::super::property::{OProperty, OPropertyData};
+use super::super::write_util::encode_string_array;
 
 /// Collections sample data for output.
 pub struct OCollectionsSample {
@@ -62,14 +63,7 @@ impl OCollections {
         let mut coll = OProperty::compound(".collections");
 
         for (name, paths) in &self.sample.collections {
-            let paths_data: Vec<u8> = paths
-                .iter()
-                .flat_map(|p| {
-                    let mut v = (p.len() as u32).to_le_bytes().to_vec();
-                    v.extend_from_slice(p.as_bytes());
-                    v
-                })
-                .collect();
+            let paths_data = encode_string_array(paths);
 
             let mut prop = OProperty::array(name, DataType::new(PlainOldDataType::String, 1));
             prop.add_array_sample(&paths_data, &[paths.len()]);

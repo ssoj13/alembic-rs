@@ -1262,33 +1262,33 @@ impl PyOMaterial {
         self.sample.add_shader(target, shader_type, shader_name);
     }
     
-    /// Add a float parameter.
-    fn addFloatParam(&mut self, name: &str, value: f32) {
-        self.sample.add_param(ShaderParam {
+    /// Add a float parameter for a target/shaderType pair.
+    fn addFloatParam(&mut self, target: &str, shader_type: &str, name: &str, value: f32) {
+        self.sample.add_param(target, shader_type, ShaderParam {
             name: name.to_string(),
             value: ShaderParamValue::Float(value),
         });
     }
     
-    /// Add a vec3/color3 parameter.
-    fn addVec3Param(&mut self, name: &str, x: f32, y: f32, z: f32) {
-        self.sample.add_param(ShaderParam {
+    /// Add a vec3/color3 parameter for a target/shaderType pair.
+    fn addVec3Param(&mut self, target: &str, shader_type: &str, name: &str, x: f32, y: f32, z: f32) {
+        self.sample.add_param(target, shader_type, ShaderParam {
             name: name.to_string(),
             value: ShaderParamValue::Vec3(glam::Vec3::new(x, y, z)),
         });
     }
     
-    /// Add an int parameter.
-    fn addIntParam(&mut self, name: &str, value: i32) {
-        self.sample.add_param(ShaderParam {
+    /// Add an int parameter for a target/shaderType pair.
+    fn addIntParam(&mut self, target: &str, shader_type: &str, name: &str, value: i32) {
+        self.sample.add_param(target, shader_type, ShaderParam {
             name: name.to_string(),
             value: ShaderParamValue::Int(value),
         });
     }
     
-    /// Add a string parameter.
-    fn addStringParam(&mut self, name: &str, value: &str) {
-        self.sample.add_param(ShaderParam {
+    /// Add a string parameter for a target/shaderType pair.
+    fn addStringParam(&mut self, target: &str, shader_type: &str, name: &str, value: &str) {
+        self.sample.add_param(target, shader_type, ShaderParam {
             name: name.to_string(),
             value: ShaderParamValue::String(value.to_string()),
         });

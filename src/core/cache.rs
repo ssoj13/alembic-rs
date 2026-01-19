@@ -14,9 +14,11 @@ pub type SampleDigest = [u8; 16];
 
 /// Compute MurmurHash3 x64_128 digest of data.
 /// This matches the C++ Alembic implementation for binary compatibility.
+/// - `seed`: optional hash seed (None = seedless, like Alembic).
+/// - `pod_size`: POD byte size used for endianness swapping on big-endian targets.
 #[inline]
-pub fn compute_digest(data: &[u8], seed: Option<u32>) -> SampleDigest {
-    murmur3::hash128_bytes(data, seed.map(|s| s as usize))
+pub fn compute_digest(data: &[u8], seed: Option<u32>, pod_size: Option<u32>) -> SampleDigest {
+    murmur3::hash128_bytes(data, seed, pod_size.map(|s| s as usize))
 }
 
 /// Key for cache entries (position-based for reading).
@@ -43,20 +45,28 @@ pub struct ArraySampleContentKey {
     pub digest: SampleDigest,
     /// Size of the data in bytes (for collision detection).
     pub size: usize,
+    /// POD tag for dedup (masked for non-string types).
+    pub pod_tag: u8,
 }
 
 impl ArraySampleContentKey {
     /// Create a new content key from data.
-    pub fn from_data(data: &[u8], seed: Option<u32>) -> Self {
+    pub fn from_data(
+        data: &[u8],
+        seed: Option<u32>,
+        pod_size: Option<u32>,
+        pod_tag: u8,
+    ) -> Self {
         Self {
-            digest: compute_digest(data, seed),
+            digest: compute_digest(data, seed, pod_size),
             size: data.len(),
+            pod_tag,
         }
     }
     
     /// Create from existing digest and size.
-    pub fn from_digest(digest: SampleDigest, size: usize) -> Self {
-        Self { digest, size }
+    pub fn from_digest(digest: SampleDigest, size: usize, pod_tag: u8) -> Self {
+        Self { digest, size, pod_tag }
     }
     
     /// Get the digest bytes.

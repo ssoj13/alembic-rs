@@ -152,6 +152,8 @@ sequenceDiagram
     OW->>OW: write root group + frozen flag
 ```
 
+Note: time sampling tables use maxSamples = 1 for constant properties; archive metadata always includes _ai_AlembicVersion.
+
 ## 6. Geometry Schema Hierarchy
 
 ```mermaid

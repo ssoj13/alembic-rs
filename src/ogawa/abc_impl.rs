@@ -18,7 +18,7 @@ use crate::core::{
     ObjectHeader, PropertyHeader, MetaData, TimeSampling,
     ArraySampleKey, ReadArraySampleCache,
 };
-use crate::util::{Result, Error};
+use crate::util::{Result, Error, PlainOldDataType};
 
 /// Size of the key/digest prefix in data blocks (16 bytes).
 const DATA_KEY_SIZE: usize = 16;
@@ -602,7 +602,32 @@ impl OgawaPropertyReader {
     fn num_samples_internal(&self) -> usize {
         self.parsed.next_sample_index as usize
     }
-    
+
+    /// Map logical sample index to stored group index (C++ verifyIndex).
+    fn map_sample_index(&self, index: usize) -> Result<usize> {
+        let next = self.num_samples_internal();
+        if next == 0 {
+            return Err(Error::invalid("No samples"));
+        }
+        if index >= next {
+            return Err(Error::invalid("Sample index out of range"));
+        }
+
+        let first = self.parsed.first_changed_index as usize;
+        let last = self.parsed.last_changed_index as usize;
+
+        if index < first {
+            return Ok(0);
+        }
+        if first == 0 && last == 0 {
+            return Ok(0);
+        }
+        if index >= last {
+            return Ok(last - first + 1);
+        }
+        Ok(index - first + 1)
+    }
+
     /// Check if property is constant (all samples same).
     fn is_constant_internal(&self) -> bool {
         self.parsed.first_changed_index == 0 && self.parsed.last_changed_index == 0
@@ -636,20 +661,7 @@ impl OgawaPropertyReader {
     
     /// Get array sample length (number of elements).
     fn array_sample_len(&self, index: usize) -> Result<usize> {
-        let group = self.group.as_ref()
-            .ok_or_else(|| Error::invalid("No property group"))?;
-        
-        // Array properties: index * 2 = data, index * 2 + 1 = dimensions
-        let dims_index = (index * 2 + 1) as u64;
-        
-        if dims_index >= group.num_children() {
-            return Err(Error::invalid("Array sample index out of range"));
-        }
-        
-        let dims_data = group.data(dims_index)?;
-        let dims = read_dimensions(&dims_data)?;
-        
-        // Total elements = product of dimensions
+        let dims = self.read_array_sample_dimensions(index)?;
         Ok(dims.iter().product())
     }
     
@@ -740,14 +752,49 @@ impl OgawaPropertyReader {
             .ok_or_else(|| Error::invalid("No property group"))?;
         
         // Array properties: index * 2 = data, index * 2 + 1 = dimensions
+        let data_index = (index * 2) as u64;
         let dims_index = (index * 2 + 1) as u64;
         
+        if data_index >= group.num_children() {
+            return Err(Error::invalid("Array sample index out of range"));
+        }
         if dims_index >= group.num_children() {
             return Err(Error::invalid("Array sample index out of range"));
         }
         
+        let data = group.data(data_index)?;
         let dims_data = group.data(dims_index)?;
-        read_dimensions(&dims_data)
+        let mut dims = read_dimensions(&dims_data)?;
+
+        let data_size = data.size();
+        if data_size < DATA_KEY_SIZE as u64 {
+            return Ok(vec![0]);
+        }
+
+        let pod = self.parsed.data_type.pod;
+        if dims.is_empty() && !matches!(pod, PlainOldDataType::String | PlainOldDataType::Wstring) {
+            let elem_size = self.parsed.data_type.num_bytes() as u64;
+            let mut num_items = (data_size - DATA_KEY_SIZE as u64) / elem_size;
+            if (data_size - DATA_KEY_SIZE as u64) % elem_size != 0 {
+                num_items += 1;
+            }
+            dims = vec![num_items as usize];
+        } else if !dims.is_empty()
+            && !matches!(pod, PlainOldDataType::String | PlainOldDataType::Wstring)
+        {
+            let points = dims.iter().product::<usize>() as u64;
+            let needed = self.parsed.data_type.num_bytes() as u64 * points;
+            if needed > data_size.saturating_sub(DATA_KEY_SIZE as u64) {
+                let elem_size = self.parsed.data_type.num_bytes() as u64;
+                let mut num_items = (data_size - DATA_KEY_SIZE as u64) / elem_size;
+                if (data_size - DATA_KEY_SIZE as u64) % elem_size != 0 {
+                    num_items += 1;
+                }
+                dims = vec![num_items as usize];
+            }
+        }
+
+        Ok(dims)
     }
 }
 
@@ -787,23 +834,12 @@ impl ScalarPropertyReader for OgawaPropertyReader {
     }
     
     fn getSample(&self, index: usize, out: &mut [u8]) -> Result<()> {
-        // Handle constant optimization
-        let actual_index = if self.is_constant_internal() && index > 0 {
-            0
-        } else {
-            index.min(self.num_samples_internal().saturating_sub(1))
-        };
-        
+        let actual_index = self.map_sample_index(index)?;
         self.read_scalar_sample(actual_index, out)
     }
     
     fn getKey(&self, index: usize) -> Result<[u8; 16]> {
-        let actual_index = if self.is_constant_internal() && index > 0 {
-            0
-        } else {
-            index.min(self.num_samples_internal().saturating_sub(1))
-        };
-        
+        let actual_index = self.map_sample_index(index)?;
         self.read_scalar_sample_key(actual_index)
     }
 }
@@ -818,22 +854,12 @@ impl ArrayPropertyReader for OgawaPropertyReader {
     }
     
     fn getSampleLen(&self, index: usize) -> Result<usize> {
-        let actual_index = if self.is_constant_internal() && index > 0 {
-            0
-        } else {
-            index.min(self.num_samples_internal().saturating_sub(1))
-        };
-        
+        let actual_index = self.map_sample_index(index)?;
         self.array_sample_len(actual_index)
     }
     
     fn getSample(&self, index: usize, out: &mut [u8]) -> Result<usize> {
-        let actual_index = if self.is_constant_internal() && index > 0 {
-            0
-        } else {
-            index.min(self.num_samples_internal().saturating_sub(1))
-        };
-        
+        let actual_index = self.map_sample_index(index)?;
         let data = self.read_array_sample(actual_index)?;
         let copy_len = out.len().min(data.len());
         out[..copy_len].copy_from_slice(&data[..copy_len]);
@@ -841,32 +867,17 @@ impl ArrayPropertyReader for OgawaPropertyReader {
     }
     
     fn getSampleVec(&self, index: usize) -> Result<Vec<u8>> {
-        let actual_index = if self.is_constant_internal() && index > 0 {
-            0
-        } else {
-            index.min(self.num_samples_internal().saturating_sub(1))
-        };
-        
+        let actual_index = self.map_sample_index(index)?;
         self.read_array_sample(actual_index)
     }
     
     fn getKey(&self, index: usize) -> Result<[u8; 16]> {
-        let actual_index = if self.is_constant_internal() && index > 0 {
-            0
-        } else {
-            index.min(self.num_samples_internal().saturating_sub(1))
-        };
-        
+        let actual_index = self.map_sample_index(index)?;
         self.read_array_sample_key(actual_index)
     }
     
     fn getDimensions(&self, index: usize) -> Result<Vec<usize>> {
-        let actual_index = if self.is_constant_internal() && index > 0 {
-            0
-        } else {
-            index.min(self.num_samples_internal().saturating_sub(1))
-        };
-        
+        let actual_index = self.map_sample_index(index)?;
         self.read_array_sample_dimensions(actual_index)
     }
 }
@@ -878,7 +889,7 @@ impl ArrayPropertyReader for OgawaPropertyReader {
 /// Read dimensions from a dimensions data block.
 fn read_dimensions(data: &IData) -> Result<Vec<usize>> {
     if data.is_empty() {
-        return Ok(vec![0]);
+        return Ok(Vec::new());
     }
     
     let bytes = data.read_all()?;

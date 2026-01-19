@@ -113,19 +113,19 @@ impl OCurves {
             ".curveType",
             DataType::new(PlainOldDataType::String, 1),
         );
-        ctype.add_scalar_sample(sample.curve_type.to_string().as_bytes());
+        ctype.add_scalar_string(&sample.curve_type.to_string());
 
         let wrap = self.geom_compound.get_or_create_scalar_child(
             ".wrap",
             DataType::new(PlainOldDataType::String, 1),
         );
-        wrap.add_scalar_sample(sample.wrap.to_string().as_bytes());
+        wrap.add_scalar_string(&sample.wrap.to_string());
 
         let basis = self.geom_compound.get_or_create_scalar_child(
             ".basis",
             DataType::new(PlainOldDataType::String, 1),
         );
-        basis.add_scalar_sample(sample.basis.to_string().as_bytes());
+        basis.add_scalar_string(&sample.basis.to_string());
 
         if let Some(ref vels) = sample.velocities {
             let prop = self.geom_compound.get_or_create_array_child(

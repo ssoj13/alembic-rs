@@ -49,7 +49,7 @@ pub(crate) fn push_chrono(buf: &mut Vec<u8>, value: f64) {
     buf.extend_from_slice(&value.to_le_bytes());
 }
 
-/// Get POD-size seed for MurmurHash3 (matches `PODNumBytes`).
+/// Get POD-size value used by MurmurHash3 on big-endian targets (matches `PODNumBytes`).
 pub(crate) fn pod_seed(pod: PlainOldDataType) -> Option<u32> {
     let size = match pod {
         PlainOldDataType::Boolean => 1,
@@ -90,9 +90,6 @@ pub(crate) fn encode_sample_for_pod(data: &[u8], pod: PlainOldDataType) -> Vec<u
             if out.last().copied() != Some(0) {
                 out.push(0);
             }
-            if out.is_empty() {
-                out.push(0);
-            }
             out
         }
         PlainOldDataType::Wstring => {
@@ -102,13 +99,20 @@ pub(crate) fn encode_sample_for_pod(data: &[u8], pod: PlainOldDataType) -> Vec<u
             if needs_term {
                 out.extend_from_slice(&[0, 0, 0, 0]);
             }
-            if out.is_empty() {
-                out.extend_from_slice(&[0, 0, 0, 0]);
-            }
             out
         }
         _ => data.to_vec(),
     }
+}
+
+/// Encode a string array into Alembic payload (null-terminated per element).
+pub(crate) fn encode_string_array(strings: &[String]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for s in strings {
+        out.extend_from_slice(s.as_bytes());
+        out.push(0);
+    }
+    out
 }
 
 /// Hash a property header matching C++ `HashPropertyHeader()`.

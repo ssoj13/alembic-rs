@@ -1,96 +1,54 @@
-# Binary Parity Investigation Findings (Verified)
+# Binary Parity Findings (Re-verified)
 
 ## Status
+Re-verified against `_ref` AbcCoreOgawa. Writer/reader parity improved; remaining deltas are isolated and documented below.
 
-Полная перепроверка writer/copy против референса AbcCoreOgawa выполнена. Ниже — полный список подтверждённых расхождений. Исправления применены, верификация будет после завершения текущего этапа.
+## Fixed Since Last Pass
 
-## Критичные расхождения
+1) **String/Wstring payloads always include terminators (including empty)**
+   - Fix: `encode_sample_for_pod` now appends terminators even for empty inputs.
+   - Evidence (Rust): `src/ogawa/writer/write_util.rs:86`
+   - Reference (C++): `_ref/alembic/lib/Alembic/AbcCoreAbstract/ArraySample.cpp:53`
+   - Impact: Digest/payload parity for string/wstring samples.
 
-1) **Digest семплов не совпадает с референсом**
-   - Текущее: MurmurHash3 x64_128 без seed (POD size), `ArraySampleContentKey::from_data`.
-   - Референс: `MurmurHash3_x64_128(data, len, PODNumBytes)`.
-   - Evidence:
-     - `src/core/cache.rs:18`
-     - `_ref/alembic/lib/Alembic/AbcCoreAbstract/ArraySample.cpp:73`
-   - Влияние: ключи data, property hashes, object hashes, dedup — все отличаются.
+2) **Max samples for constant properties now match C++**
+   - Fix: `max_samples` uses 1 when `first/last` are 0 and samples > 0.
+   - Evidence (Rust): `src/ogawa/writer/archive.rs:894`, `src/ogawa/writer/archive.rs:1013`
+   - Reference (C++): `_ref/alembic/lib/Alembic/AbcCoreOgawa/SpwImpl.cpp:53`, `_ref/alembic/lib/Alembic/AbcCoreOgawa/ApwImpl.cpp:53`
+   - Impact: Time sampling tables now match constant-property behavior.
 
-2) **Строковые/Wstring данные пишутся без нулевых терминаторов**
-   - Текущее: `as_bytes()` без `\0`.
-   - Референс: строки сериализуются с `\0` между элементами.
-   - Evidence:
-     - `src/ogawa/writer/write_util.rs:86`
-     - `_ref/alembic/lib/Alembic/AbcCoreAbstract/ArraySample.cpp:87`
-   - Влияние: payload и digest отличаются.
+3) **Property header first/last change flags use state-derived counts**
+   - Fix: `build_property_info` uses the same `num_samples` for info and comparisons.
+   - Evidence (Rust): `src/ogawa/writer/archive.rs:1146`
+   - Reference (C++): `_ref/alembic/lib/Alembic/AbcCoreOgawa/WriteUtil.cpp:290`
+   - Impact: Header flags match when samples repeat.
 
-## Высокие расхождения
+4) **_ai_AlembicVersion is always set (like C++)**
+   - Fix: writer now sets the key unconditionally during archive write.
+   - Evidence (Rust): `src/ogawa/writer/archive.rs:587`
+   - Reference (C++): `_ref/alembic/lib/Alembic/AbcCoreOgawa/AwImpl.cpp:90`
+   - Impact: Metadata presence now matches C++ behavior.
 
-3) **`isHomogenous` вычисляется неверно**
-   - Текущее: `false` для массивов с extent > 1.
-   - Референс: сбрасывается только при изменении `dims.numPoints()` между семплами.
-   - Evidence:
-     - `src/ogawa/writer/archive.rs:998`
-     - `_ref/alembic/lib/Alembic/AbcCoreOgawa/ApwImpl.cpp:198`
+## Remaining Parity Gaps
 
-4) **Инициализация `first_changed_index/last_changed_index`**
-   - Текущее: `first=1, last=0` для scalar/array.
-   - Референс: `first=0, last=0`.
-   - Evidence:
-     - `src/ogawa/writer/property.rs:55`
-     - `_ref/alembic/lib/Alembic/AbcCoreOgawa/Foundation.h:71`
+1) **_ai_AlembicVersion build date/time differs when env vars are missing**
+   - Current: uses `ALEMBIC_BUILD_DATE/TIME`, falls back to `unknown`.
+   - Reference: uses compile-time `__DATE__`/`__TIME__`.
+   - Evidence (Rust): `src/ogawa/writer/write_util.rs:75`
+   - Reference (C++): `_ref/alembic/lib/Alembic/AbcCoreAbstract/Foundation.cpp:44`
+   - Impact: Metadata string mismatch when env vars are unset.
+   - Fix options: set env vars in build, or inject fixed build time when parity tests run.
 
-5) **`first_changed_index/last_changed_index` вычисляются только по количеству семплов**
-   - Текущее: при `n>1` всегда `first=1, last=n-1`, даже если семплы повторяются.
-   - Референс: индексы обновляются только при смене key, повторения не двигают `lastChangedIndex`.
-   - Evidence:
-     - `src/ogawa/writer/property.rs:127`
-     - `_ref/alembic/lib/Alembic/AbcCoreOgawa/SpwImpl.cpp:163`
-     - `_ref/alembic/lib/Alembic/AbcCoreOgawa/ApwImpl.cpp:167`
+2) **Debug-only warnings during read path** (non-binary)
+   - Current: `eprintln!` warnings on child read failure in debug builds.
+   - Reference: no equivalent logging.
+   - Evidence (Rust): `src/ogawa/abc_impl.rs:276`, `src/ogawa/abc_impl.rs:287`
+   - Impact: behavior-only (stdout/stderr), not file format.
 
-6) **Copy-процедуры не копируют произвольные/array/compound свойства**
-   - Текущее: схемы копируются, arbitrary свойства теряются (включая root).
-   - Evidence:
-     - `src/bin/alembic/main.rs:866`
-     - `tests/write_tests.rs:498`
-     - `tests/copy_heart_test.rs:94`
+## Notes on Murmur3
+- Alembic’s `MurmurHash3_x64_128` has no seed parameter; `podSize` only affects endian swapping.
+- Rust wrapper exposes an optional seed for generality, but writer uses `seed=None` for parity.
 
-## Средние расхождения
-
-7) **indexed metadata capacity off-by-one**
-   - Текущее: inline при `len >= 254`.
-   - Референс: разрешено 254 entries + empty.
-   - Evidence:
-     - `src/ogawa/writer/archive.rs:243`
-     - `_ref/alembic/lib/Alembic/AbcCoreOgawa/MetaDataMap.cpp:41`
-
-8) **Нестабильная сортировка при `data_write_order` tie**
-   - Текущее: `sort_by_key` (unstable), может менять порядок.
-   - Evidence:
-     - `src/ogawa/writer/archive.rs:704`
-
-9) **`isScalarLike` для array по умолчанию неверен**
-   - Текущее: array создаётся с `is_scalar_like = false`, флаг никогда не становится true.
-   - Референс: `PropertyHeaderAndFriends` стартует `isScalarLike = true`, сбрасывается при `dims.numPoints() != 1`.
-   - Evidence:
-     - `src/ogawa/writer/property.rs:73`
-     - `_ref/alembic/lib/Alembic/AbcCoreOgawa/Foundation.h:79`
-     - `_ref/alembic/lib/Alembic/AbcCoreOgawa/ApwImpl.cpp:192`
-
-10) **`_ai_AlembicVersion` захардкожен**
-   - Текущее: фиксированная строка.
-   - Референс: `GetLibraryVersion()` (build date/time).
-   - Evidence:
-     - `src/ogawa/writer/archive.rs:540`
-     - `_ref/alembic/lib/Alembic/AbcCoreAbstract/Foundation.cpp:65`
-
-## Корневая причина для heart.abc
-
-Root object содержит свойства `.childBnds`, `statistics`, `1.samples`, которые не копируются.
-Это даёт ~77% совпадения и размер меньше на ~78 байт.
-
-## Рекомендация по исправлениям (кратко)
-
-- Привести digest/encoding к референсу (seed + string/wstring encoding).
-- Выравнять property header flags (isHomogenous, first/last changed).
-- Сделать полноценный copy дерева свойств (compound/scalar/array).
-- Исправить indexed metadata capacity и стабильность сортировки.
-- `_ai_AlembicVersion` брать из build-time или из исходного метаданных.
+## Next Verification
+- Re-run binary comparisons after setting `ALEMBIC_BUILD_DATE/TIME`.
+- Confirm no diffs in metadata and tail regions for reference outputs.

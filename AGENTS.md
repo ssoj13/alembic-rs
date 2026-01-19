@@ -146,6 +146,10 @@ Archive Finalization Order
   - Archive metadata
   - Time samplings (max samples + stored times)
   - Indexed metadata table
+
+Time Sampling Notes (reference)
+  - Constant properties contribute maxSamples = 1 (even if repeated samples exist)
+  - _ai_AlembicVersion is always set from library version/build time
 ```
 
 ## Viewer Pipeline

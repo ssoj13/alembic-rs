@@ -213,9 +213,7 @@ impl OProperty {
     pub fn add_array_sample(&mut self, data: &[u8], dims: &[usize]) {
         if let OPropertyData::Array(samples) = &mut self.data {
             let sample_index = samples.len() as u32;
-            let is_same = samples.last().map_or(false, |prev| {
-                prev.data == data && prev.dims.as_slice() == dims
-            });
+            let is_same = samples.last().map_or(false, |prev| prev.data == data);
             samples.push(ArraySampleWithDigest::new(data.to_vec(), dims.to_vec()));
             if self.is_scalar_like && dims.iter().product::<usize>() != 1 {
                 self.is_scalar_like = false;
@@ -236,9 +234,7 @@ impl OProperty {
     pub fn add_array_sample_with_digest(&mut self, data: &[u8], dims: &[usize], digest: SampleDigest) {
         if let OPropertyData::Array(samples) = &mut self.data {
             let sample_index = samples.len() as u32;
-            let is_same = samples.last().map_or(false, |prev| {
-                prev.data == data && prev.dims.as_slice() == dims
-            });
+            let is_same = samples.last().map_or(false, |prev| prev.data == data);
             samples.push(ArraySampleWithDigest::with_digest(data.to_vec(), dims.to_vec(), digest));
             if self.is_scalar_like && dims.iter().product::<usize>() != 1 {
                 self.is_scalar_like = false;
