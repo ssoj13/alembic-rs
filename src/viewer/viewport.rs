@@ -82,7 +82,7 @@ impl Viewport {
                 let aspect = size.x / size.y;
                 let (view_proj, view, position) = if let Some(sc) = &self.scene_camera {
                     // Use scene camera
-                    let proj = glam::Mat4::perspective_rh(sc.fov_y, aspect, sc.near, sc.far);
+                    let proj = super::camera::wgpu_projection(sc.fov_y, aspect, sc.near, sc.far);
                     let view = sc.view;
                     // Extract position from inverse view matrix
                     let inv_view = view.inverse();

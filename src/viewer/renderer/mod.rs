@@ -5,106 +5,23 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
+mod resources;
+mod shaders;
+mod postfx;
+mod passes;
+mod pipelines;
+
+use resources::{DepthTexture, GBuffer, SsaoParams, SsaoTargets};
+use postfx::{create_postfx_pipelines, PostFxPipelines};
+use pipelines::{create_pipelines, Pipelines};
+
 use standard_surface::{
-    BindGroupLayouts, CameraUniform, LightRig, ModelUniform, PipelineConfig,
+    BindGroupLayouts, CameraUniform, LightRig, ModelUniform,
     ShadowUniform, StandardSurfaceParams, Vertex,
 };
 
 use super::environment::{self, EnvironmentMap, EnvUniform};
 use super::smooth_normals::SmoothNormalData;
-
-const SSAO_SHADER: &str = r#"
-struct VsOut {
-    @builtin(position) pos: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-}
-
-@vertex
-fn vs_fullscreen(@builtin(vertex_index) index: u32) -> VsOut {
-    var positions = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>(3.0, -1.0),
-        vec2<f32>(-1.0, 3.0)
-    );
-    let pos = positions[index];
-    var out: VsOut;
-    out.pos = vec4<f32>(pos, 0.0, 1.0);
-    out.uv = pos * 0.5 + vec2<f32>(0.5, 0.5);
-    return out;
-}
-
-@group(0) @binding(0) var gbuffer_normals: texture_2d<f32>;
-@group(0) @binding(1) var depth_tex: texture_depth_2d;
-@group(0) @binding(2) var samp: sampler;
-
-struct SsaoParams {
-    strength: vec4<f32>,
-}
-@group(0) @binding(3) var<uniform> params: SsaoParams;
-
-@fragment
-fn fs_ssao(in: VsOut) -> @location(0) vec4<f32> {
-    let uv = in.uv;
-    let n = textureSample(gbuffer_normals, samp, uv).xyz * 2.0 - vec3<f32>(1.0);
-    let depth = textureSample(depth_tex, samp, uv);
-
-    // Simple SSAO: sample 4 taps around pixel in screen space.
-    let radius = 0.004;
-    var occlusion = 0.0;
-    let offsets = array<vec2<f32>, 4>(
-        vec2<f32>(radius, 0.0),
-        vec2<f32>(-radius, 0.0),
-        vec2<f32>(0.0, radius),
-        vec2<f32>(0.0, -radius)
-    );
-    for (var i: u32 = 0u; i < 4u; i = i + 1u) {
-        let duv = offsets[i];
-        let sample_depth = textureSample(depth_tex, samp, uv + duv);
-        let delta = sample_depth - depth;
-        if delta > 0.01 {
-            occlusion = occlusion + 0.25;
-        }
-    }
-
-    // Use normal to reduce occlusion on grazing surfaces.
-    let ndotv = max(n.z, 0.0);
-    let ao = 1.0 - occlusion * params.strength.x * (1.0 - ndotv);
-    return vec4<f32>(ao, ao, ao, 1.0);
-}
-"#;
-
-const COMPOSITE_SHADER: &str = r#"
-struct VsOut {
-    @builtin(position) pos: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-}
-
-@vertex
-fn vs_fullscreen(@builtin(vertex_index) index: u32) -> VsOut {
-    var positions = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>(3.0, -1.0),
-        vec2<f32>(-1.0, 3.0)
-    );
-    let pos = positions[index];
-    var out: VsOut;
-    out.pos = vec4<f32>(pos, 0.0, 1.0);
-    out.uv = pos * 0.5 + vec2<f32>(0.5, 0.5);
-    return out;
-}
-
-@group(0) @binding(0) var color_tex: texture_2d<f32>;
-@group(0) @binding(1) var occlusion_tex: texture_2d<f32>;
-@group(0) @binding(2) var samp: sampler;
-
-@fragment
-fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
-    let uv = in.uv;
-    let color = textureSample(color_tex, samp, uv);
-    let occlusion = textureSample(occlusion_tex, samp, uv).r;
-    return vec4<f32>(color.rgb * occlusion, color.a);
-}
-"#;
 
 /// Shadow map resolution
 const SHADOW_MAP_SIZE: u32 = 2048;
@@ -116,32 +33,11 @@ pub struct Renderer {
     pub output_format: wgpu::TextureFormat,
     
     // Pipelines
-    pipeline: wgpu::RenderPipeline,
-    pipeline_double_sided: wgpu::RenderPipeline,
-    depth_prepass_pipeline: wgpu::RenderPipeline,
-    depth_prepass_pipeline_double_sided: wgpu::RenderPipeline,
-    pipeline_after_prepass: wgpu::RenderPipeline,
-    pipeline_after_prepass_double_sided: wgpu::RenderPipeline,
-    wireframe_pipeline: wgpu::RenderPipeline,
-    wireframe_pipeline_double_sided: wgpu::RenderPipeline,
-    pipeline_xray_ignore_depth: wgpu::RenderPipeline,
-    pipeline_xray_ignore_depth_double_sided: wgpu::RenderPipeline,
-    wireframe_pipeline_xray_ignore_depth: wgpu::RenderPipeline,
-    wireframe_pipeline_xray_ignore_depth_double_sided: wgpu::RenderPipeline,
-    gbuffer_pipeline: wgpu::RenderPipeline,
-    gbuffer_pipeline_double_sided: wgpu::RenderPipeline,
-    ssao_pipeline: wgpu::RenderPipeline,
-    composite_pipeline: wgpu::RenderPipeline,
-    ssao_bind_group_layout: wgpu::BindGroupLayout,
-    composite_bind_group_layout: wgpu::BindGroupLayout,
+    pipelines: Pipelines,
+    postfx: PostFxPipelines,
     ssao_bind_group: Option<wgpu::BindGroup>,
     composite_bind_group: Option<wgpu::BindGroup>,
-    ssao_sampler: wgpu::Sampler,
-    composite_sampler: wgpu::Sampler,
     ssao_params_buffer: wgpu::Buffer,
-    line_pipeline: wgpu::RenderPipeline,
-    point_pipeline: wgpu::RenderPipeline,
-    shadow_pipeline: wgpu::RenderPipeline,
     skybox_pipeline: wgpu::RenderPipeline,
     layouts: BindGroupLayouts,
     
@@ -220,39 +116,6 @@ pub struct Renderer {
     scene_center: Vec3,
     scene_radius: f32,
     camera_position: Vec3,
-}
-
-struct DepthTexture {
-    #[allow(dead_code)]
-    texture: wgpu::Texture,
-    view: wgpu::TextureView,
-    size: (u32, u32),
-}
-
-struct GBuffer {
-    #[allow(dead_code)]
-    albedo: wgpu::Texture,
-    #[allow(dead_code)]
-    normals: wgpu::Texture,
-    #[allow(dead_code)]
-    occlusion: wgpu::Texture,
-    albedo_view: wgpu::TextureView,
-    normals_view: wgpu::TextureView,
-    occlusion_view: wgpu::TextureView,
-    size: (u32, u32),
-}
-
-struct SsaoTargets {
-    #[allow(dead_code)]
-    color: wgpu::Texture,
-    color_view: wgpu::TextureView,
-    size: (u32, u32),
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct SsaoParams {
-    strength: [f32; 4],
 }
 
 /// GPU mesh data
@@ -376,317 +239,8 @@ impl Renderer {
         let layouts = standard_surface::create_bind_group_layouts(&device);
 
         // Create pipelines
-        let config = PipelineConfig {
-            label: Some("opaque_pipeline"),
-            format,
-            depth_format: Some(wgpu::TextureFormat::Depth32Float),
-            blend: true,  // Enable alpha blending for X-Ray mode
-            cull_mode: Some(wgpu::Face::Back),
-            wireframe: false,
-            ..Default::default()
-        };
-        let pipeline = standard_surface::create_pipeline(&device, &layouts, &config);
-
-        let wireframe_config = PipelineConfig {
-            label: Some("wireframe_pipeline"),
-            wireframe: true,
-            ..config.clone()
-        };
-        let wireframe_pipeline = standard_surface::create_pipeline(&device, &layouts, &wireframe_config);
-
-        // Double-sided pipelines (no backface culling)
-        let double_sided_config = PipelineConfig {
-            label: Some("opaque_pipeline_double_sided"),
-            cull_mode: None,
-            ..config.clone()
-        };
-        let pipeline_double_sided = standard_surface::create_pipeline(&device, &layouts, &double_sided_config);
-
-        // Depth prepass pipelines (depth-only, no fragment shader).
-        let depth_prepass_config = PipelineConfig {
-            label: Some("depth_prepass_pipeline"),
-            depth_only: true,
-            depth_write: true,
-            ..config.clone()
-        };
-        let depth_prepass_pipeline = standard_surface::create_pipeline(&device, &layouts, &depth_prepass_config);
-
-        let depth_prepass_double_sided_config = PipelineConfig {
-            label: Some("depth_prepass_pipeline_double_sided"),
-            depth_only: true,
-            depth_write: true,
-            cull_mode: None,
-            ..config.clone()
-        };
-        let depth_prepass_pipeline_double_sided =
-            standard_surface::create_pipeline(&device, &layouts, &depth_prepass_double_sided_config);
-
-        // Opaque pipelines after depth prepass (depth test LessEqual, no depth writes).
-        let after_prepass_config = PipelineConfig {
-            label: Some("opaque_after_prepass_pipeline"),
-            depth_write: false,
-            depth_equal: true,
-            ..config.clone()
-        };
-        let pipeline_after_prepass = standard_surface::create_pipeline(&device, &layouts, &after_prepass_config);
-
-        let after_prepass_double_sided_config = PipelineConfig {
-            label: Some("opaque_after_prepass_double_sided"),
-            cull_mode: None,
-            depth_write: false,
-            depth_equal: true,
-            ..config.clone()
-        };
-        let pipeline_after_prepass_double_sided =
-            standard_surface::create_pipeline(&device, &layouts, &after_prepass_double_sided_config);
-
-        let wireframe_double_sided_config = PipelineConfig {
-            label: Some("wireframe_pipeline_double_sided"),
-            wireframe: true,
-            cull_mode: None,
-            ..double_sided_config.clone()
-        };
-        let wireframe_pipeline_double_sided = standard_surface::create_pipeline(&device, &layouts, &wireframe_double_sided_config);
-
-        // G-buffer pipelines (MRT: albedo+roughness, normal+metalness, occlusion)
-        let gbuffer_formats = vec![
-            wgpu::TextureFormat::Rgba8Unorm,
-            wgpu::TextureFormat::Rgba16Float,
-            wgpu::TextureFormat::R8Unorm,
-        ];
-        let gbuffer_config = PipelineConfig {
-            label: Some("gbuffer_pipeline"),
-            blend: false,
-            fragment_entry: Some("fs_gbuffer"),
-            color_formats: Some(gbuffer_formats.clone()),
-            ..config.clone()
-        };
-        let gbuffer_pipeline = standard_surface::create_pipeline(&device, &layouts, &gbuffer_config);
-
-        let gbuffer_double_sided_config = PipelineConfig {
-            label: Some("gbuffer_pipeline_double_sided"),
-            blend: false,
-            fragment_entry: Some("fs_gbuffer"),
-            color_formats: Some(gbuffer_formats),
-            cull_mode: None,
-            ..config.clone()
-        };
-        let gbuffer_pipeline_double_sided =
-            standard_surface::create_pipeline(&device, &layouts, &gbuffer_double_sided_config);
-
-        // X-Ray ignore depth pipelines (depth compare Always, no depth writes).
-        let xray_ignore_depth_config = PipelineConfig {
-            label: Some("xray_ignore_depth_pipeline"),
-            depth_write: false,
-            depth_compare: Some(wgpu::CompareFunction::Always),
-            ..config.clone()
-        };
-        let pipeline_xray_ignore_depth =
-            standard_surface::create_pipeline(&device, &layouts, &xray_ignore_depth_config);
-
-        let xray_ignore_depth_double_sided_config = PipelineConfig {
-            label: Some("xray_ignore_depth_pipeline_double_sided"),
-            cull_mode: None,
-            depth_write: false,
-            depth_compare: Some(wgpu::CompareFunction::Always),
-            ..config.clone()
-        };
-        let pipeline_xray_ignore_depth_double_sided = standard_surface::create_pipeline(
-            &device,
-            &layouts,
-            &xray_ignore_depth_double_sided_config,
-        );
-
-        let wireframe_xray_ignore_depth_config = PipelineConfig {
-            label: Some("wireframe_xray_ignore_depth_pipeline"),
-            wireframe: true,
-            depth_write: false,
-            depth_compare: Some(wgpu::CompareFunction::Always),
-            ..config.clone()
-        };
-        let wireframe_pipeline_xray_ignore_depth = standard_surface::create_pipeline(
-            &device,
-            &layouts,
-            &wireframe_xray_ignore_depth_config,
-        );
-
-        let wireframe_xray_ignore_depth_double_sided_config = PipelineConfig {
-            label: Some("wireframe_xray_ignore_depth_pipeline_double_sided"),
-            wireframe: true,
-            cull_mode: None,
-            depth_write: false,
-            depth_compare: Some(wgpu::CompareFunction::Always),
-            ..config.clone()
-        };
-        let wireframe_pipeline_xray_ignore_depth_double_sided = standard_surface::create_pipeline(
-            &device,
-            &layouts,
-            &wireframe_xray_ignore_depth_double_sided_config,
-        );
-        
-        // SSAO pipeline
-        let ssao_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ssao_shader"),
-            source: wgpu::ShaderSource::Wgsl(SSAO_SHADER.into()),
-        });
-        let ssao_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("ssao_bind_group_layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Depth,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let ssao_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("ssao_pipeline_layout"),
-            bind_group_layouts: &[&ssao_bind_group_layout],
-            push_constant_ranges: &[],
-        });
-        let ssao_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("ssao_pipeline"),
-            layout: Some(&ssao_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &ssao_shader,
-                entry_point: Some("vs_fullscreen"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &ssao_shader,
-                entry_point: Some("fs_ssao"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::R8Unorm,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-        let ssao_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("ssao_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-
-        // Composite pipeline (scene color * occlusion)
-        let composite_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("composite_shader"),
-            source: wgpu::ShaderSource::Wgsl(COMPOSITE_SHADER.into()),
-        });
-        let composite_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("composite_bind_group_layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        multisampled: false,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-        let composite_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("composite_pipeline_layout"),
-            bind_group_layouts: &[&composite_bind_group_layout],
-            push_constant_ranges: &[],
-        });
-        let composite_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("composite_pipeline"),
-            layout: Some(&composite_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &composite_shader,
-                entry_point: Some("vs_fullscreen"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &composite_shader,
-                entry_point: Some("fs_composite"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
-        let composite_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("composite_sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
+        let pipelines = create_pipelines(&device, &layouts, format);
+        let postfx = create_postfx_pipelines(&device, format);
         let ssao_params = SsaoParams {
             strength: [0.5, 0.0, 0.0, 0.0],
         };
@@ -696,27 +250,6 @@ impl Renderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        // Line pipeline for curves, hair, grid
-        let line_config = PipelineConfig {
-            label: Some("line_pipeline"),
-            topology: wgpu::PrimitiveTopology::LineList,
-            cull_mode: None,
-            ..double_sided_config.clone()
-        };
-        let line_pipeline = standard_surface::create_pipeline(&device, &layouts, &line_config);
-
-        // Point pipeline for point clouds
-        let point_config = PipelineConfig {
-            label: Some("point_pipeline"),
-            topology: wgpu::PrimitiveTopology::PointList,
-            cull_mode: None,
-            ..double_sided_config
-        };
-        let point_pipeline = standard_surface::create_pipeline(&device, &layouts, &point_config);
-
-        // Shadow depth pipeline
-        let shadow_pipeline = standard_surface::create_shadow_pipeline(&device, &layouts);
-        
         // Skybox pipeline and resources
         let skybox_camera_layout = standard_surface::create_skybox_camera_layout(&device);
         let skybox_pipeline = standard_surface::create_skybox_pipeline(
@@ -896,32 +429,11 @@ impl Renderer {
         Self {
             device,
             queue,
-            pipeline,
-            pipeline_double_sided,
-            depth_prepass_pipeline,
-            depth_prepass_pipeline_double_sided,
-            pipeline_after_prepass,
-            pipeline_after_prepass_double_sided,
-            wireframe_pipeline,
-            wireframe_pipeline_double_sided,
-            pipeline_xray_ignore_depth,
-            pipeline_xray_ignore_depth_double_sided,
-            wireframe_pipeline_xray_ignore_depth,
-            wireframe_pipeline_xray_ignore_depth_double_sided,
-            gbuffer_pipeline,
-            gbuffer_pipeline_double_sided,
-            ssao_pipeline,
-            composite_pipeline,
-            ssao_bind_group_layout,
-            composite_bind_group_layout,
+            pipelines,
+            postfx,
             ssao_bind_group: None,
             composite_bind_group: None,
-            ssao_sampler,
-            composite_sampler,
             ssao_params_buffer,
-            line_pipeline,
-            point_pipeline,
-            shadow_pipeline,
             skybox_pipeline,
             layouts,
             skybox_camera_layout,
@@ -1758,55 +1270,28 @@ impl Renderer {
             label: Some("render_encoder"),
         });
 
-        // Shadow depth pass - render scene from light's perspective
-        if self.show_shadows {
-            let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("shadow_depth_pass"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.shadow_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            shadow_pass.set_pipeline(&self.shadow_pipeline);
-            shadow_pass.set_bind_group(0, &self.shadow_pass_bind_group, &[]);
-
-            // Render scene meshes to shadow map
-            for mesh in self.meshes.values() {
-                shadow_pass.set_bind_group(1, &mesh.model_bind_group, &[]);
-                shadow_pass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
-                shadow_pass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                shadow_pass.draw_indexed(0..mesh.mesh.index_count, 0, 0..1);
-            }
-        }
+        self.render_shadow_pass(&mut encoder);
 
         // Opaque render pass
         let xray_active = self.xray_alpha < 0.999;
         let use_depth_prepass = self.use_depth_prepass && !self.show_wireframe && !(xray_active && self.xray_ignore_depth);
         let opaque_pipeline = if use_depth_prepass {
             match self.double_sided {
-                false => &self.pipeline_after_prepass,
-                true => &self.pipeline_after_prepass_double_sided,
+                false => &self.pipelines.pipeline_after_prepass,
+                true => &self.pipelines.pipeline_after_prepass_double_sided,
             }
         } else {
             match (self.show_wireframe, self.double_sided) {
-                (false, false) => &self.pipeline,
-                (false, true) => &self.pipeline_double_sided,
-                (true, false) => &self.wireframe_pipeline,
-                (true, true) => &self.wireframe_pipeline_double_sided,
+                (false, false) => &self.pipelines.pipeline,
+                (false, true) => &self.pipelines.pipeline_double_sided,
+                (true, false) => &self.pipelines.wireframe_pipeline,
+                (true, true) => &self.pipelines.wireframe_pipeline_double_sided,
             }
         };
         let gbuffer_pipeline = if self.double_sided {
-            &self.gbuffer_pipeline_double_sided
+            &self.pipelines.gbuffer_pipeline_double_sided
         } else {
-            &self.gbuffer_pipeline
+            &self.pipelines.gbuffer_pipeline
         };
 
         // Collect mesh list (floor + scene meshes).
@@ -1815,160 +1300,9 @@ impl Renderer {
             meshes.push(floor);
         }
 
-        // Depth prepass (separate pass, depth-only)
-        if use_depth_prepass {
-            let prepass_pipeline = if self.double_sided {
-                &self.depth_prepass_pipeline_double_sided
-            } else {
-                &self.depth_prepass_pipeline
-            };
-
-            let mut prepass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("depth_prepass"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            prepass.set_pipeline(prepass_pipeline);
-            prepass.set_bind_group(0, &self.camera_light_bind_group, &[]);
-            prepass.set_bind_group(3, &self.shadow_bind_group, &[]);
-            prepass.set_bind_group(4, &self.env_map.bind_group, &[]);
-            for mesh in &meshes {
-                prepass.set_bind_group(1, &mesh.material_bind_group, &[]);
-                prepass.set_bind_group(2, &mesh.model_bind_group, &[]);
-                prepass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
-                prepass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                prepass.draw_indexed(0..mesh.mesh.index_count, 0, 0..1);
-            }
-        }
-
-        let gbuffer_depth_load = if use_depth_prepass {
-            wgpu::LoadOp::Load
-        } else {
-            wgpu::LoadOp::Clear(1.0)
-        };
-
-        if use_gbuffer {
-            if let Some(gbuffer) = &self.gbuffer {
-                let mut gbuffer_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("gbuffer_pass"),
-                    color_attachments: &[
-                        Some(wgpu::RenderPassColorAttachment {
-                            view: &gbuffer.albedo_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        }),
-                        Some(wgpu::RenderPassColorAttachment {
-                            view: &gbuffer.normals_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        }),
-                        Some(wgpu::RenderPassColorAttachment {
-                            view: &gbuffer.occlusion_view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                                store: wgpu::StoreOp::Store,
-                            },
-                            depth_slice: None,
-                        }),
-                    ],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: depth_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: gbuffer_depth_load,
-                            store: wgpu::StoreOp::Store,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-
-                gbuffer_pass.set_pipeline(gbuffer_pipeline);
-                gbuffer_pass.set_bind_group(0, &self.camera_light_bind_group, &[]);
-                gbuffer_pass.set_bind_group(3, &self.shadow_bind_group, &[]);
-                gbuffer_pass.set_bind_group(4, &self.env_map.bind_group, &[]);
-
-                for mesh in &meshes {
-                    gbuffer_pass.set_bind_group(1, &mesh.material_bind_group, &[]);
-                    gbuffer_pass.set_bind_group(2, &mesh.model_bind_group, &[]);
-                    gbuffer_pass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
-                    gbuffer_pass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    gbuffer_pass.draw_indexed(0..mesh.mesh.index_count, 0, 0..1);
-                }
-            }
-        }
-
-        if self.use_ssao {
-            if let (Some(gbuffer), Some(_targets)) = (&self.gbuffer, &self.ssao_targets) {
-                let ssao_params = SsaoParams {
-                    strength: [self.ssao_strength, 0.0, 0.0, 0.0],
-                };
-                self.queue.write_buffer(&self.ssao_params_buffer, 0, bytemuck::bytes_of(&ssao_params));
-                self.ssao_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("ssao_bind_group"),
-                    layout: &self.ssao_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&gbuffer.normals_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(depth_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(&self.ssao_sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: self.ssao_params_buffer.as_entire_binding(),
-                        },
-                    ],
-                }));
-
-                let mut ssao_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("ssao_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &gbuffer.occlusion_view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-
-                if let Some(ssao_bind_group) = &self.ssao_bind_group {
-                    ssao_pass.set_pipeline(&self.ssao_pipeline);
-                    ssao_pass.set_bind_group(0, ssao_bind_group, &[]);
-                    ssao_pass.draw(0..3, 0..1);
-                }
-            }
-        }
+        self.render_depth_prepass(&mut encoder, depth_view, &meshes, use_depth_prepass);
+        self.render_gbuffer_pass(&mut encoder, depth_view, &meshes, use_depth_prepass, use_gbuffer);
+        self.render_ssao_pass(&mut encoder, depth_view, self.use_ssao);
 
         let opaque_depth_load = if use_depth_prepass || use_gbuffer {
             wgpu::LoadOp::Load
@@ -1976,146 +1310,26 @@ impl Renderer {
             wgpu::LoadOp::Clear(1.0)
         };
 
-        {
-            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("opaque_render_pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: color_target_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: self.background_color[0] as f64,
-                            g: self.background_color[1] as f64,
-                            b: self.background_color[2] as f64,
-                            a: self.background_color[3] as f64,
-                        }),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth_view,
-                    depth_ops: Some(wgpu::Operations {
-                        load: opaque_depth_load,
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-
-            // Draw skybox if environment is loaded and visible
-            if self.has_environment() && self.hdr_visible {
-                render_pass.set_pipeline(&self.skybox_pipeline);
-                render_pass.set_bind_group(0, &self.skybox_camera_bind_group, &[]);
-                render_pass.set_bind_group(1, &self.env_map.bind_group, &[]);
-                render_pass.set_vertex_buffer(0, self.skybox_vertex_buffer.slice(..));
-                render_pass.set_index_buffer(self.skybox_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..self.skybox_index_count, 0, 0..1);
-            }
-
-            render_pass.set_bind_group(0, &self.camera_light_bind_group, &[]);
-            render_pass.set_bind_group(3, &self.shadow_bind_group, &[]);
-            render_pass.set_bind_group(4, &self.env_map.bind_group, &[]);
-
-            // Draw grid using line pipeline
-            if self.show_grid {
-                if let Some(grid) = &self.grid_mesh {
-                    render_pass.set_pipeline(&self.line_pipeline);
-                    render_pass.set_bind_group(1, &self.grid_material, &[]);
-                    render_pass.set_bind_group(2, &self.grid_model, &[]);
-                    render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
-                }
-            }
-
-            if xray_active && self.xray_ignore_depth {
-                let xray_pipeline = match (self.show_wireframe, self.double_sided) {
-                    (false, false) => &self.pipeline_xray_ignore_depth,
-                    (false, true) => &self.pipeline_xray_ignore_depth_double_sided,
-                    (true, false) => &self.wireframe_pipeline_xray_ignore_depth,
-                    (true, true) => &self.wireframe_pipeline_xray_ignore_depth_double_sided,
-                };
-                render_pass.set_pipeline(xray_pipeline);
-            } else {
-                render_pass.set_pipeline(opaque_pipeline);
-            }
-            for mesh in &meshes {
-                render_pass.set_bind_group(1, &mesh.material_bind_group, &[]);
-                render_pass.set_bind_group(2, &mesh.model_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..mesh.mesh.index_count, 0, 0..1);
-            }
-
-            if !self.curves.is_empty() {
-                render_pass.set_pipeline(&self.line_pipeline);
-                for curve in self.curves.values() {
-                    render_pass.set_bind_group(1, &curve.material_bind_group, &[]);
-                    render_pass.set_bind_group(2, &curve.model_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, curve.mesh.vertex_buffer.slice(..));
-                    render_pass.set_index_buffer(curve.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                    render_pass.draw_indexed(0..curve.mesh.index_count, 0, 0..1);
-                }
-            }
-
-            if !self.points.is_empty() {
-                render_pass.set_pipeline(&self.point_pipeline);
-                for pts in self.points.values() {
-                    render_pass.set_bind_group(1, &pts.material_bind_group, &[]);
-                    render_pass.set_bind_group(2, &pts.model_bind_group, &[]);
-                    render_pass.set_vertex_buffer(0, pts.vertex_buffer.slice(..));
-                    render_pass.draw(0..pts.vertex_count, 0..1);
-                }
-            }
-        }
-
-        if self.use_ssao {
-            if let (Some(gbuffer), Some(targets)) = (&self.gbuffer, &self.ssao_targets) {
-                self.composite_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("composite_bind_group"),
-                    layout: &self.composite_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&targets.color_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(&gbuffer.occlusion_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(&self.composite_sampler),
-                        },
-                    ],
-                }));
-
-                let mut composite_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("composite_pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
-
-                if let Some(composite_bind_group) = &self.composite_bind_group {
-                    composite_pass.set_pipeline(&self.composite_pipeline);
-                    composite_pass.set_bind_group(0, composite_bind_group, &[]);
-                    composite_pass.draw(0..3, 0..1);
-                }
-            }
-        }
+        let xray_pipeline = if xray_active && self.xray_ignore_depth {
+            Some(match (self.show_wireframe, self.double_sided) {
+                (false, false) => &self.pipelines.pipeline_xray_ignore_depth,
+                (false, true) => &self.pipelines.pipeline_xray_ignore_depth_double_sided,
+                (true, false) => &self.pipelines.wireframe_pipeline_xray_ignore_depth,
+                (true, true) => &self.pipelines.wireframe_pipeline_xray_ignore_depth_double_sided,
+            })
+        } else {
+            None
+        };
+        self.render_opaque_pass(
+            &mut encoder,
+            depth_view,
+            color_target_view,
+            &meshes,
+            opaque_pipeline,
+            xray_pipeline,
+            opaque_depth_load,
+        );
+        self.render_composite_pass(&mut encoder, view, self.use_ssao);
 
         self.queue.submit(std::iter::once(encoder.finish()));
     }
