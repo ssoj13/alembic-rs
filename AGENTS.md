@@ -191,9 +191,10 @@ Time Sampling Notes (reference)
 │   1. Shadow depth pass                                        │
 │   2. Skybox pass (if HDR loaded)                              │
 │   3. Grid pass (line pipeline)                                │
-│   4. Mesh pass (Standard Surface shader)                      │
-│   5. Curves pass (line pipeline)                              │
-│   6. Points pass (point pipeline)                             │
+│   4. Opaque mesh pass (Standard Surface shader)               │
+│   5. Transparent mesh pass (sorted back-to-front)             │
+│   6. Curves pass (line pipeline)                              │
+│   7. Points pass (point pipeline)                             │
 └───────────────────────────────────────────────────────────────┘
     │
     ▼

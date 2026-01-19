@@ -99,10 +99,11 @@ pub struct Renderer {
     pub double_sided: bool,
     pub auto_normals: bool,
     pub background_color: [f32; 4],
-    
+
     // Scene bounds for shadow calculations
     scene_center: Vec3,
     scene_radius: f32,
+    camera_position: Vec3,
 }
 
 struct DepthTexture {
@@ -545,11 +546,12 @@ impl Renderer {
             background_color: [0.1, 0.1, 0.12, 1.0],
             scene_center: Vec3::ZERO,
             scene_radius: 10.0,
+            camera_position: Vec3::ZERO,
         }
     }
 
     /// Update camera uniform
-    pub fn update_camera(&self, view_proj: Mat4, view: Mat4, position: Vec3) {
+    pub fn update_camera(&mut self, view_proj: Mat4, view: Mat4, position: Vec3) {
         let uniform = CameraUniform {
             view_proj: view_proj.to_cols_array_2d(),
             view: view.to_cols_array_2d(),
@@ -561,6 +563,7 @@ impl Renderer {
             _pad3: 0.0,
         };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
+        self.camera_position = position;
     }
     
     /// Reset to default 3-point lighting
@@ -1283,20 +1286,23 @@ impl Renderer {
                 render_pass.draw_indexed(0..self.skybox_index_count, 0, 0..1);
             }
 
-            // Select pipeline based on display mode
             let is_transparent = self.xray_alpha < 0.999;
-            let pipeline = match (self.show_wireframe, self.double_sided, is_transparent) {
-                (false, false, false) => &self.pipeline,
-                (false, false, true) => &self.pipeline_transparent,
-                (false, true, false) => &self.pipeline_double_sided,
-                (false, true, true) => &self.pipeline_double_sided_transparent,
-                (true, false, false) => &self.wireframe_pipeline,
-                (true, false, true) => &self.wireframe_pipeline_transparent,
-                (true, true, false) => &self.wireframe_pipeline_double_sided,
-                (true, true, true) => &self.wireframe_pipeline_double_sided_transparent,
+
+            // Select pipelines for opaque and transparent passes.
+            let opaque_pipeline = match (self.show_wireframe, self.double_sided) {
+                (false, false) => &self.pipeline,
+                (false, true) => &self.pipeline_double_sided,
+                (true, false) => &self.wireframe_pipeline,
+                (true, true) => &self.wireframe_pipeline_double_sided,
             };
 
-            render_pass.set_pipeline(pipeline);
+            let transparent_pipeline = match (self.show_wireframe, self.double_sided) {
+                (false, false) => &self.pipeline_transparent,
+                (false, true) => &self.pipeline_double_sided_transparent,
+                (true, false) => &self.wireframe_pipeline_transparent,
+                (true, true) => &self.wireframe_pipeline_double_sided_transparent,
+            };
+
             render_pass.set_bind_group(0, &self.camera_light_bind_group, &[]);
             render_pass.set_bind_group(3, &self.shadow_bind_group, &[]);
             render_pass.set_bind_group(4, &self.env_map.bind_group, &[]);
@@ -1310,27 +1316,47 @@ impl Renderer {
                     render_pass.set_vertex_buffer(0, grid.vertex_buffer.slice(..));
                     render_pass.set_index_buffer(grid.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
                     render_pass.draw_indexed(0..grid.index_count, 0, 0..1);
-                    // Restore mesh pipeline
-                    render_pass.set_pipeline(pipeline);
                 }
             }
             
-            // Draw floor (before scene meshes so it's behind)
+            // Collect mesh list (floor + scene meshes).
+            let mut meshes: Vec<&SceneMesh> = self.meshes.values().collect();
             if let Some(floor) = &self.floor_mesh {
-                render_pass.set_bind_group(1, &floor.material_bind_group, &[]);
-                render_pass.set_bind_group(2, &floor.model_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, floor.mesh.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(floor.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..floor.mesh.index_count, 0, 0..1);
+                meshes.push(floor);
             }
 
-            // Draw scene meshes
-            for mesh in self.meshes.values() {
-                render_pass.set_bind_group(1, &mesh.material_bind_group, &[]);
-                render_pass.set_bind_group(2, &mesh.model_bind_group, &[]);
-                render_pass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
-                render_pass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..mesh.mesh.index_count, 0, 0..1);
+            // Opaque pass (depth write on).
+            if !is_transparent {
+                render_pass.set_pipeline(opaque_pipeline);
+                for mesh in &meshes {
+                    render_pass.set_bind_group(1, &mesh.material_bind_group, &[]);
+                    render_pass.set_bind_group(2, &mesh.model_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..mesh.mesh.index_count, 0, 0..1);
+                }
+            }
+
+            // Transparent pass (depth write off, sorted back-to-front).
+            if is_transparent {
+                meshes.sort_by(|a, b| {
+                    let a_center = (a.bounds.0 + a.bounds.1) * 0.5;
+                    let b_center = (b.bounds.0 + b.bounds.1) * 0.5;
+                    let a_dist = (a_center - self.camera_position).length_squared();
+                    let b_dist = (b_center - self.camera_position).length_squared();
+                    b_dist
+                        .partial_cmp(&a_dist)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+
+                render_pass.set_pipeline(transparent_pipeline);
+                for mesh in &meshes {
+                    render_pass.set_bind_group(1, &mesh.material_bind_group, &[]);
+                    render_pass.set_bind_group(2, &mesh.model_bind_group, &[]);
+                    render_pass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
+                    render_pass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                    render_pass.draw_indexed(0..mesh.mesh.index_count, 0, 0..1);
+                }
             }
             
             // Draw curves using line pipeline

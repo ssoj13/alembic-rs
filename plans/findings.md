@@ -75,6 +75,11 @@ Re-verified against `_ref` AbcCoreOgawa. Writer/reader parity improved; remainin
    - Reference (C++): `IXformSchema::get` uses `ISampleSelector::getIndex(...)` (clamps to valid range).
    - Impact: avoids identity/garbage transforms when global frame index exceeds per-object samples.
 
+13) **Viewer: transparent meshes need back-to-front sort + depth-write off**
+   - Fix: add transparent pipelines (depth_write=false) and sort meshes by camera distance when `xray_alpha < 1.0`.
+   - Evidence (Rust): `src/viewer/renderer.rs:252`, `src/viewer/renderer.rs:1289`
+   - Impact: prevents disappearing geometry when `Double Sided` + X-Ray are enabled.
+
 ## Remaining Parity Gaps
 
 1) **Debug-only warnings during read path** (non-binary)

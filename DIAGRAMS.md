@@ -229,8 +229,9 @@ graph LR
 
     subgraph "Render Passes"
         SHADOW[Shadow Pass<br/>depth only]
-        SOLID[Solid Pass<br/>Standard Surface]
-        WIRE[Wireframe Pass]
+        OPAQUE[Opaque Pass<br/>Standard Surface]
+        TRANSPARENT[Transparent Pass<br/>sorted back-to-front]
+        LINES[Lines/Points Pass]
         SKY[Skybox Pass]
     end
 
@@ -246,16 +247,20 @@ graph LR
     HDR --> TEX
 
     VBO --> SHADOW
-    VBO --> SOLID
-    VBO --> WIRE
+    VBO --> OPAQUE
+    VBO --> TRANSPARENT
+    VBO --> LINES
     IBO --> SHADOW
-    IBO --> SOLID
-    IBO --> WIRE
-    TEX --> SOLID
+    IBO --> OPAQUE
+    IBO --> TRANSPARENT
+    IBO --> LINES
+    TEX --> OPAQUE
+    TEX --> TRANSPARENT
     TEX --> SKY
     UBO --> SHADOW
-    UBO --> SOLID
-    UBO --> WIRE
+    UBO --> OPAQUE
+    UBO --> TRANSPARENT
+    UBO --> LINES
 
     SHADOW --> FB
     SKY --> FB

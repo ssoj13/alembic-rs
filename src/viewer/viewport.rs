@@ -93,7 +93,7 @@ impl Viewport {
                     (self.camera.view_proj_matrix(aspect), self.camera.view_matrix(), self.camera.position())
                 };
                 
-                if let Some(renderer) = &self.renderer {
+                if let Some(renderer) = &mut self.renderer {
                     renderer.update_camera(view_proj, view, position);
                     // Update shadow map for key light direction
                     // Key light direction from 3-point rig: (-0.5, -0.7, -0.5)
