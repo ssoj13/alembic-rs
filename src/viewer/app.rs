@@ -564,10 +564,6 @@ impl ViewerApp {
                     changed = true;
                 }
             });
-            if ui.checkbox(&mut self.settings.xray_ignore_depth, "X-Ray Ignore Depth").changed() {
-                renderer.xray_ignore_depth = self.settings.xray_ignore_depth;
-                changed = true;
-            }
             if ui.checkbox(&mut self.settings.double_sided, "Double Sided").changed() {
                 renderer.double_sided = self.settings.double_sided;
                 changed = true;
@@ -1783,7 +1779,6 @@ impl eframe::App for ViewerApp {
                     renderer.ssao_strength = self.settings.ssao_strength;
                     renderer.hdr_visible = self.settings.hdr_visible;
                     renderer.xray_alpha = self.settings.xray_alpha;
-                    renderer.xray_ignore_depth = self.settings.xray_ignore_depth;
                     renderer.double_sided = self.settings.double_sided;
                     renderer.auto_normals = self.settings.auto_normals;
                     renderer.background_color = self.settings.background_color;

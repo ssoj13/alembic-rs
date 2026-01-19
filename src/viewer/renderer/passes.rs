@@ -80,7 +80,7 @@ impl Renderer {
     }
 
     pub fn render_gbuffer_pass(
-        &mut self,
+        &self,
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
         meshes: &[&SceneMesh],

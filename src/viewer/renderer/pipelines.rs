@@ -11,10 +11,6 @@ pub struct Pipelines {
     pub pipeline_after_prepass_double_sided: wgpu::RenderPipeline,
     pub wireframe_pipeline: wgpu::RenderPipeline,
     pub wireframe_pipeline_double_sided: wgpu::RenderPipeline,
-    pub pipeline_xray_ignore_depth: wgpu::RenderPipeline,
-    pub pipeline_xray_ignore_depth_double_sided: wgpu::RenderPipeline,
-    pub wireframe_pipeline_xray_ignore_depth: wgpu::RenderPipeline,
-    pub wireframe_pipeline_xray_ignore_depth_double_sided: wgpu::RenderPipeline,
     pub gbuffer_pipeline: wgpu::RenderPipeline,
     pub gbuffer_pipeline_double_sided: wgpu::RenderPipeline,
     pub line_pipeline: wgpu::RenderPipeline,
@@ -121,49 +117,6 @@ pub fn create_pipelines(
     let gbuffer_pipeline_double_sided =
         standard_surface::create_pipeline(device, layouts, &gbuffer_double_sided_config);
 
-    let xray_ignore_depth_config = PipelineConfig {
-        label: Some("xray_ignore_depth_pipeline"),
-        depth_write: false,
-        depth_compare: Some(wgpu::CompareFunction::Always),
-        ..config.clone()
-    };
-    let pipeline_xray_ignore_depth =
-        standard_surface::create_pipeline(device, layouts, &xray_ignore_depth_config);
-
-    let xray_ignore_depth_double_sided_config = PipelineConfig {
-        label: Some("xray_ignore_depth_pipeline_double_sided"),
-        cull_mode: None,
-        depth_write: false,
-        depth_compare: Some(wgpu::CompareFunction::Always),
-        ..config.clone()
-    };
-    let pipeline_xray_ignore_depth_double_sided =
-        standard_surface::create_pipeline(device, layouts, &xray_ignore_depth_double_sided_config);
-
-    let wireframe_xray_ignore_depth_config = PipelineConfig {
-        label: Some("wireframe_xray_ignore_depth_pipeline"),
-        wireframe: true,
-        depth_write: false,
-        depth_compare: Some(wgpu::CompareFunction::Always),
-        ..config.clone()
-    };
-    let wireframe_pipeline_xray_ignore_depth =
-        standard_surface::create_pipeline(device, layouts, &wireframe_xray_ignore_depth_config);
-
-    let wireframe_xray_ignore_depth_double_sided_config = PipelineConfig {
-        label: Some("wireframe_xray_ignore_depth_pipeline_double_sided"),
-        wireframe: true,
-        cull_mode: None,
-        depth_write: false,
-        depth_compare: Some(wgpu::CompareFunction::Always),
-        ..config.clone()
-    };
-    let wireframe_pipeline_xray_ignore_depth_double_sided = standard_surface::create_pipeline(
-        device,
-        layouts,
-        &wireframe_xray_ignore_depth_double_sided_config,
-    );
-
     let line_config = PipelineConfig {
         label: Some("line_pipeline"),
         topology: wgpu::PrimitiveTopology::LineList,
@@ -191,10 +144,6 @@ pub fn create_pipelines(
         pipeline_after_prepass_double_sided,
         wireframe_pipeline,
         wireframe_pipeline_double_sided,
-        pipeline_xray_ignore_depth,
-        pipeline_xray_ignore_depth_double_sided,
-        wireframe_pipeline_xray_ignore_depth,
-        wireframe_pipeline_xray_ignore_depth_double_sided,
         gbuffer_pipeline,
         gbuffer_pipeline_double_sided,
         line_pipeline,

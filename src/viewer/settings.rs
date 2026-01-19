@@ -17,7 +17,6 @@ pub struct Settings {
     pub ssao: bool,
     pub ssao_strength: f32,
     pub xray_alpha: f32,
-    pub xray_ignore_depth: bool,
     pub double_sided: bool,
     pub auto_normals: bool,
     pub smooth_normals: bool,
@@ -74,7 +73,6 @@ impl Default for Settings {
             ssao: false,
             ssao_strength: 0.5,
             xray_alpha: 0.70,
-            xray_ignore_depth: true,
             double_sided: true,
             auto_normals: true,  // Auto-flip inverted normals by default
             smooth_normals: true,

@@ -107,7 +107,6 @@ pub struct Renderer {
     pub ssao_strength: f32,
     pub hdr_visible: bool,
     pub xray_alpha: f32,
-    pub xray_ignore_depth: bool,
     pub double_sided: bool,
     pub auto_normals: bool,
     pub background_color: [f32; 4],
@@ -475,7 +474,6 @@ impl Renderer {
             ssao_strength: 0.5,
             hdr_visible: true,
             xray_alpha: 0.70,
-            xray_ignore_depth: true,
             double_sided: true,
             auto_normals: true,
             background_color: [0.1, 0.1, 0.12, 1.0],
@@ -1253,18 +1251,15 @@ impl Renderer {
         self.update_grid(camera_distance);
 
         let depth_view = match &self.depth_texture {
-            Some(dt) => &dt.view,
+            Some(dt) => dt.view.clone(),
             None => return,
         };
         let color_target_view = if self.use_ssao {
-            if let Some(targets) = &self.ssao_targets {
-                &targets.color_view
-            } else {
-                view
-            }
+            self.ssao_targets.as_ref().map(|targets| targets.color_view.clone())
         } else {
-            view
+            None
         };
+        let color_target_view_ref = color_target_view.as_ref().unwrap_or(view);
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("render_encoder"),
@@ -1274,7 +1269,24 @@ impl Renderer {
 
         // Opaque render pass
         let xray_active = self.xray_alpha < 0.999;
-        let use_depth_prepass = self.use_depth_prepass && !self.show_wireframe && !(xray_active && self.xray_ignore_depth);
+        let use_depth_prepass = self.use_depth_prepass && !self.show_wireframe;
+        {
+            let mut meshes: Vec<&SceneMesh> = self.meshes.values().collect();
+            if let Some(floor) = &self.floor_mesh {
+                meshes.push(floor);
+            }
+
+            self.render_depth_prepass(&mut encoder, &depth_view, &meshes, use_depth_prepass);
+            self.render_gbuffer_pass(&mut encoder, &depth_view, &meshes, use_depth_prepass, use_gbuffer);
+        }
+
+        self.render_ssao_pass(&mut encoder, &depth_view, self.use_ssao);
+
+        let mut meshes: Vec<&SceneMesh> = self.meshes.values().collect();
+        if let Some(floor) = &self.floor_mesh {
+            meshes.push(floor);
+        }
+
         let opaque_pipeline = if use_depth_prepass {
             match self.double_sided {
                 false => &self.pipelines.pipeline_after_prepass,
@@ -1288,21 +1300,6 @@ impl Renderer {
                 (true, true) => &self.pipelines.wireframe_pipeline_double_sided,
             }
         };
-        let gbuffer_pipeline = if self.double_sided {
-            &self.pipelines.gbuffer_pipeline_double_sided
-        } else {
-            &self.pipelines.gbuffer_pipeline
-        };
-
-        // Collect mesh list (floor + scene meshes).
-        let mut meshes: Vec<&SceneMesh> = self.meshes.values().collect();
-        if let Some(floor) = &self.floor_mesh {
-            meshes.push(floor);
-        }
-
-        self.render_depth_prepass(&mut encoder, depth_view, &meshes, use_depth_prepass);
-        self.render_gbuffer_pass(&mut encoder, depth_view, &meshes, use_depth_prepass, use_gbuffer);
-        self.render_ssao_pass(&mut encoder, depth_view, self.use_ssao);
 
         let opaque_depth_load = if use_depth_prepass || use_gbuffer {
             wgpu::LoadOp::Load
@@ -1310,20 +1307,12 @@ impl Renderer {
             wgpu::LoadOp::Clear(1.0)
         };
 
-        let xray_pipeline = if xray_active && self.xray_ignore_depth {
-            Some(match (self.show_wireframe, self.double_sided) {
-                (false, false) => &self.pipelines.pipeline_xray_ignore_depth,
-                (false, true) => &self.pipelines.pipeline_xray_ignore_depth_double_sided,
-                (true, false) => &self.pipelines.wireframe_pipeline_xray_ignore_depth,
-                (true, true) => &self.pipelines.wireframe_pipeline_xray_ignore_depth_double_sided,
-            })
-        } else {
-            None
-        };
+        let _ = xray_active; // xray uses blend in the main pipeline; ignore depth override in eevee-lite
+        let xray_pipeline = None;
         self.render_opaque_pass(
             &mut encoder,
-            depth_view,
-            color_target_view,
+            &depth_view,
+            color_target_view_ref,
             &meshes,
             opaque_pipeline,
             xray_pipeline,
