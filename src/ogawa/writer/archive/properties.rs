@@ -120,7 +120,8 @@ impl OArchive {
         }
         children.push(make_data_offset(headers_pos));
 
-        // Property compound groups must be written inline to match destructor order.
+        // Property groups are written in reverse creation order to mirror C++ destructor
+        // finalization (see AbcCoreOgawa CpwImpl/SpwImpl/ApwImpl ownership model).
         let pos = self.write_group(&children)?;
 
         Ok((pos, data_h1, data_h2, obj_headers_pos, prop_hashes))

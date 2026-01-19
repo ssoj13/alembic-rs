@@ -52,6 +52,8 @@ pub struct OArchive {
     deferred_mode: bool,
     /// Library version to write (default: Alembic 1.8.x).
     library_version: i32,
+    /// Preserve existing archive metadata keys when copying.
+    preserve_archive_metadata: bool,
 }
 
 impl OArchive {
@@ -88,6 +90,7 @@ impl OArchive {
             deferred_groups: Vec::new(),
             deferred_mode: false, // Disabled for binary parity - write groups inline.
             library_version: ALEMBIC_LIBRARY_VERSION,
+            preserve_archive_metadata: false,
         })
     }
 
@@ -151,6 +154,7 @@ impl OArchive {
     pub fn set_archive_metadata(&mut self, md: MetaData) {
         self.archive_metadata = md;
         self.application_writer.clear();
+        self.preserve_archive_metadata = true;
     }
 
     /// Set the application name (stored as _ai_Application in metadata).
@@ -256,8 +260,12 @@ impl OArchive {
         if archive_meta.get("_ai_Application").is_none() && !self.application_writer.is_empty() {
             archive_meta.set("_ai_Application", &self.application_writer);
         }
-        let version = format_alembic_version(self.library_version);
-        archive_meta.set("_ai_AlembicVersion", &version);
+        if !self.preserve_archive_metadata
+            || archive_meta.get("_ai_AlembicVersion").is_none()
+        {
+            let version = format_alembic_version(self.library_version);
+            archive_meta.set("_ai_AlembicVersion", &version);
+        }
         let archive_meta_str = archive_meta.serialize();
         let archive_meta_pos = if archive_meta_str.is_empty() {
             0

@@ -1135,66 +1135,129 @@ impl ViewerApp {
             // Found the object - show its properties
             if let Some(mesh) = crate::geom::IPolyMesh::new(obj) {
                 ui.label("Type: PolyMesh");
-                ui.label(format!("Samples: {}", mesh.getNumSamples()));
-                if let Ok(sample) = mesh.getSample(frame) {
-                    ui.label(format!("Vertices: {}", sample.positions.len()));
-                    ui.label(format!("Faces: {}", sample.face_counts.len()));
-                    // Compute and show bounds center (world space since mesh data is baked)
-                    if !sample.positions.is_empty() {
-                        let mut min = sample.positions[0];
-                        let mut max = sample.positions[0];
-                        for p in &sample.positions {
-                            min = min.min(*p);
-                            max = max.max(*p);
+                let num_samples = mesh.getNumSamples();
+                ui.label(format!("Samples: {}", num_samples));
+                let sample_idx = if num_samples > 0 {
+                    // Clamp to last sample to mirror SampleSelector behavior.
+                    frame.min(num_samples - 1)
+                } else {
+                    0
+                };
+                if num_samples > 0 {
+                    if let Ok(sample) = mesh.getSample(sample_idx) {
+                        ui.label(format!("Vertices: {}", sample.positions.len()));
+                        ui.label(format!("Faces: {}", sample.face_counts.len()));
+                        // Compute and show bounds center (world space since mesh data is baked).
+                        if !sample.positions.is_empty() {
+                            let mut min = sample.positions[0];
+                            let mut max = sample.positions[0];
+                            for p in &sample.positions {
+                                min = min.min(*p);
+                                max = max.max(*p);
+                            }
+                            let center = (min + max) * 0.5;
+                            ui.label(format!(
+                                "Center: ({:.2}, {:.2}, {:.2})",
+                                center.x, center.y, center.z
+                            ));
+                            ui.label(format!(
+                                "Min: ({:.2}, {:.2}, {:.2})",
+                                min.x, min.y, min.z
+                            ));
+                            ui.label(format!(
+                                "Max: ({:.2}, {:.2}, {:.2})",
+                                max.x, max.y, max.z
+                            ));
                         }
-                        let center = (min + max) * 0.5;
-                        ui.label(format!("Center: ({:.2}, {:.2}, {:.2})", center.x, center.y, center.z));
-                        ui.label(format!("Min: ({:.2}, {:.2}, {:.2})", min.x, min.y, min.z));
-                        ui.label(format!("Max: ({:.2}, {:.2}, {:.2})", max.x, max.y, max.z));
                     }
                 }
             } else if let Some(xform) = crate::geom::IXform::new(obj) {
                 ui.label("Type: Xform");
-                ui.label(format!("Samples: {}", xform.getNumSamples()));
-                if let Ok(sample) = xform.getSample(frame) {
-                    let matrix = sample.matrix();
-                    let (_, rot, trans) = matrix.to_scale_rotation_translation();
-                    ui.label(format!("Pos: ({:.2}, {:.2}, {:.2})", trans.x, trans.y, trans.z));
-                    let euler: (f32, f32, f32) = rot.to_euler(glam::EulerRot::XYZ);
-                    ui.label(format!("Rot: ({:.1}°, {:.1}°, {:.1}°)", 
-                        euler.0.to_degrees(), euler.1.to_degrees(), euler.2.to_degrees()));
+                let num_samples = xform.getNumSamples();
+                ui.label(format!("Samples: {}", num_samples));
+                let sample_idx = if num_samples > 0 {
+                    // Clamp to last sample to mirror SampleSelector behavior.
+                    frame.min(num_samples - 1)
+                } else {
+                    0
+                };
+                if num_samples > 0 {
+                    if let Ok(sample) = xform.getSample(sample_idx) {
+                        let matrix = sample.matrix();
+                        let (_, rot, trans) = matrix.to_scale_rotation_translation();
+                        ui.label(format!("Pos: ({:.2}, {:.2}, {:.2})", trans.x, trans.y, trans.z));
+                        let euler: (f32, f32, f32) = rot.to_euler(glam::EulerRot::XYZ);
+                        ui.label(format!("Rot: ({:.1}°, {:.1}°, {:.1}°)", 
+                            euler.0.to_degrees(), euler.1.to_degrees(), euler.2.to_degrees()));
+                    }
                 }
             } else if let Some(cam) = crate::geom::ICamera::new(obj) {
                 ui.label("Type: Camera");
-                ui.label(format!("Samples: {}", cam.getNumSamples()));
-                if let Ok(sample) = cam.getSample(frame) {
-                    ui.label(format!("Focal: {:.1}mm", sample.focal_length));
-                    ui.label(format!("Aperture: {:.1}mm", sample.horizontal_aperture));
+                let num_samples = cam.getNumSamples();
+                ui.label(format!("Samples: {}", num_samples));
+                let sample_idx = if num_samples > 0 {
+                    // Clamp to last sample to mirror SampleSelector behavior.
+                    frame.min(num_samples - 1)
+                } else {
+                    0
+                };
+                if num_samples > 0 {
+                    if let Ok(sample) = cam.getSample(sample_idx) {
+                        ui.label(format!("Focal: {:.1}mm", sample.focal_length));
+                        ui.label(format!("Aperture: {:.1}mm", sample.horizontal_aperture));
+                    }
                 }
             } else if let Some(subd) = crate::geom::ISubD::new(obj) {
                 ui.label(format!("Type: SubD"));
-                ui.label(format!("Samples: {}", subd.getNumSamples()));
-                if let Ok(sample) = subd.getSample(frame) {
-                    ui.label(format!("Vertices: {}", sample.positions.len()));
-                    ui.label(format!("Faces: {}", sample.face_counts.len()));
+                let num_samples = subd.getNumSamples();
+                ui.label(format!("Samples: {}", num_samples));
+                let sample_idx = if num_samples > 0 {
+                    // Clamp to last sample to mirror SampleSelector behavior.
+                    frame.min(num_samples - 1)
+                } else {
+                    0
+                };
+                if num_samples > 0 {
+                    if let Ok(sample) = subd.getSample(sample_idx) {
+                        ui.label(format!("Vertices: {}", sample.positions.len()));
+                        ui.label(format!("Faces: {}", sample.face_counts.len()));
+                    }
                 }
             } else if let Some(curves) = crate::geom::ICurves::new(obj) {
                 ui.label(format!("Type: Curves"));
-                ui.label(format!("Samples: {}", curves.getNumSamples()));
-                if let Ok(sample) = curves.getSample(frame) {
-                    ui.label(format!("Points: {}", sample.positions.len()));
-                    ui.label(format!("Curves: {}", sample.num_curves()));
+                let num_samples = curves.getNumSamples();
+                ui.label(format!("Samples: {}", num_samples));
+                let sample_idx = if num_samples > 0 {
+                    // Clamp to last sample to mirror SampleSelector behavior.
+                    frame.min(num_samples - 1)
+                } else {
+                    0
+                };
+                if num_samples > 0 {
+                    if let Ok(sample) = curves.getSample(sample_idx) {
+                        ui.label(format!("Points: {}", sample.positions.len()));
+                        ui.label(format!("Curves: {}", sample.num_curves()));
+                    }
                 }
             } else if let Some(points) = crate::geom::IPoints::new(obj) {
                 ui.label(format!("Type: Points"));
-                ui.label(format!("Samples: {}", points.getNumSamples()));
-                if let Ok(sample) = points.getSample(frame) {
-                    ui.label(format!("Point count: {}", sample.positions.len()));
-                    if sample.has_widths() {
-                        ui.label("Has widths: Yes");
-                    }
-                    if sample.has_velocities() {
-                        ui.label("Has velocities: Yes");
+                let num_samples = points.getNumSamples();
+                ui.label(format!("Samples: {}", num_samples));
+                let sample_idx = if num_samples > 0 {
+                    // Clamp to last sample to mirror SampleSelector behavior.
+                    frame.min(num_samples - 1)
+                } else {
+                    0
+                };
+                if num_samples > 0 {
+                    if let Ok(sample) = points.getSample(sample_idx) {
+                        ui.label(format!("Point count: {}", sample.positions.len()));
+                        if sample.has_widths() {
+                            ui.label("Has widths: Yes");
+                        }
+                        if sample.has_velocities() {
+                            ui.label("Has velocities: Yes");
+                        }
                     }
                 }
             } else if let Some(light) = crate::geom::ILight::new(obj) {

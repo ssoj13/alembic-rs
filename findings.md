@@ -69,6 +69,12 @@ Re-verified against `_ref` AbcCoreOgawa. Writer/reader parity improved; remainin
    - Reference (C++): `_ref/alembic/lib/Alembic/AbcGeom/OSubD.cpp:136`, `_ref/alembic/lib/Alembic/AbcGeom/ONuPatch.cpp:135`
    - Impact: data block ordering for schema-written files matches reference.
 
+12) **Viewer clamps per-object sample index (playback parity)**
+   - Fix: viewer now clamps `sample_index` to the last available sample for each schema before calling `getSample()`.
+   - Evidence (Rust): `src/viewer/mesh_converter.rs:640`, `src/viewer/app.rs:1139`
+   - Reference (C++): `IXformSchema::get` uses `ISampleSelector::getIndex(...)` (clamps to valid range).
+   - Impact: avoids identity/garbage transforms when global frame index exceeds per-object samples.
+
 ## Remaining Parity Gaps
 
 1) **Debug-only warnings during read path** (non-binary)
@@ -78,8 +84,16 @@ Re-verified against `_ref` AbcCoreOgawa. Writer/reader parity improved; remainin
    - Impact: behavior-only (stdout/stderr), not file format.
 
 2) **Binary parity still fails on larger meshes**
-   - Evidence: `data/Abc/heart.abc` (50 bytes differ), `data/Abc/chess3.abc` (large diff).
-   - Impact: copy2 output not byte-identical on these assets; likely remaining ordering or schema mapping mismatch.
+   - Evidence: `data/Abc/heart.abc` (39 bytes differ), `data/Abc/chess3.abc` (large diff).
+   - Impact: copy2 output not byte-identical on these assets; remaining differences are ordering/interleaving of group headers vs data blocks.
+
+3) **Property group headers are not interleaved with data like C++**
+   - Current: writer emits all sample data first, then all property group headers.
+   - Reference: C++ writes group headers at property-writer destruction time, which can land between data blocks.
+   - Evidence:
+     - Reference `heart.abc`: group header at 4946 (16 bytes) sits between `statistics` data (at 4852, size 86) and `1.samples` data (at 4962, size 20).
+     - Rust output: `1.samples` data shifts to 4946 because group headers are written later; offsets differ even though payload bytes match.
+   - Impact: ordering-sensitive offsets differ; full byte parity requires interleaving group header writes with data based on writer lifetime.
 
 3) **HDF5 Alembic files not supported**
    - Evidence: `_ref/alembic/prman/Tests/testdata/{cube,xforms}.abc` fail Ogawa magic check.
@@ -92,3 +106,4 @@ Re-verified against `_ref` AbcCoreOgawa. Writer/reader parity improved; remainin
 ## Next Verification
 - Re-run binary comparisons for more reference assets (not only `cpp_triangle.abc`).
 - Confirm parity in writer output when additional schemas are present (curves, points, subd, nurbs).
+- Validate whether interleaving property group headers with data resolves `heart.abc` and `chess3.abc` diffs.
