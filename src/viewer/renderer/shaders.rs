@@ -223,7 +223,10 @@ fn sample_background(uv: vec2<f32>) -> vec4<f32> {
     if env.enabled < 0.5 || env.intensity <= 0.0 || params.hdr_visible < 0.5 {
         return params.background;
     }
-    let ndc = vec4<f32>(uv * 2.0 - vec2<f32>(1.0), 1.0, 1.0);
+    // Fullscreen UVs are vertically flipped for screen-space passes.
+    // Undo that flip for skybox ray reconstruction.
+    let uv_unflipped = vec2<f32>(uv.x, 1.0 - uv.y);
+    let ndc = vec4<f32>(uv_unflipped * 2.0 - vec2<f32>(1.0), 1.0, 1.0);
     let world = camera.inv_view_proj * ndc;
     let world_pos = world.xyz / world.w;
     let dir = normalize(world_pos - camera.position);
