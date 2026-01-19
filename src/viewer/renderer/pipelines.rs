@@ -26,7 +26,7 @@ pub fn create_pipelines(
         format,
         depth_format: Some(wgpu::TextureFormat::Depth32Float),
         blend: false,  // Opaque pass should not blend
-        depth_equal: true, // Color pass runs after GBuffer, allow equal depth
+        depth_equal: false, // Use standard Less depth compare for G-Buffer + depth writes
         cull_mode: Some(wgpu::Face::Back),
         wireframe: false,
         ..Default::default()
