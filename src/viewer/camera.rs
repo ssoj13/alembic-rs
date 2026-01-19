@@ -73,8 +73,9 @@ impl OrbitCamera {
     pub fn zoom(&mut self, delta: f32) {
         let arm = self.rig.driver_mut::<Arm>();
         let current = arm.offset.z;
-        let factor = 1.0 - delta * 0.1;
-        arm.offset.z = (current * factor).clamp(0.1, 500.0);
+        let sensitivity = 0.0002 * current.max(1.0);
+        let factor = 1.0 - delta * sensitivity;
+        arm.offset.z = (current * factor).clamp(0.1, 5000.0);
     }
 
     /// Focus on bounding box
@@ -105,7 +106,7 @@ impl OrbitCamera {
 
     /// Set distance from target
     pub fn set_distance(&mut self, dist: f32) {
-        self.rig.driver_mut::<Arm>().offset.z = dist.clamp(0.1, 500.0);
+        self.rig.driver_mut::<Arm>().offset.z = dist.clamp(0.1, 5000.0);
     }
 
     /// Get yaw and pitch angles in degrees (from final transform)

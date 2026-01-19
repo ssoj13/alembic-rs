@@ -471,7 +471,7 @@ impl Renderer {
             use_ssao: false,
             ssao_strength: 0.5,
             hdr_visible: true,
-            xray_alpha: 0.70,
+            xray_alpha: 1.0,
             double_sided: true,
             auto_normals: true,
             background_color: [0.1, 0.1, 0.12, 1.0],
@@ -1248,11 +1248,10 @@ impl Renderer {
             Some(dt) => dt.view.clone(),
             None => return,
         };
-        let color_target_view = if self.use_ssao {
-            self.ssao_targets.as_ref().map(|targets| targets.color_view.clone())
-        } else {
-            None
-        };
+        let color_target_view = self
+            .ssao_targets
+            .as_ref()
+            .map(|targets| targets.color_view.clone());
         let color_target_view_ref = color_target_view.as_ref().unwrap_or(view);
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {

@@ -70,7 +70,7 @@ impl Default for Settings {
             depth_prepass: true,
             ssao: false,
             ssao_strength: 0.5,
-            xray_alpha: 0.70,
+            xray_alpha: 1.0,
             double_sided: true,
             auto_normals: true,  // Auto-flip inverted normals by default
             smooth_normals: true,

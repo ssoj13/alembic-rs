@@ -31,7 +31,8 @@ pub fn create_pipelines(
         label: Some("opaque_pipeline"),
         format,
         depth_format: Some(wgpu::TextureFormat::Depth32Float),
-        blend: true,  // Enable alpha blending for X-Ray mode
+        blend: false,  // Opaque pass should not blend
+        depth_equal: true, // Color pass runs after GBuffer, allow equal depth
         cull_mode: Some(wgpu::Face::Back),
         wireframe: false,
         ..Default::default()
@@ -98,6 +99,7 @@ pub fn create_pipelines(
 
     let xray_config = PipelineConfig {
         label: Some("xray_pipeline"),
+        blend: true,  // X-Ray uses alpha blending
         depth_write: false,
         ..config.clone()
     };
@@ -105,6 +107,7 @@ pub fn create_pipelines(
 
     let xray_double_sided_config = PipelineConfig {
         label: Some("xray_pipeline_double_sided"),
+        blend: true,
         depth_write: false,
         cull_mode: None,
         ..config.clone()
@@ -115,6 +118,7 @@ pub fn create_pipelines(
     let wireframe_xray_config = PipelineConfig {
         label: Some("wireframe_xray_pipeline"),
         wireframe: true,
+        blend: true,
         depth_write: false,
         ..config.clone()
     };
@@ -123,6 +127,7 @@ pub fn create_pipelines(
     let wireframe_xray_double_sided_config = PipelineConfig {
         label: Some("wireframe_xray_pipeline_double_sided"),
         wireframe: true,
+        blend: true,
         depth_write: false,
         cull_mode: None,
         ..config.clone()

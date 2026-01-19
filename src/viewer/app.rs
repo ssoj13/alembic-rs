@@ -1677,6 +1677,20 @@ impl eframe::App for ViewerApp {
             })
         });
         
+        if self.active_camera.is_none() {
+            if let Some(bounds) = &self.scene_bounds {
+                let center = bounds.center();
+                let radius = bounds.radius().max(0.1);
+                let cam_pos = self.viewport.camera.position();
+                let dist = (cam_pos - center).length();
+                let margin = radius * 2.0;
+                let near = (dist - margin).max(0.01);
+                let far = (dist + margin).max(near + 1.0);
+                self.viewport.camera.near = near;
+                self.viewport.camera.far = far;
+            }
+        }
+        
         // Process any ready frames from background worker (non-blocking)
         self.process_worker_results();
         

@@ -16,7 +16,7 @@ fn vs_fullscreen(@builtin(vertex_index) index: u32) -> VsOut {
     let pos = positions[index];
     var out: VsOut;
     out.pos = vec4<f32>(pos, 0.0, 1.0);
-    out.uv = pos * 0.5 + vec2<f32>(0.5, 0.5);
+    out.uv = vec2<f32>(pos.x * 0.5 + 0.5, 1.0 - (pos.y * 0.5 + 0.5));
     return out;
 }
 
@@ -48,7 +48,7 @@ fn fs_ssao(in: VsOut) -> @location(0) vec4<f32> {
         let duv = offsets[i];
         let sample_depth = textureSample(depth_tex, samp, uv + duv);
         let delta = sample_depth - depth;
-        if delta > 0.01 {
+        if delta < -0.01 {
             occlusion = occlusion + 0.25;
         }
     }
@@ -76,7 +76,7 @@ fn vs_fullscreen(@builtin(vertex_index) index: u32) -> VsOut {
     let pos = positions[index];
     var out: VsOut;
     out.pos = vec4<f32>(pos, 0.0, 1.0);
-    out.uv = pos * 0.5 + vec2<f32>(0.5, 0.5);
+    out.uv = vec2<f32>(pos.x * 0.5 + 0.5, 1.0 - (pos.y * 0.5 + 0.5));
     return out;
 }
 
