@@ -3,16 +3,16 @@
 use dolly::prelude::*;
 use glam::{Mat4, Vec3};
 
-const WGPU_Y_FLIP: Mat4 = Mat4::from_cols_array(&[
+const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4::from_cols_array(&[
     1.0, 0.0, 0.0, 0.0,
-    0.0, -1.0, 0.0, 0.0,
-    0.0, 0.0, 1.0, 0.0,
-    0.0, 0.0, 0.0, 1.0,
+    0.0, 1.0, 0.0, 0.0,
+    0.0, 0.0, 0.5, 0.0,
+    0.0, 0.0, 0.5, 1.0,
 ]);
 
 pub fn wgpu_projection(fov_y: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
-    // wgpu clip space has flipped Y relative to glam's perspective_rh.
-    WGPU_Y_FLIP * Mat4::perspective_rh(fov_y, aspect, near, far)
+    // wgpu uses 0..1 depth; no Y flip needed for NDC orientation.
+    OPENGL_TO_WGPU_MATRIX * Mat4::perspective_rh(fov_y, aspect, near, far)
 }
 
 /// Orbit camera rig for 3D viewport

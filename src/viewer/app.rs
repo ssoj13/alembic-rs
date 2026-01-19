@@ -542,10 +542,6 @@ impl ViewerApp {
                 renderer.use_depth_prepass = self.settings.depth_prepass;
                 changed = true;
             }
-            if ui.checkbox(&mut self.settings.gbuffer, "G-Buffer").changed() {
-                renderer.use_gbuffer = self.settings.gbuffer;
-                changed = true;
-            }
             if ui.checkbox(&mut self.settings.ssao, "SSAO").changed() {
                 renderer.use_ssao = self.settings.ssao;
                 changed = true;
@@ -1783,7 +1779,6 @@ impl eframe::App for ViewerApp {
                     renderer.flat_shading = self.settings.flat_shading;
                     renderer.show_shadows = self.settings.show_shadows;
                     renderer.use_depth_prepass = self.settings.depth_prepass;
-                    renderer.use_gbuffer = self.settings.gbuffer;
                     renderer.use_ssao = self.settings.ssao;
                     renderer.ssao_strength = self.settings.ssao_strength;
                     renderer.hdr_visible = self.settings.hdr_visible;

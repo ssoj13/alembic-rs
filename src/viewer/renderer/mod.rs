@@ -102,7 +102,6 @@ pub struct Renderer {
     pub show_grid: bool,
     pub show_shadows: bool,
     pub use_depth_prepass: bool,
-    pub use_gbuffer: bool,
     pub use_ssao: bool,
     pub ssao_strength: f32,
     pub hdr_visible: bool,
@@ -469,7 +468,6 @@ impl Renderer {
             show_grid: true,
             show_shadows: true,
             use_depth_prepass: true,
-            use_gbuffer: false,
             use_ssao: false,
             ssao_strength: 0.5,
             hdr_visible: true,
@@ -1241,13 +1239,9 @@ impl Renderer {
     /// Render the scene
     pub fn render(&mut self, view: &wgpu::TextureView, width: u32, height: u32, camera_distance: f32) {
         self.ensure_depth_texture(width, height);
-        let use_gbuffer = self.use_gbuffer || self.use_ssao;
-        if use_gbuffer {
-            self.ensure_gbuffer(width, height);
-        }
-        if self.use_ssao {
-            self.ensure_ssao_targets(width, height, self.output_format);
-        }
+        let use_gbuffer = true;
+        self.ensure_gbuffer(width, height);
+        self.ensure_ssao_targets(width, height, self.output_format);
         self.update_grid(camera_distance);
 
         let depth_view = match &self.depth_texture {
@@ -1277,7 +1271,7 @@ impl Renderer {
             }
 
             self.render_depth_prepass(&mut encoder, &depth_view, &meshes, use_depth_prepass);
-            self.render_gbuffer_pass(&mut encoder, &depth_view, &meshes, use_depth_prepass, use_gbuffer);
+            self.render_gbuffer_pass(&mut encoder, &depth_view, &meshes, use_depth_prepass);
         }
 
         self.render_ssao_pass(&mut encoder, &depth_view, self.use_ssao);
@@ -1285,6 +1279,16 @@ impl Renderer {
         let mut meshes: Vec<&SceneMesh> = self.meshes.values().collect();
         if let Some(floor) = &self.floor_mesh {
             meshes.push(floor);
+        }
+        if xray_active {
+            let cam = self.camera_position;
+            meshes.sort_by(|a, b| {
+                let center_a = (a.bounds.0 + a.bounds.1) * 0.5;
+                let center_b = (b.bounds.0 + b.bounds.1) * 0.5;
+                let da = (center_a - cam).length_squared();
+                let db = (center_b - cam).length_squared();
+                db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
+            });
         }
 
         let opaque_pipeline = if use_depth_prepass {
@@ -1325,7 +1329,7 @@ impl Renderer {
             xray_pipeline,
             opaque_depth_load,
         );
-        self.render_composite_pass(&mut encoder, view, self.use_ssao);
+        self.render_composite_pass(&mut encoder, view);
 
         self.queue.submit(std::iter::once(encoder.finish()));
     }

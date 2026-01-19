@@ -85,11 +85,7 @@ impl Renderer {
         depth_view: &wgpu::TextureView,
         meshes: &[&SceneMesh],
         use_depth_prepass: bool,
-        use_gbuffer: bool,
     ) {
-        if !use_gbuffer {
-            return;
-        }
 
         let gbuffer = match &self.gbuffer {
             Some(gbuffer) => gbuffer,
@@ -334,11 +330,7 @@ impl Renderer {
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        use_ssao: bool,
     ) {
-        if !use_ssao {
-            return;
-        }
 
         let (gbuffer, targets) = match (&self.gbuffer, &self.ssao_targets) {
             (Some(gbuffer), Some(targets)) => (gbuffer, targets),
