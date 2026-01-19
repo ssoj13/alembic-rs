@@ -5,16 +5,60 @@
 //! - `_ref/alembic/lib/Alembic/AbcCoreOgawa/ApwImpl.cpp`
 //! - `_ref/alembic/lib/Alembic/AbcCoreOgawa/CpwData.cpp`
 
-use crate::core::MetaData;
+use crate::core::{MetaData, SampleDigest};
 use crate::util::DataType;
+
+/// Sample with optional pre-computed digest for raw copying.
+#[derive(Clone)]
+pub struct SampleWithDigest {
+    /// Sample data.
+    pub data: Vec<u8>,
+    /// Optional pre-computed digest (16 bytes). If None, digest is computed.
+    pub digest: Option<SampleDigest>,
+}
+
+impl SampleWithDigest {
+    /// Create sample without digest (will be computed).
+    pub fn new(data: Vec<u8>) -> Self {
+        Self { data, digest: None }
+    }
+
+    /// Create sample with pre-computed digest (for raw copy).
+    pub fn with_digest(data: Vec<u8>, digest: SampleDigest) -> Self {
+        Self { data, digest: Some(digest) }
+    }
+}
+
+/// Array sample with optional pre-computed digest.
+#[derive(Clone)]
+pub struct ArraySampleWithDigest {
+    /// Sample data.
+    pub data: Vec<u8>,
+    /// Dimensions.
+    pub dims: Vec<usize>,
+    /// Optional pre-computed digest (16 bytes). If None, digest is computed.
+    pub digest: Option<SampleDigest>,
+}
+
+impl ArraySampleWithDigest {
+    /// Create sample without digest (will be computed).
+    pub fn new(data: Vec<u8>, dims: Vec<usize>) -> Self {
+        Self { data, dims, digest: None }
+    }
+
+    /// Create sample with pre-computed digest (for raw copy).
+    pub fn with_digest(data: Vec<u8>, dims: Vec<usize>, digest: SampleDigest) -> Self {
+        Self { data, dims, digest: Some(digest) }
+    }
+}
 
 /// Property data variants.
 #[derive(Clone)]
 pub enum OPropertyData {
-    /// Scalar property samples.
-    Scalar(Vec<Vec<u8>>),
-    /// Array property samples (data, dimensions).
-    Array(Vec<(Vec<u8>, Vec<usize>)>),
+    /// Scalar property samples with optional digests.
+    Scalar(Vec<SampleWithDigest>),
+    /// Array property samples with optional digests.
+    Array(Vec<ArraySampleWithDigest>),
     /// Compound property children.
     Compound(Vec<OProperty>),
 }
@@ -121,8 +165,26 @@ impl OProperty {
     pub fn add_scalar_sample(&mut self, data: &[u8]) {
         if let OPropertyData::Scalar(samples) = &mut self.data {
             let sample_index = samples.len() as u32;
-            let is_same = samples.last().map_or(false, |prev| prev == data);
-            samples.push(data.to_vec());
+            let is_same = samples.last().map_or(false, |prev| prev.data == data);
+            samples.push(SampleWithDigest::new(data.to_vec()));
+            if sample_index == 0 {
+                self.first_changed_index = 0;
+                self.last_changed_index = 0;
+            } else if !is_same {
+                if self.first_changed_index == 0 {
+                    self.first_changed_index = sample_index;
+                }
+                self.last_changed_index = sample_index;
+            }
+        }
+    }
+
+    /// Add a scalar sample with pre-computed digest (for raw copy).
+    pub fn add_scalar_sample_with_digest(&mut self, data: &[u8], digest: SampleDigest) {
+        if let OPropertyData::Scalar(samples) = &mut self.data {
+            let sample_index = samples.len() as u32;
+            let is_same = samples.last().map_or(false, |prev| prev.data == data);
+            samples.push(SampleWithDigest::with_digest(data.to_vec(), digest));
             if sample_index == 0 {
                 self.first_changed_index = 0;
                 self.last_changed_index = 0;
@@ -140,14 +202,44 @@ impl OProperty {
         self.add_scalar_sample(bytemuck::bytes_of(value));
     }
 
+    /// Add a scalar string sample (auto null-terminated).
+    pub fn add_scalar_string(&mut self, s: &str) {
+        let mut data = s.as_bytes().to_vec();
+        data.push(0); // null terminator
+        self.add_scalar_sample(&data);
+    }
+
     /// Add an array sample.
     pub fn add_array_sample(&mut self, data: &[u8], dims: &[usize]) {
         if let OPropertyData::Array(samples) = &mut self.data {
             let sample_index = samples.len() as u32;
-            let is_same = samples.last().map_or(false, |(prev_data, prev_dims)| {
-                prev_data == data && prev_dims.as_slice() == dims
+            let is_same = samples.last().map_or(false, |prev| {
+                prev.data == data && prev.dims.as_slice() == dims
             });
-            samples.push((data.to_vec(), dims.to_vec()));
+            samples.push(ArraySampleWithDigest::new(data.to_vec(), dims.to_vec()));
+            if self.is_scalar_like && dims.iter().product::<usize>() != 1 {
+                self.is_scalar_like = false;
+            }
+            if sample_index == 0 {
+                self.first_changed_index = 0;
+                self.last_changed_index = 0;
+            } else if !is_same {
+                if self.first_changed_index == 0 {
+                    self.first_changed_index = sample_index;
+                }
+                self.last_changed_index = sample_index;
+            }
+        }
+    }
+
+    /// Add an array sample with pre-computed digest (for raw copy).
+    pub fn add_array_sample_with_digest(&mut self, data: &[u8], dims: &[usize], digest: SampleDigest) {
+        if let OPropertyData::Array(samples) = &mut self.data {
+            let sample_index = samples.len() as u32;
+            let is_same = samples.last().map_or(false, |prev| {
+                prev.data == data && prev.dims.as_slice() == dims
+            });
+            samples.push(ArraySampleWithDigest::with_digest(data.to_vec(), dims.to_vec(), digest));
             if self.is_scalar_like && dims.iter().product::<usize>() != 1 {
                 self.is_scalar_like = false;
             }

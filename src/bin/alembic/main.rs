@@ -1375,7 +1375,7 @@ fn copy2_points(
             if let Ok(sample) = points.getSample(i) {
                 let mut out_sample = OPointsSample::new(
                     sample.positions.clone(),
-                    sample.ids.clone(),
+                    sample.ids.iter().map(|&id| id as i64).collect(),
                 );
                 // Wrap in Some if non-empty
                 if !sample.velocities.is_empty() {

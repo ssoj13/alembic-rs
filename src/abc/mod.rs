@@ -830,6 +830,24 @@ impl<'a> IScalarProperty<'a> {
         self.reader.getHeader().time_sampling_index
     }
     
+    /// Get sample by index (Alembic-style API).
+    pub fn getSample(&self, index: usize, out: &mut [u8]) -> Result<()> {
+        self.reader.getSample(index, out)
+    }
+    
+    /// Get sample as Vec (for variable-length data like strings).
+    pub fn getSampleVec(&self, index: usize) -> Result<Vec<u8>> {
+        self.reader.getSampleVec(index)
+    }
+    
+    /// Get the key (digest) of a sample for deduplication/raw copy.
+    ///
+    /// This returns a 16-byte digest that can be used to preserve
+    /// the exact sample when copying files.
+    pub fn getKey(&self, index: usize) -> Result<[u8; 16]> {
+        self.reader.getKey(index)
+    }
+    
     /// Check if this property is valid.
     #[inline]
     pub fn valid(&self) -> bool {

@@ -688,6 +688,28 @@ impl OgawaPropertyReader {
         Ok(result)
     }
     
+    /// Read scalar sample key (digest) without reading full data.
+    fn read_scalar_sample_key(&self, index: usize) -> Result<[u8; 16]> {
+        let group = self.group.as_ref()
+            .ok_or_else(|| Error::invalid("No property group"))?;
+        
+        if index as u64 >= group.num_children() {
+            return Err(Error::invalid("Scalar sample index out of range"));
+        }
+        
+        let data = group.data(index as u64)?;
+        
+        if data.size() < DATA_KEY_SIZE as u64 {
+            return Ok([0u8; 16]); // Empty data has zero key
+        }
+        
+        // Read only the first 16 bytes (the key)
+        let all_data = data.read_all()?;
+        let mut key = [0u8; 16];
+        key.copy_from_slice(&all_data[..16]);
+        Ok(key)
+    }
+    
     /// Read array sample key (digest) without reading full data.
     fn read_array_sample_key(&self, index: usize) -> Result<[u8; 16]> {
         let group = self.group.as_ref()
@@ -773,6 +795,16 @@ impl ScalarPropertyReader for OgawaPropertyReader {
         };
         
         self.read_scalar_sample(actual_index, out)
+    }
+    
+    fn getKey(&self, index: usize) -> Result<[u8; 16]> {
+        let actual_index = if self.is_constant_internal() && index > 0 {
+            0
+        } else {
+            index.min(self.num_samples_internal().saturating_sub(1))
+        };
+        
+        self.read_scalar_sample_key(actual_index)
     }
 }
 

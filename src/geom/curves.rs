@@ -41,6 +41,24 @@ impl CurveType {
             _ => CurveType::Cubic,
         }
     }
+
+    /// Convert to Alembic u8 value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            CurveType::Cubic => 0,
+            CurveType::Linear => 1,
+            CurveType::Bezier => 2,
+            CurveType::Bspline => 3,
+            CurveType::CatmullRom => 4,
+            CurveType::Hermite => 5,
+        }
+    }
+}
+
+impl std::fmt::Display for CurveType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_u8())
+    }
 }
 
 /// Curve periodicity (wrap mode).
@@ -61,6 +79,20 @@ impl CurvePeriodicity {
             1 => CurvePeriodicity::Periodic,
             _ => CurvePeriodicity::NonPeriodic,
         }
+    }
+
+    /// Convert to Alembic u8 value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            CurvePeriodicity::NonPeriodic => 0,
+            CurvePeriodicity::Periodic => 1,
+        }
+    }
+}
+
+impl std::fmt::Display for CurvePeriodicity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_u8())
     }
 }
 
@@ -94,6 +126,24 @@ impl BasisType {
             5 => BasisType::Power,
             _ => BasisType::NoBasis,
         }
+    }
+
+    /// Convert to Alembic u8 value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            BasisType::NoBasis => 0,
+            BasisType::Bezier => 1,
+            BasisType::Bspline => 2,
+            BasisType::CatmullRom => 3,
+            BasisType::Hermite => 4,
+            BasisType::Power => 5,
+        }
+    }
+}
+
+impl std::fmt::Display for BasisType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_u8())
     }
 }
 

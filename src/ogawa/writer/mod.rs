@@ -16,7 +16,7 @@ pub mod schema;
 
 pub use archive::OArchive;
 pub use object::OObject;
-pub use property::{OProperty, OPropertyData};
+pub use property::{OProperty, OPropertyData, SampleWithDigest, ArraySampleWithDigest};
 
 // Re-export schema writers for API compatibility.
 pub use schema::{

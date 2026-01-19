@@ -16,7 +16,7 @@ pub type SampleDigest = [u8; 16];
 /// This matches the C++ Alembic implementation for binary compatibility.
 #[inline]
 pub fn compute_digest(data: &[u8], seed: Option<u32>) -> SampleDigest {
-    murmur3::hash128_bytes(data, seed)
+    murmur3::hash128_bytes(data, seed.map(|s| s as usize))
 }
 
 /// Key for cache entries (position-based for reading).

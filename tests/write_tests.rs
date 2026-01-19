@@ -708,7 +708,7 @@ fn convert_object(
                 if let Ok(sample) = points.getSample(i) {
                     let out_sample = OPointsSample {
                         positions: sample.positions.clone(),
-                        ids: sample.ids.clone(),
+                        ids: sample.ids.iter().map(|&id| id as i64).collect(),
                         velocities: vec_to_opt(&sample.velocities),
                         widths: vec_to_opt(&sample.widths),
                     };

@@ -97,7 +97,7 @@ impl OMaterial {
                 ".targets",
                 DataType::new(PlainOldDataType::String, 1),
             );
-            targets_prop.add_scalar_sample(targets_str.as_bytes());
+            targets_prop.add_scalar_string(&targets_str);
 
             if let OPropertyData::Compound(children) = &mut mat.data {
                 children.push(targets_prop);
@@ -109,7 +109,7 @@ impl OMaterial {
                             &format!(".{}.shaderTypes", target),
                             DataType::new(PlainOldDataType::String, 1),
                         );
-                        types_prop.add_scalar_sample(types_str.as_bytes());
+                        types_prop.add_scalar_string(&types_str);
                         children.push(types_prop);
 
                         for shader_type in types {
@@ -122,7 +122,7 @@ impl OMaterial {
                                     &format!(".{}.{}.shaderName", target, shader_type),
                                     DataType::new(PlainOldDataType::String, 1),
                                 );
-                                name_prop.add_scalar_sample(name.as_bytes());
+                                name_prop.add_scalar_string(name);
                                 children.push(name_prop);
                             }
                         }

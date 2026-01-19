@@ -30,6 +30,33 @@ pub struct OSubDSample {
     pub normal_indices: Option<Vec<i32>>,
 }
 
+impl OSubDSample {
+    /// Create new SubD sample with required geometry data.
+    pub fn new(
+        positions: Vec<glam::Vec3>,
+        face_counts: Vec<i32>,
+        face_indices: Vec<i32>,
+    ) -> Self {
+        Self {
+            positions,
+            face_counts,
+            face_indices,
+            subdivision_scheme: "catmullClark".to_string(),
+            velocities: None,
+            uvs: None,
+            uv_indices: None,
+            crease_indices: None,
+            crease_lengths: None,
+            crease_sharpnesses: None,
+            corner_indices: None,
+            corner_sharpnesses: None,
+            holes: None,
+            normals: None,
+            normal_indices: None,
+        }
+    }
+}
+
 /// SubD schema writer.
 pub struct OSubD {
     object: OObject,
@@ -94,7 +121,7 @@ impl OSubD {
             ".scheme",
             DataType::new(PlainOldDataType::String, 1),
         );
-        scheme_prop.add_scalar_sample(sample.subdivision_scheme.as_bytes());
+        scheme_prop.add_scalar_string(&sample.subdivision_scheme);
 
         if let Some(ref vels) = sample.velocities {
             let v_prop = self.geom_compound.get_or_create_array_child(

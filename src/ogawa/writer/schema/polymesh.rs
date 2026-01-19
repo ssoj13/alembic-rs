@@ -80,9 +80,120 @@ impl OPolyMesh {
     }
 
     /// Add a sample (positions + topology + optional data).
-    /// Order of properties matches C++ writer for binary parity.
+    /// 
+    /// PROPERTY CREATION ORDER matches C++ init():
+    ///   P, .selfBnds, .faceIndices, .faceCounts, (velocities), (uvs), (normals)
+    /// 
+    /// DATA WRITE ORDER matches C++ set():
+    ///   P, .faceIndices, .faceCounts, (velocities), .selfBnds, (uvs), (normals)
     pub fn add_sample(&mut self, sample: &OPolyMeshSample) {
-        // .selfBnds
+        // === STEP 1: Create properties in C++ init() order ===
+        // This determines the order of properties in the compound.
+        // data_write_order determines the order of keyed_data writes.
+        
+        // C++ set() DATA WRITE ORDER:
+        // 0 = P (positions)
+        // 1 = .faceIndices
+        // 2 = .faceCounts
+        // 3 = .velocities (if present)
+        // 4 = .selfBnds
+        // 5 = N (normals, if simple array)
+        
+        // P (created first in createPositionsProperty)
+        let mut p_meta = MetaData::new();
+        p_meta.set("geoScope", "vtx");
+        p_meta.set("interpretation", "point");
+        {
+            let p = self.get_or_create_array_with_meta(
+                "P",
+                DataType::new(PlainOldDataType::Float32, 3),
+                p_meta.clone(),
+            );
+            p.data_write_order = 0;
+        }
+        
+        // .selfBnds (created second, inside createPositionsProperty)
+        {
+            let sb = self.get_or_create_scalar_with_meta(
+                ".selfBnds",
+                DataType::new(PlainOldDataType::Float64, 6),
+                MetaData::new(),
+            );
+            sb.data_write_order = 4; // Written AFTER faceIndices/faceCounts
+        }
+        
+        // .faceIndices (created third in init)
+        {
+            let fi = self.get_or_create_array_with_ts(
+                ".faceIndices",
+                DataType::new(PlainOldDataType::Int32, 1),
+            );
+            fi.data_write_order = 1;
+        }
+        
+        // .faceCounts (created fourth in init)
+        {
+            let fc = self.get_or_create_array_with_ts(
+                ".faceCounts",
+                DataType::new(PlainOldDataType::Int32, 1),
+            );
+            fc.data_write_order = 2;
+        }
+        
+        // Optional properties created in set() before data writes
+        if sample.velocities.is_some() {
+            let v = self.get_or_create_array_with_ts(
+                ".velocities",
+                DataType::new(PlainOldDataType::Float32, 3),
+            );
+            v.data_write_order = 3;
+        }
+        
+        // Normals property created in set() if present
+        if sample.normals.is_some() {
+            if sample.normals_is_simple_array {
+                let mut n_meta = MetaData::new();
+                n_meta.set("arrayExtent", "1");
+                n_meta.set("geoScope", "fvr");
+                n_meta.set("interpretation", "normal");
+                n_meta.set("isGeomParam", "true");
+                n_meta.set("podExtent", "3");
+                n_meta.set("podName", "float32_t");
+                let n = self.get_or_create_array_with_meta(
+                    "N",
+                    DataType::new(PlainOldDataType::Float32, 3),
+                    n_meta,
+                );
+                n.data_write_order = 5;
+            }
+        }
+        
+        // === STEP 2: Write data ===
+        // The actual write order is determined by data_write_order field.
+        
+        // P data
+        let positions_prop = self.get_or_create_array_with_meta(
+            "P",
+            DataType::new(PlainOldDataType::Float32, 3),
+            p_meta,
+        );
+        positions_prop.add_array_pod(&sample.positions);
+        
+        // .faceIndices data
+        let face_indices_prop = self.get_or_create_array_with_ts(
+            ".faceIndices",
+            DataType::new(PlainOldDataType::Int32, 1),
+        );
+        face_indices_prop.add_array_pod(&sample.face_indices);
+        
+        // .faceCounts data
+        let face_counts_prop = self.get_or_create_array_with_ts(
+            ".faceCounts",
+            DataType::new(PlainOldDataType::Int32, 1),
+        );
+        face_counts_prop.add_array_pod(&sample.face_counts);
+        
+        // .selfBnds data
         let bounds = if let Some(ref bnds) = sample.self_bounds {
             [bnds.min.x, bnds.min.y, bnds.min.z, bnds.max.x, bnds.max.y, bnds.max.z]
         } else {
@@ -94,28 +205,6 @@ impl OPolyMesh {
             MetaData::new(),
         );
         self_bnds_prop.add_scalar_pod(&bounds);
-
-        // P
-        let positions_prop = self.get_or_create_array_with_meta(
-            "P",
-            DataType::new(PlainOldDataType::Float32, 3),
-            MetaData::new(),
-        );
-        positions_prop.add_array_pod(&sample.positions);
-
-        // .faceIndices
-        let face_indices_prop = self.get_or_create_array_with_ts(
-            ".faceIndices",
-            DataType::new(PlainOldDataType::Int32, 1),
-        );
-        face_indices_prop.add_array_pod(&sample.face_indices);
-
-        // .faceCounts
-        let face_counts_prop = self.get_or_create_array_with_ts(
-            ".faceCounts",
-            DataType::new(PlainOldDataType::Int32, 1),
-        );
-        face_counts_prop.add_array_pod(&sample.face_counts);
 
         // Velocities (optional)
         if let Some(ref vels) = sample.velocities {

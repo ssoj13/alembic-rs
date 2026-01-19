@@ -361,6 +361,12 @@ pub trait ScalarPropertyReader: PropertyReader {
         }
         Ok(buf)
     }
+    
+    /// Get the key (digest) of a sample for deduplication/raw copy.
+    ///
+    /// This returns a 16-byte digest that can be used to preserve
+    /// the exact sample when copying files.
+    fn getKey(&self, index: usize) -> Result<SampleDigest>;
 }
 
 /// Reader for array properties (array of values per sample).

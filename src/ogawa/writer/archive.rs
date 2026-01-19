@@ -248,7 +248,16 @@ impl OArchive {
         }
 
         if let Some(&idx) = self.metadata_map.get(&serialized) {
+            // DEBUG: Found existing metadata
+            eprintln!("  [add_indexed_metadata] FOUND idx={} for '{}'", idx, serialized);
             return idx as u8;
+        }
+        
+        // DEBUG: Not found, will add new
+        eprintln!("  [add_indexed_metadata] NOT FOUND, adding new for '{}'", serialized);
+        eprintln!("    Available in map:");
+        for (k, v) in &self.metadata_map {
+            eprintln!("      [{:3}] '{}'", v, k);
         }
 
         // max 254 entries + empty (index 0) => len < 255
@@ -301,6 +310,7 @@ impl OArchive {
         }
 
         let pos = self.stream.pos();
+        eprintln!("  [write_data] pos=0x{:04x} ({}) len={}", pos, pos, data.len());
         self.stream.write_u64(data.len() as u64)?;
         self.stream.write_bytes(data)?;
         Ok(pos)
@@ -323,6 +333,7 @@ impl OArchive {
         }
 
         let pos = self.stream.pos();
+        eprintln!("  [write_keyed_data] pos=0x{:04x} ({}) len={}", pos, pos, encoded.len());
         let total_size = DATA_KEY_SIZE + encoded.len();
         self.stream.write_u64(total_size as u64)?;
 
@@ -361,6 +372,7 @@ impl OArchive {
         }
 
         let pos = self.stream.pos();
+        eprintln!("  [write_group] pos=0x{:04x} ({}) children={:?}", pos, pos, children);
         self.stream.write_u64(children.len() as u64)?;
         for &child in children {
             self.stream.write_u64(child)?;
@@ -778,10 +790,17 @@ impl OArchive {
                 let mut children = Vec::new();
 
                 for sample in samples {
-                    let encoded = encode_sample_for_pod(sample, prop.data_type.pod);
-                    let seed = pod_seed(prop.data_type.pod);
-                    let content_key = ArraySampleContentKey::from_data(&encoded, seed);
-                    let digest = content_key.digest();
+                    let encoded = encode_sample_for_pod(&sample.data, prop.data_type.pod);
+                    
+                    // Use pre-computed digest if available, otherwise compute
+                    let digest: [u8; 16] = if let Some(d) = &sample.digest {
+                        *d
+                    } else {
+                        let seed = pod_seed(prop.data_type.pod);
+                        let content_key = ArraySampleContentKey::from_data(&encoded, seed);
+                        *content_key.digest()
+                    };
+                    
                     let d0 = u64::from_le_bytes(digest[0..8].try_into().unwrap());
                     let d1 = u64::from_le_bytes(digest[8..16].try_into().unwrap());
 
@@ -790,7 +809,12 @@ impl OArchive {
                         Some((h0, h1)) => Some(SpookyHash::short_end_mix(h0, h1, d0, d1)),
                     };
 
-                    let pos = self.write_keyed_data(&encoded, prop.data_type.pod)?;
+                    // Use write_keyed_data_with_key for pre-computed digests
+                    let pos = if sample.digest.is_some() {
+                        self.write_keyed_data_with_key(&encoded, &digest)?
+                    } else {
+                        self.write_keyed_data(&encoded, prop.data_type.pod)?
+                    };
                     children.push(make_data_offset(pos));
                 }
                 Ok((children, sample_hash))
@@ -801,30 +825,42 @@ impl OArchive {
                 let mut sample_hash: Option<(u64, u64)> = None;
                 let mut children = Vec::new();
 
-                for (data, dims) in samples {
-                    let encoded = encode_sample_for_pod(data, prop.data_type.pod);
-                    let seed = pod_seed(prop.data_type.pod);
-                    let content_key = ArraySampleContentKey::from_data(&encoded, seed);
-                    let digest = content_key.digest();
+                for sample in samples {
+                    let encoded = encode_sample_for_pod(&sample.data, prop.data_type.pod);
+                    
+                    // Use pre-computed digest if available, otherwise compute
+                    let digest: [u8; 16] = if let Some(d) = &sample.digest {
+                        *d
+                    } else {
+                        let seed = pod_seed(prop.data_type.pod);
+                        let content_key = ArraySampleContentKey::from_data(&encoded, seed);
+                        *content_key.digest()
+                    };
+                    
                     let mut d = (
                         u64::from_le_bytes(digest[0..8].try_into().unwrap()),
                         u64::from_le_bytes(digest[8..16].try_into().unwrap()),
                     );
-                    hash_dimensions(dims, &mut d);
+                    hash_dimensions(&sample.dims, &mut d);
 
                     sample_hash = match sample_hash {
                         None => Some(d),
                         Some((h0, h1)) => Some(SpookyHash::short_end_mix(h0, h1, d.0, d.1)),
                     };
 
-                    let data_pos = self.write_keyed_data(&encoded, prop.data_type.pod)?;
+                    // Use write_keyed_data_with_key for pre-computed digests
+                    let data_pos = if sample.digest.is_some() {
+                        self.write_keyed_data_with_key(&encoded, &digest)?
+                    } else {
+                        self.write_keyed_data(&encoded, prop.data_type.pod)?
+                    };
 
-                    let dims_offset = if dims.len() <= 1
+                    let dims_offset = if sample.dims.len() <= 1
                         && !matches!(prop.data_type.pod, PlainOldDataType::String | PlainOldDataType::Wstring)
                     {
                         EMPTY_DATA
                     } else {
-                        let dims_data: Vec<u8> = dims
+                        let dims_data: Vec<u8> = sample.dims
                             .iter()
                             .flat_map(|dim| (*dim as u64).to_le_bytes())
                             .collect();
@@ -899,6 +935,8 @@ impl OArchive {
             buf.extend_from_slice(name_bytes);
 
             let meta_idx = self.add_indexed_metadata(&child.meta_data);
+            eprintln!("  [serialize_object_headers] child='{}' meta_idx={} meta='{}'", 
+                      child.name, meta_idx, child.meta_data.serialize());
             write_with_hint(&mut buf, meta_idx as u32, 0);
 
             if meta_idx == 0xff {
@@ -1000,8 +1038,8 @@ impl OArchive {
                     if samples.is_empty() {
                         true
                     } else {
-                        let first = samples[0].1.iter().product::<usize>();
-                        samples.iter().all(|(_, dims)| dims.iter().product::<usize>() == first)
+                        let first = samples[0].dims.iter().product::<usize>();
+                        samples.iter().all(|s| s.dims.iter().product::<usize>() == first)
                     }
                 }
                 _ => true,
@@ -1024,6 +1062,9 @@ impl OArchive {
 
         let meta_idx = self.add_indexed_metadata(&prop.meta_data);
         info |= (meta_idx as u32) << 20;
+        
+        eprintln!("  [build_property_info] prop='{}' info=0x{:08x} meta_idx={} (in bits 20-27: {})",
+                  prop.name, info, meta_idx, (info >> 20) & 0xff);
 
         info
     }

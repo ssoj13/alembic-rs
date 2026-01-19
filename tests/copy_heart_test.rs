@@ -195,6 +195,7 @@ fn convert_object(
                         );
                         out_sample.velocities = sample.velocities.clone();
                         out_sample.normals = sample.normals.clone();
+                        out_sample.normals_is_simple_array = sample.normals_is_simple_array;
                         out_sample.uvs = sample.uvs.clone();
                         omesh.add_sample(&out_sample);
                     }
@@ -235,7 +236,12 @@ fn test_copy_heart_binary_parity() {
         // Copy archive metadata
         archive.set_archive_metadata(original.getArchiveMetaData().clone());
         archive.set_library_version(original.getArchiveVersion());
-        archive.set_indexed_metadata(original.getIndexedMetaData());
+        let indexed_meta = original.getIndexedMetaData();
+        println!("\n=== INDEXED METADATA ===");
+        for (i, md) in indexed_meta.iter().enumerate() {
+            println!("  [{}] '{}'", i, md.serialize());
+        }
+        archive.set_indexed_metadata(&indexed_meta);
         
         let ts_map = copy_time_samplings(&original, &mut archive);
         

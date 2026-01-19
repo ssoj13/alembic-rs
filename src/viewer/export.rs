@@ -274,7 +274,7 @@ fn export_points(obj: &IObject, stats: &mut ExportStats) -> Option<OObject> {
             if let Ok(sample) = points.getSample(i) {
                 let mut out_sample = OPointsSample::new(
                     sample.positions.clone(),
-                    sample.ids.clone(),
+                    sample.ids.iter().map(|&id| id as i64).collect(),
                 );
                 if !sample.velocities.is_empty() {
                     out_sample.velocities = Some(sample.velocities.clone());
