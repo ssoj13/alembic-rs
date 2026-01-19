@@ -331,11 +331,62 @@ impl Renderer {
         }
     }
 
+    /// SSAO blur pass that smooths the occlusion mask before lighting.
+    pub fn render_ssao_blur_pass(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        input_view: &wgpu::TextureView,
+        output_view: &wgpu::TextureView,
+    ) {
+
+        self.ssao_blur_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ssao_blur_bind_group"),
+            layout: &self.postfx.ssao_blur_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(input_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.postfx.ssao_blur_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.ssao_blur_params_buffer.as_entire_binding(),
+                },
+            ],
+        }));
+
+        let mut blur_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("ssao_blur_pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: output_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        if let Some(blur_group) = &self.ssao_blur_bind_group {
+            blur_pass.set_pipeline(&self.postfx.ssao_blur_pipeline);
+            blur_pass.set_bind_group(0, blur_group, &[]);
+            blur_pass.draw(0..3, 0..1);
+        }
+    }
+
     /// Lighting pass that shades from the G-Buffer into the final color target.
     pub fn render_lighting_pass(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
+        occlusion_view: &wgpu::TextureView,
     ) {
         let gbuffer = match &self.gbuffer {
             Some(gbuffer) => gbuffer,
@@ -356,7 +407,7 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&gbuffer.occlusion_view),
+                    resource: wgpu::BindingResource::TextureView(occlusion_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,

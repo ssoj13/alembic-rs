@@ -43,3 +43,11 @@ pub struct LightingParams {
     /// Background color used when no geometry is present in G-Buffer.
     pub background: [f32; 4],
 }
+
+/// Parameters for separable SSAO blur.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct SsaoBlurParams {
+    pub direction: [f32; 2],
+    pub _pad: [f32; 2],
+}

@@ -64,7 +64,7 @@ fn fs_ssao(in: VsOut) -> @location(0) vec4<f32> {
     let p = reconstruct_view_pos(uv, depth);
 
     // Simple SSAO: sample 4 taps around pixel in screen space.
-    let radius = 0.004;
+    let radius = 0.002 * clamp(abs(p.z), 0.5, 10.0);
     var occlusion = 0.0;
     let offsets = array<vec2<f32>, 4>(
         vec2<f32>(radius, 0.0),
@@ -86,6 +86,51 @@ fn fs_ssao(in: VsOut) -> @location(0) vec4<f32> {
     let ndotv = max(n.z, 0.0);
     let ao = 1.0 - occlusion * params.strength.x * (1.0 - ndotv);
     return vec4<f32>(ao, ao, ao, 1.0);
+}
+"#;
+
+pub const SSAO_BLUR_SHADER: &str = r#"
+struct VsOut {
+    @builtin(position) pos: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_fullscreen(@builtin(vertex_index) index: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0)
+    );
+    let pos = positions[index];
+    var out: VsOut;
+    out.pos = vec4<f32>(pos, 0.0, 1.0);
+    out.uv = vec2<f32>(pos.x * 0.5 + 0.5, 1.0 - (pos.y * 0.5 + 0.5));
+    return out;
+}
+
+@group(0) @binding(0) var occlusion_tex: texture_2d<f32>;
+@group(0) @binding(1) var samp: sampler;
+
+struct BlurParams {
+    direction: vec2<f32>,
+    _pad: vec2<f32>,
+}
+@group(0) @binding(2) var<uniform> blur: BlurParams;
+
+@fragment
+fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
+    let uv = in.uv;
+    let dims = vec2<f32>(textureDimensions(occlusion_tex));
+    let texel = blur.direction / dims;
+
+    let c0 = textureSample(occlusion_tex, samp, uv).r * 0.4;
+    let c1 = textureSample(occlusion_tex, samp, uv + texel).r * 0.15;
+    let c2 = textureSample(occlusion_tex, samp, uv - texel).r * 0.15;
+    let c3 = textureSample(occlusion_tex, samp, uv + texel * 2.0).r * 0.15;
+    let c4 = textureSample(occlusion_tex, samp, uv - texel * 2.0).r * 0.15;
+    let blurred = c0 + c1 + c2 + c3 + c4;
+    return vec4<f32>(blurred, blurred, blurred, 1.0);
 }
 "#;
 
@@ -174,38 +219,5 @@ fn fs_lighting(in: VsOut) -> @location(0) vec4<f32> {
     let spec = pow(max(dot(n, half_key), 0.0), spec_exp) * spec_color * key_ndotl;
 
     return vec4<f32>((diffuse + spec) * occlusion, 1.0);
-}
-"#;
-
-pub const COMPOSITE_SHADER: &str = r#"
-struct VsOut {
-    @builtin(position) pos: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-}
-
-@vertex
-fn vs_fullscreen(@builtin(vertex_index) index: u32) -> VsOut {
-    var positions = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>(3.0, -1.0),
-        vec2<f32>(-1.0, 3.0)
-    );
-    let pos = positions[index];
-    var out: VsOut;
-    out.pos = vec4<f32>(pos, 0.0, 1.0);
-    out.uv = vec2<f32>(pos.x * 0.5 + 0.5, 1.0 - (pos.y * 0.5 + 0.5));
-    return out;
-}
-
-@group(0) @binding(0) var color_tex: texture_2d<f32>;
-@group(0) @binding(1) var occlusion_tex: texture_2d<f32>;
-@group(0) @binding(2) var samp: sampler;
-
-@fragment
-fn fs_composite(in: VsOut) -> @location(0) vec4<f32> {
-    let uv = in.uv;
-    let color = textureSample(color_tex, samp, uv);
-    let occlusion = textureSample(occlusion_tex, samp, uv).r;
-    return vec4<f32>(color.rgb * occlusion, color.a);
 }
 "#;

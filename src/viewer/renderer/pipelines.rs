@@ -3,18 +3,10 @@
 use standard_surface::{BindGroupLayouts, PipelineConfig};
 
 pub struct Pipelines {
-    pub pipeline: wgpu::RenderPipeline,
-    pub pipeline_double_sided: wgpu::RenderPipeline,
     pub depth_prepass_pipeline: wgpu::RenderPipeline,
     pub depth_prepass_pipeline_double_sided: wgpu::RenderPipeline,
-    pub pipeline_after_prepass: wgpu::RenderPipeline,
-    pub pipeline_after_prepass_double_sided: wgpu::RenderPipeline,
     pub wireframe_pipeline: wgpu::RenderPipeline,
     pub wireframe_pipeline_double_sided: wgpu::RenderPipeline,
-    pub pipeline_xray: wgpu::RenderPipeline,
-    pub pipeline_xray_double_sided: wgpu::RenderPipeline,
-    pub wireframe_pipeline_xray: wgpu::RenderPipeline,
-    pub wireframe_pipeline_xray_double_sided: wgpu::RenderPipeline,
     pub gbuffer_pipeline: wgpu::RenderPipeline,
     pub gbuffer_pipeline_double_sided: wgpu::RenderPipeline,
     pub line_pipeline: wgpu::RenderPipeline,
@@ -37,8 +29,6 @@ pub fn create_pipelines(
         wireframe: false,
         ..Default::default()
     };
-    let pipeline = standard_surface::create_pipeline(device, layouts, &config);
-
     let wireframe_config = PipelineConfig {
         label: Some("wireframe_pipeline"),
         wireframe: true,
@@ -51,8 +41,6 @@ pub fn create_pipelines(
         cull_mode: None,
         ..config.clone()
     };
-    let pipeline_double_sided = standard_surface::create_pipeline(device, layouts, &double_sided_config);
-
     let depth_prepass_config = PipelineConfig {
         label: Some("depth_prepass_pipeline"),
         depth_only: true,
@@ -71,24 +59,6 @@ pub fn create_pipelines(
     let depth_prepass_pipeline_double_sided =
         standard_surface::create_pipeline(device, layouts, &depth_prepass_double_sided_config);
 
-    let after_prepass_config = PipelineConfig {
-        label: Some("opaque_after_prepass_pipeline"),
-        depth_write: false,
-        depth_equal: true,
-        ..config.clone()
-    };
-    let pipeline_after_prepass = standard_surface::create_pipeline(device, layouts, &after_prepass_config);
-
-    let after_prepass_double_sided_config = PipelineConfig {
-        label: Some("opaque_after_prepass_double_sided"),
-        cull_mode: None,
-        depth_write: false,
-        depth_equal: true,
-        ..config.clone()
-    };
-    let pipeline_after_prepass_double_sided =
-        standard_surface::create_pipeline(device, layouts, &after_prepass_double_sided_config);
-
     let wireframe_double_sided_config = PipelineConfig {
         label: Some("wireframe_pipeline_double_sided"),
         wireframe: true,
@@ -96,48 +66,6 @@ pub fn create_pipelines(
         ..double_sided_config.clone()
     };
     let wireframe_pipeline_double_sided = standard_surface::create_pipeline(device, layouts, &wireframe_double_sided_config);
-
-    let xray_config = PipelineConfig {
-        label: Some("xray_pipeline"),
-        blend: true,  // X-Ray uses alpha blending
-        depth_write: false,
-        depth_compare: Some(wgpu::CompareFunction::Always),
-        ..config.clone()
-    };
-    let pipeline_xray = standard_surface::create_pipeline(device, layouts, &xray_config);
-
-    let xray_double_sided_config = PipelineConfig {
-        label: Some("xray_pipeline_double_sided"),
-        blend: true,
-        depth_write: false,
-        depth_compare: Some(wgpu::CompareFunction::Always),
-        cull_mode: None,
-        ..config.clone()
-    };
-    let pipeline_xray_double_sided =
-        standard_surface::create_pipeline(device, layouts, &xray_double_sided_config);
-
-    let wireframe_xray_config = PipelineConfig {
-        label: Some("wireframe_xray_pipeline"),
-        wireframe: true,
-        blend: true,
-        depth_write: false,
-        depth_compare: Some(wgpu::CompareFunction::Always),
-        ..config.clone()
-    };
-    let wireframe_pipeline_xray = standard_surface::create_pipeline(device, layouts, &wireframe_xray_config);
-
-    let wireframe_xray_double_sided_config = PipelineConfig {
-        label: Some("wireframe_xray_pipeline_double_sided"),
-        wireframe: true,
-        blend: true,
-        depth_write: false,
-        depth_compare: Some(wgpu::CompareFunction::Always),
-        cull_mode: None,
-        ..config.clone()
-    };
-    let wireframe_pipeline_xray_double_sided =
-        standard_surface::create_pipeline(device, layouts, &wireframe_xray_double_sided_config);
 
     let gbuffer_formats = vec![
         wgpu::TextureFormat::Rgba8Unorm,
@@ -183,18 +111,10 @@ pub fn create_pipelines(
     let shadow_pipeline = standard_surface::create_shadow_pipeline(device, layouts);
 
     Pipelines {
-        pipeline,
-        pipeline_double_sided,
         depth_prepass_pipeline,
         depth_prepass_pipeline_double_sided,
-        pipeline_after_prepass,
-        pipeline_after_prepass_double_sided,
         wireframe_pipeline,
         wireframe_pipeline_double_sided,
-        pipeline_xray,
-        pipeline_xray_double_sided,
-        wireframe_pipeline_xray,
-        wireframe_pipeline_xray_double_sided,
         gbuffer_pipeline,
         gbuffer_pipeline_double_sided,
         line_pipeline,

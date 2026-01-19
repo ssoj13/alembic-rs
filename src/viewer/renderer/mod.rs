@@ -11,7 +11,7 @@ mod postfx;
 mod passes;
 mod pipelines;
 
-use resources::{DepthTexture, GBuffer, LightingParams, SsaoParams, SsaoTargets};
+use resources::{DepthTexture, GBuffer, LightingParams, SsaoBlurParams, SsaoParams, SsaoTargets};
 use postfx::{create_postfx_pipelines, PostFxPipelines};
 use pipelines::{create_pipelines, Pipelines};
 
@@ -38,9 +38,10 @@ pub struct Renderer {
     pipelines: Pipelines,
     postfx: PostFxPipelines,
     ssao_bind_group: Option<wgpu::BindGroup>,
-    composite_bind_group: Option<wgpu::BindGroup>,
+    ssao_blur_bind_group: Option<wgpu::BindGroup>,
     lighting_bind_group: Option<wgpu::BindGroup>,
     ssao_params_buffer: wgpu::Buffer,
+    ssao_blur_params_buffer: wgpu::Buffer,
     lighting_params_buffer: wgpu::Buffer,
     skybox_pipeline: wgpu::RenderPipeline,
     layouts: BindGroupLayouts,
@@ -251,6 +252,15 @@ impl Renderer {
             contents: bytemuck::bytes_of(&ssao_params),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
+        let ssao_blur_params = SsaoBlurParams {
+            direction: [1.0, 0.0],
+            _pad: [0.0, 0.0],
+        };
+        let ssao_blur_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("ssao_blur_params_buffer"),
+            contents: bytemuck::bytes_of(&ssao_blur_params),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
         let lighting_params = LightingParams {
             background: self::DEFAULT_BACKGROUND_COLOR,
         };
@@ -287,6 +297,7 @@ impl Renderer {
         let camera_uniform = CameraUniform {
             view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             view: Mat4::IDENTITY.to_cols_array_2d(),
+            inv_view_proj: Mat4::IDENTITY.to_cols_array_2d(),
             position: Vec3::new(0.0, 0.0, 5.0),
             xray_alpha: 1.0,
             flat_shading: 0.0,
@@ -442,9 +453,10 @@ impl Renderer {
             pipelines,
             postfx,
             ssao_bind_group: None,
-            composite_bind_group: None,
+            ssao_blur_bind_group: None,
             lighting_bind_group: None,
             ssao_params_buffer,
+            ssao_blur_params_buffer,
             lighting_params_buffer,
             skybox_pipeline,
             layouts,
@@ -1316,9 +1328,38 @@ impl Renderer {
         if use_gbuffer {
             self.ensure_ssao_targets(width, height, self.output_format);
             self.render_ssao_pass(&mut encoder, &depth_view, self.use_ssao);
-        }
+            if self.use_ssao {
+                let (gbuffer_occlusion_view, ssao_temp_view) = match (&self.gbuffer, &self.ssao_targets) {
+                    (Some(gbuffer), Some(targets)) => (
+                        gbuffer.occlusion_view.clone(),
+                        targets.color_view.clone(),
+                    ),
+                    _ => return,
+                };
 
-        if use_gbuffer {
+                let blur_params = SsaoBlurParams {
+                    direction: [1.0, 0.0],
+                    _pad: [0.0, 0.0],
+                };
+                self.queue.write_buffer(
+                    &self.ssao_blur_params_buffer,
+                    0,
+                    bytemuck::bytes_of(&blur_params),
+                );
+                self.render_ssao_blur_pass(&mut encoder, &gbuffer_occlusion_view, &ssao_temp_view);
+
+                let blur_params = SsaoBlurParams {
+                    direction: [0.0, 1.0],
+                    _pad: [0.0, 0.0],
+                };
+                self.queue.write_buffer(
+                    &self.ssao_blur_params_buffer,
+                    0,
+                    bytemuck::bytes_of(&blur_params),
+                );
+                self.render_ssao_blur_pass(&mut encoder, &ssao_temp_view, &gbuffer_occlusion_view);
+            }
+
             let lighting_params = LightingParams {
                 background: self.background_color,
             };
@@ -1327,7 +1368,11 @@ impl Renderer {
                 0,
                 bytemuck::bytes_of(&lighting_params),
             );
-            self.render_lighting_pass(&mut encoder, color_target_view_ref);
+            let occlusion_view = match &self.gbuffer {
+                Some(gbuffer) => gbuffer.occlusion_view.clone(),
+                None => return,
+            };
+            self.render_lighting_pass(&mut encoder, color_target_view_ref, &occlusion_view);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
