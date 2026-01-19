@@ -11,7 +11,7 @@ mod postfx;
 mod passes;
 mod pipelines;
 
-use resources::{DepthTexture, GBuffer, SsaoParams, SsaoTargets};
+use resources::{DepthTexture, GBuffer, LightingParams, SsaoParams, SsaoTargets};
 use postfx::{create_postfx_pipelines, PostFxPipelines};
 use pipelines::{create_pipelines, Pipelines};
 
@@ -26,6 +26,8 @@ use super::smooth_normals::SmoothNormalData;
 /// Shadow map resolution
 const SHADOW_MAP_SIZE: u32 = 2048;
 
+const DEFAULT_BACKGROUND_COLOR: [f32; 4] = [0.1, 0.1, 0.12, 1.0];
+
 /// Main renderer state
 pub struct Renderer {
     pub device: Arc<wgpu::Device>,
@@ -37,7 +39,9 @@ pub struct Renderer {
     postfx: PostFxPipelines,
     ssao_bind_group: Option<wgpu::BindGroup>,
     composite_bind_group: Option<wgpu::BindGroup>,
+    lighting_bind_group: Option<wgpu::BindGroup>,
     ssao_params_buffer: wgpu::Buffer,
+    lighting_params_buffer: wgpu::Buffer,
     skybox_pipeline: wgpu::RenderPipeline,
     layouts: BindGroupLayouts,
     
@@ -247,6 +251,14 @@ impl Renderer {
             contents: bytemuck::bytes_of(&ssao_params),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
+        let lighting_params = LightingParams {
+            background: self::DEFAULT_BACKGROUND_COLOR,
+        };
+        let lighting_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("lighting_params_buffer"),
+            contents: bytemuck::bytes_of(&lighting_params),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
         // Skybox pipeline and resources
         let skybox_camera_layout = standard_surface::create_skybox_camera_layout(&device);
@@ -431,7 +443,9 @@ impl Renderer {
             postfx,
             ssao_bind_group: None,
             composite_bind_group: None,
+            lighting_bind_group: None,
             ssao_params_buffer,
+            lighting_params_buffer,
             skybox_pipeline,
             layouts,
             skybox_camera_layout,
@@ -474,7 +488,7 @@ impl Renderer {
             xray_alpha: 1.0,
             double_sided: true,
             auto_normals: true,
-            background_color: [0.1, 0.1, 0.12, 1.0],
+            background_color: DEFAULT_BACKGROUND_COLOR,
             scene_center: Vec3::ZERO,
             scene_radius: 10.0,
             camera_position: Vec3::ZERO,
@@ -483,9 +497,11 @@ impl Renderer {
 
     /// Update camera uniform
     pub fn update_camera(&mut self, view_proj: Mat4, view: Mat4, position: Vec3) {
+        let inv_view_proj = view_proj.inverse();
         let uniform = CameraUniform {
             view_proj: view_proj.to_cols_array_2d(),
             view: view.to_cols_array_2d(),
+            inv_view_proj: inv_view_proj.to_cols_array_2d(),
             position,
             xray_alpha: self.xray_alpha,
             flat_shading: if self.flat_shading { 1.0 } else { 0.0 },
@@ -1240,19 +1256,16 @@ impl Renderer {
     pub fn render(&mut self, view: &wgpu::TextureView, width: u32, height: u32, camera_distance: f32) {
         self.ensure_depth_texture(width, height);
         let use_gbuffer = true;
-        self.ensure_gbuffer(width, height);
-        self.ensure_ssao_targets(width, height, self.output_format);
+        if use_gbuffer {
+            self.ensure_gbuffer(width, height);
+        }
         self.update_grid(camera_distance);
 
         let depth_view = match &self.depth_texture {
             Some(dt) => dt.view.clone(),
             None => return,
         };
-        let color_target_view = self
-            .ssao_targets
-            .as_ref()
-            .map(|targets| targets.color_view.clone());
-        let color_target_view_ref = color_target_view.as_ref().unwrap_or(view);
+        let color_target_view_ref = view;
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("render_encoder"),
@@ -1260,9 +1273,34 @@ impl Renderer {
 
         self.render_shadow_pass(&mut encoder);
 
-        // Opaque render pass
-        let xray_active = self.xray_alpha < 0.999;
-        let use_depth_prepass = self.use_depth_prepass && !self.show_wireframe && !xray_active;
+        // Opaque render pass (Stage 1: G-Buffer + lighting)
+        let xray_active = false;
+        if self.show_wireframe {
+            let mut meshes: Vec<&SceneMesh> = self.meshes.values().collect();
+            if let Some(floor) = &self.floor_mesh {
+                meshes.push(floor);
+            }
+            self.render_depth_prepass(&mut encoder, &depth_view, &meshes, true);
+            let opaque_depth_load = wgpu::LoadOp::Load;
+            let wire_pipeline = if self.double_sided {
+                &self.pipelines.wireframe_pipeline_double_sided
+            } else {
+                &self.pipelines.wireframe_pipeline
+            };
+            self.render_opaque_pass(
+                &mut encoder,
+                &depth_view,
+                color_target_view_ref,
+                &meshes,
+                wire_pipeline,
+                None,
+                opaque_depth_load,
+            );
+            self.queue.submit(std::iter::once(encoder.finish()));
+            return;
+        }
+
+        let use_depth_prepass = self.use_depth_prepass && !xray_active;
         {
             let mut meshes: Vec<&SceneMesh> = self.meshes.values().collect();
             if let Some(floor) = &self.floor_mesh {
@@ -1270,65 +1308,27 @@ impl Renderer {
             }
 
             self.render_depth_prepass(&mut encoder, &depth_view, &meshes, use_depth_prepass);
-            self.render_gbuffer_pass(&mut encoder, &depth_view, &meshes, use_depth_prepass);
+            if use_gbuffer {
+                self.render_gbuffer_pass(&mut encoder, &depth_view, &meshes, use_depth_prepass);
+            }
         }
 
-        self.render_ssao_pass(&mut encoder, &depth_view, self.use_ssao);
-
-        let mut meshes: Vec<&SceneMesh> = self.meshes.values().collect();
-        if let Some(floor) = &self.floor_mesh {
-            meshes.push(floor);
-        }
-        if xray_active {
-            let cam = self.camera_position;
-            meshes.sort_by(|a, b| {
-                let center_a = (a.bounds.0 + a.bounds.1) * 0.5;
-                let center_b = (b.bounds.0 + b.bounds.1) * 0.5;
-                let da = (center_a - cam).length_squared();
-                let db = (center_b - cam).length_squared();
-                db.partial_cmp(&da).unwrap_or(std::cmp::Ordering::Equal)
-            });
+        if use_gbuffer {
+            self.ensure_ssao_targets(width, height, self.output_format);
+            self.render_ssao_pass(&mut encoder, &depth_view, self.use_ssao);
         }
 
-        let opaque_pipeline = if use_depth_prepass {
-            match self.double_sided {
-                false => &self.pipelines.pipeline_after_prepass,
-                true => &self.pipelines.pipeline_after_prepass_double_sided,
-            }
-        } else if xray_active {
-            match (self.show_wireframe, self.double_sided) {
-                (false, false) => &self.pipelines.pipeline_xray,
-                (false, true) => &self.pipelines.pipeline_xray_double_sided,
-                (true, false) => &self.pipelines.wireframe_pipeline_xray,
-                (true, true) => &self.pipelines.wireframe_pipeline_xray_double_sided,
-            }
-        } else {
-            match (self.show_wireframe, self.double_sided) {
-                (false, false) => &self.pipelines.pipeline,
-                (false, true) => &self.pipelines.pipeline_double_sided,
-                (true, false) => &self.pipelines.wireframe_pipeline,
-                (true, true) => &self.pipelines.wireframe_pipeline_double_sided,
-            }
-        };
-
-        let opaque_depth_load = if use_depth_prepass || use_gbuffer {
-            wgpu::LoadOp::Load
-        } else {
-            wgpu::LoadOp::Clear(1.0)
-        };
-
-        let _ = xray_active; // xray uses blend in the main pipeline; ignore depth override in eevee-lite
-        let xray_pipeline = None;
-        self.render_opaque_pass(
-            &mut encoder,
-            &depth_view,
-            color_target_view_ref,
-            &meshes,
-            opaque_pipeline,
-            xray_pipeline,
-            opaque_depth_load,
-        );
-        self.render_composite_pass(&mut encoder, view);
+        if use_gbuffer {
+            let lighting_params = LightingParams {
+                background: self.background_color,
+            };
+            self.queue.write_buffer(
+                &self.lighting_params_buffer,
+                0,
+                bytemuck::bytes_of(&lighting_params),
+            );
+            self.render_lighting_pass(&mut encoder, color_target_view_ref);
+        }
 
         self.queue.submit(std::iter::once(encoder.finish()));
     }

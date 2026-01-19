@@ -35,3 +35,11 @@ pub struct SsaoTargets {
 pub struct SsaoParams {
     pub strength: [f32; 4],
 }
+
+/// Lighting parameters for the fullscreen shading pass.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct LightingParams {
+    /// Background color used when no geometry is present in G-Buffer.
+    pub background: [f32; 4],
+}

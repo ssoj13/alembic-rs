@@ -1683,11 +1683,16 @@ impl eframe::App for ViewerApp {
                 let radius = bounds.radius().max(0.1);
                 let cam_pos = self.viewport.camera.position();
                 let dist = (cam_pos - center).length();
-                let margin = radius * 2.0;
-                let near = (dist - margin).max(0.01);
-                let far = (dist + margin).max(near + 1.0);
-                self.viewport.camera.near = near;
-                self.viewport.camera.far = far;
+                let margin = radius * 3.0;
+                let min_near = (radius * 0.01).max(0.1);
+                let target_near = (dist - margin).max(min_near);
+                let target_far = (dist + margin).max(target_near + 10.0);
+                let dt = ctx.input(|i| i.stable_dt);
+                let t = (dt * 6.0).clamp(0.0, 1.0);
+                self.viewport.camera.near =
+                    self.viewport.camera.near + (target_near - self.viewport.camera.near) * t;
+                self.viewport.camera.far =
+                    self.viewport.camera.far + (target_far - self.viewport.camera.far) * t;
             }
         }
         

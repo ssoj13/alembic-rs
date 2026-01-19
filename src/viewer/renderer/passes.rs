@@ -129,7 +129,7 @@ impl Renderer {
                     view: &gbuffer.occlusion_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
@@ -161,6 +161,7 @@ impl Renderer {
         }
     }
 
+    /// SSAO pass that writes occlusion into the G-Buffer mask channel.
     pub fn render_ssao_pass(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -202,6 +203,10 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: self.ssao_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.camera_buffer.as_entire_binding(),
                 },
             ],
         }));
@@ -326,38 +331,50 @@ impl Renderer {
         }
     }
 
-    pub fn render_composite_pass(
+    /// Lighting pass that shades from the G-Buffer into the final color target.
+    pub fn render_lighting_pass(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
     ) {
-
-        let (gbuffer, targets) = match (&self.gbuffer, &self.ssao_targets) {
-            (Some(gbuffer), Some(targets)) => (gbuffer, targets),
-            _ => return,
+        let gbuffer = match &self.gbuffer {
+            Some(gbuffer) => gbuffer,
+            None => return,
         };
 
-        self.composite_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("composite_bind_group"),
-            layout: &self.postfx.composite_bind_group_layout,
+        self.lighting_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("lighting_bind_group"),
+            layout: &self.postfx.lighting_bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&targets.color_view),
+                    resource: wgpu::BindingResource::TextureView(&gbuffer.albedo_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&gbuffer.occlusion_view),
+                    resource: wgpu::BindingResource::TextureView(&gbuffer.normals_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.postfx.composite_sampler),
+                    resource: wgpu::BindingResource::TextureView(&gbuffer.occlusion_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&self.postfx.lighting_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.light_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.lighting_params_buffer.as_entire_binding(),
                 },
             ],
         }));
 
-        let mut composite_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("composite_pass"),
+        let mut lighting_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("lighting_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
                 resolve_target: None,
@@ -372,10 +389,10 @@ impl Renderer {
             occlusion_query_set: None,
         });
 
-        if let Some(composite_bind_group) = &self.composite_bind_group {
-            composite_pass.set_pipeline(&self.postfx.composite_pipeline);
-            composite_pass.set_bind_group(0, composite_bind_group, &[]);
-            composite_pass.draw(0..3, 0..1);
+        if let Some(lighting_bind_group) = &self.lighting_bind_group {
+            lighting_pass.set_pipeline(&self.postfx.lighting_pipeline);
+            lighting_pass.set_bind_group(0, lighting_bind_group, &[]);
+            lighting_pass.draw(0..3, 0..1);
         }
     }
 }

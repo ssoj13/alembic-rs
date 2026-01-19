@@ -740,8 +740,8 @@ mod tests {
 
     #[test]
     fn test_camera_uniform_size() {
-        // 2 mat4 + vec4(position+xray) + vec4(flat+auto+pad) = 128 + 16 + 16 = 160 bytes
-        assert_eq!(std::mem::size_of::<CameraUniform>(), 160);
+        // 3 mat4 + vec4(position+xray) + vec4(flat+auto+pad) = 192 + 16 + 16 = 224 bytes
+        assert_eq!(std::mem::size_of::<CameraUniform>(), 224);
     }
 
     #[test]

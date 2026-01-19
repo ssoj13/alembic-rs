@@ -101,6 +101,7 @@ pub fn create_pipelines(
         label: Some("xray_pipeline"),
         blend: true,  // X-Ray uses alpha blending
         depth_write: false,
+        depth_compare: Some(wgpu::CompareFunction::Always),
         ..config.clone()
     };
     let pipeline_xray = standard_surface::create_pipeline(device, layouts, &xray_config);
@@ -109,6 +110,7 @@ pub fn create_pipelines(
         label: Some("xray_pipeline_double_sided"),
         blend: true,
         depth_write: false,
+        depth_compare: Some(wgpu::CompareFunction::Always),
         cull_mode: None,
         ..config.clone()
     };
@@ -120,6 +122,7 @@ pub fn create_pipelines(
         wireframe: true,
         blend: true,
         depth_write: false,
+        depth_compare: Some(wgpu::CompareFunction::Always),
         ..config.clone()
     };
     let wireframe_pipeline_xray = standard_surface::create_pipeline(device, layouts, &wireframe_xray_config);
@@ -129,6 +132,7 @@ pub fn create_pipelines(
         wireframe: true,
         blend: true,
         depth_write: false,
+        depth_compare: Some(wgpu::CompareFunction::Always),
         cull_mode: None,
         ..config.clone()
     };

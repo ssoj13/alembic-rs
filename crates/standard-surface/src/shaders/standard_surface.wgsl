@@ -20,6 +20,7 @@ const EPSILON: f32 = 1e-6;
 struct Camera {
     view_proj: mat4x4<f32>,
     view: mat4x4<f32>,
+    inv_view_proj: mat4x4<f32>,
     position: vec3<f32>,
     xray_alpha: f32,  // X-Ray mode: 1.0 = normal, 0.5 = transparent
     flat_shading: f32, // 1.0 = flat (face normals), 0.0 = smooth

@@ -156,6 +156,8 @@ pub struct CameraUniform {
     pub view_proj: [[f32; 4]; 4],
     /// View matrix only
     pub view: [[f32; 4]; 4],
+    /// Inverse view-projection (for screen-space reconstruction)
+    pub inv_view_proj: [[f32; 4]; 4],
     /// Camera world position
     pub position: Vec3,
     /// X-Ray mode alpha override (1.0 = normal, 0.5 = x-ray)
