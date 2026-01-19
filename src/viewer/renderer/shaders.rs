@@ -6,6 +6,8 @@ struct VsOut {
     @location(0) uv: vec2<f32>,
 }
 
+const PI: f32 = 3.141592653589793;
+
 @vertex
 fn vs_fullscreen(@builtin(vertex_index) index: u32) -> VsOut {
     var positions = array<vec2<f32>, 3>(
@@ -140,6 +142,8 @@ struct VsOut {
     @location(0) uv: vec2<f32>,
 }
 
+const PI: f32 = 3.141592653589793;
+
 @vertex
 fn vs_fullscreen(@builtin(vertex_index) index: u32) -> VsOut {
     var positions = array<vec2<f32>, 3>(
@@ -177,15 +181,63 @@ struct LightRig {
 
 struct LightingParams {
     background: vec4<f32>,
+    hdr_visible: f32,
+    _pad: vec3<f32>,
 }
 @group(0) @binding(5) var<uniform> params: LightingParams;
+
+struct EnvParams {
+    intensity: f32,
+    rotation: f32,
+    enabled: f32,
+    _pad: f32,
+}
+
+struct Camera {
+    view_proj: mat4x4<f32>,
+    view: mat4x4<f32>,
+    inv_view_proj: mat4x4<f32>,
+    position: vec3<f32>,
+    xray_alpha: f32,
+    flat_shading: f32,
+    auto_normals: f32,
+    _pad2: f32,
+    _pad3: f32,
+}
+
+@group(0) @binding(6) var env_map: texture_2d<f32>;
+@group(0) @binding(7) var env_sampler: sampler;
+@group(0) @binding(8) var<uniform> env: EnvParams;
+@group(0) @binding(9) var<uniform> camera: Camera;
+
+fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
+    let d = normalize(dir);
+    let phi = atan2(-d.z, d.x) + rotation;
+    let theta = acos(clamp(d.y, -1.0, 1.0));
+    let u = (phi + PI) / (2.0 * PI);
+    let v = 1.0 - (theta / PI);
+    return vec2<f32>(u, v);
+}
+
+fn sample_background(uv: vec2<f32>) -> vec4<f32> {
+    if env.enabled < 0.5 || env.intensity <= 0.0 || params.hdr_visible < 0.5 {
+        return params.background;
+    }
+    let ndc = vec4<f32>(uv * 2.0 - vec2<f32>(1.0), 1.0, 1.0);
+    let world = camera.inv_view_proj * ndc;
+    let world_pos = world.xyz / world.w;
+    let dir = normalize(world_pos - camera.position);
+    let env_uv = dir_to_equirect_uv(dir, env.rotation);
+    let color = textureSample(env_map, env_sampler, env_uv).rgb * env.intensity;
+    return vec4<f32>(color, 1.0);
+}
 
 @fragment
 fn fs_lighting(in: VsOut) -> @location(0) vec4<f32> {
     let uv = in.uv;
     let occlusion = textureSample(gbuffer_mask, samp, uv).r;
     if occlusion < 0.5 {
-        return params.background;
+        return sample_background(uv);
     }
 
     let albedo_rgba = textureSample(gbuffer_albedo, samp, uv);

@@ -137,6 +137,7 @@ pub struct SceneMesh {
     pub transform: Mat4,
     pub vertex_hash: u64,  // Quick hash for change detection
     pub bounds: (Vec3, Vec3),  // (min, max) in world space
+    pub opacity: f32,
     #[allow(dead_code)]
     pub name: String,
     // For dynamic smooth normal recalculation
@@ -162,6 +163,23 @@ pub fn compute_vertex_hash(vertices: &[standard_surface::Vertex]) -> u64 {
         last.position[2].to_bits().hash(&mut hasher);
     }
     hasher.finish()
+}
+
+/// Compute average opacity from material params.
+fn params_opacity(params: &StandardSurfaceParams) -> f32 {
+    (params.opacity.x + params.opacity.y + params.opacity.z) / 3.0
+}
+
+/// Compute center point from bounds.
+fn bounds_center(bounds: (Vec3, Vec3)) -> Vec3 {
+    (bounds.0 + bounds.1) * 0.5
+}
+
+/// Compute a back-to-front sort distance for a bounds.
+fn bounds_sort_distance(bounds: (Vec3, Vec3), camera_position: Vec3) -> f32 {
+    let center = bounds_center(bounds);
+    let radius = (bounds.1 - bounds.0).length() * 0.5;
+    (center - camera_position).length() + radius
 }
 
 /// Compute bounding box from vertices in world space
@@ -210,6 +228,7 @@ pub struct SceneCurves {
     #[allow(dead_code)] // kept for potential animation updates
     pub transform: Mat4,
     pub bounds: (Vec3, Vec3),
+    pub opacity: f32,
     #[allow(dead_code)]
     pub name: String,
 }
@@ -225,6 +244,7 @@ pub struct ScenePoints {
     #[allow(dead_code)]
     pub transform: Mat4,
     pub bounds: (Vec3, Vec3),
+    pub opacity: f32,
     #[allow(dead_code)]
     pub name: String,
     /// Per-point widths (radius) for point sprites (not yet used in rendering)
@@ -263,6 +283,9 @@ impl Renderer {
         });
         let lighting_params = LightingParams {
             background: self::DEFAULT_BACKGROUND_COLOR,
+            hdr_visible: 1.0,
+            _pad0: [0.0; 3],
+            _pad1: [0.0; 4],
         };
         let lighting_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("lighting_params_buffer"),
@@ -711,7 +734,7 @@ impl Renderer {
         }
     }
 
-    fn ensure_ssao_targets(&mut self, width: u32, height: u32, format: wgpu::TextureFormat) {
+    fn ensure_ssao_targets(&mut self, width: u32, height: u32) {
         let needs_recreate = match &self.ssao_targets {
             Some(t) => t.size != (width, height),
             None => true,
@@ -728,7 +751,7 @@ impl Renderer {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format,
+                format: wgpu::TextureFormat::R8Unorm,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats: &[],
             });
@@ -862,6 +885,7 @@ impl Renderer {
 
         // Calculate bounds from vertices (in world space)
         let bounds = compute_mesh_bounds(vertices, transform);
+        let opacity = params_opacity(params);
         
         self.meshes.insert(name.clone(), SceneMesh {
             mesh,
@@ -871,6 +895,7 @@ impl Renderer {
             transform,
             vertex_hash: compute_vertex_hash(vertices),
             bounds,
+            opacity,
             name,
             smooth_data,
             base_vertices: Some(vertices.to_vec()),
@@ -918,6 +943,7 @@ impl Renderer {
         
         // Calculate bounds
         let bounds = compute_mesh_bounds(vertices, transform);
+        let opacity = params_opacity(params);
         
         self.curves.insert(name.clone(), SceneCurves {
             mesh,
@@ -926,6 +952,7 @@ impl Renderer {
             model_buffer,
             transform,
             bounds,
+            opacity,
             name,
         });
     }
@@ -986,6 +1013,7 @@ impl Renderer {
 
         // Calculate bounds
         let bounds = compute_points_bounds(positions, transform);
+        let opacity = params_opacity(params);
         
         self.points.insert(name.clone(), ScenePoints {
             vertex_buffer,
@@ -995,6 +1023,7 @@ impl Renderer {
             model_buffer,
             transform,
             bounds,
+            opacity,
             name,
             widths: widths.to_vec(),
         });
@@ -1241,6 +1270,8 @@ impl Renderer {
             }],
         });
         
+        let opacity = params_opacity(&material);
+        let bounds = compute_mesh_bounds(&vertices, Mat4::IDENTITY);
         self.floor_mesh = Some(SceneMesh {
             mesh: Mesh {
                 vertex_buffer,
@@ -1252,7 +1283,8 @@ impl Renderer {
             model_buffer,
             transform: Mat4::IDENTITY,
             vertex_hash: 0,
-            bounds: (Vec3::ZERO, Vec3::ZERO),
+            bounds,
+            opacity,
             name: "_FLOOR_".into(),
             smooth_data: None,
             base_vertices: None,
@@ -1313,20 +1345,52 @@ impl Renderer {
         }
 
         let use_depth_prepass = self.use_depth_prepass && !xray_active;
+        let opacity_threshold = 0.999;
+        let mut opaque_mesh_names: Vec<String> = Vec::new();
+        let mut transparent_meshes: Vec<(f32, String)> = Vec::new();
+        let mut floor_transparent_distance: Option<f32> = None;
+        let mut floor_opaque = false;
+
+        for (name, mesh) in &self.meshes {
+            let effective_opacity = mesh.opacity * self.xray_alpha;
+            if effective_opacity < opacity_threshold {
+                let distance = bounds_sort_distance(mesh.bounds, self.camera_position);
+                transparent_meshes.push((distance, name.clone()));
+            } else {
+                opaque_mesh_names.push(name.clone());
+            }
+        }
+        if let Some(floor) = &self.floor_mesh {
+            let effective_opacity = floor.opacity * self.xray_alpha;
+            if effective_opacity < opacity_threshold {
+                let distance = bounds_sort_distance(floor.bounds, self.camera_position);
+                floor_transparent_distance = Some(distance);
+            } else {
+                floor_opaque = true;
+            }
+        }
+
         {
-            let mut meshes: Vec<&SceneMesh> = self.meshes.values().collect();
-            if let Some(floor) = &self.floor_mesh {
-                meshes.push(floor);
+            let mut opaque_meshes: Vec<&SceneMesh> = Vec::new();
+            for name in &opaque_mesh_names {
+                if let Some(mesh) = self.meshes.get(name) {
+                    opaque_meshes.push(mesh);
+                }
+            }
+            if floor_opaque {
+                if let Some(floor) = &self.floor_mesh {
+                    opaque_meshes.push(floor);
+                }
             }
 
-            self.render_depth_prepass(&mut encoder, &depth_view, &meshes, use_depth_prepass);
+            self.render_depth_prepass(&mut encoder, &depth_view, &opaque_meshes, use_depth_prepass);
             if use_gbuffer {
-                self.render_gbuffer_pass(&mut encoder, &depth_view, &meshes, use_depth_prepass);
+                self.render_gbuffer_pass(&mut encoder, &depth_view, &opaque_meshes, use_depth_prepass);
             }
         }
 
         if use_gbuffer {
-            self.ensure_ssao_targets(width, height, self.output_format);
+            self.ensure_ssao_targets(width, height);
             self.render_ssao_pass(&mut encoder, &depth_view, self.use_ssao);
             if self.use_ssao {
                 let (gbuffer_occlusion_view, ssao_temp_view) = match (&self.gbuffer, &self.ssao_targets) {
@@ -1362,6 +1426,9 @@ impl Renderer {
 
             let lighting_params = LightingParams {
                 background: self.background_color,
+                hdr_visible: if self.hdr_visible { 1.0 } else { 0.0 },
+                _pad0: [0.0; 3],
+                _pad1: [0.0; 4],
             };
             self.queue.write_buffer(
                 &self.lighting_params_buffer,
@@ -1373,6 +1440,40 @@ impl Renderer {
                 None => return,
             };
             self.render_lighting_pass(&mut encoder, color_target_view_ref, &occlusion_view);
+        }
+
+        if !transparent_meshes.is_empty()
+            || floor_transparent_distance.is_some()
+            || !self.curves.is_empty()
+            || !self.points.is_empty()
+        {
+            transparent_meshes.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            let mut sorted_meshes: Vec<(f32, &SceneMesh)> = Vec::new();
+            for (distance, name) in transparent_meshes {
+                if let Some(mesh) = self.meshes.get(&name) {
+                    sorted_meshes.push((distance, mesh));
+                }
+            }
+            if let (Some(distance), Some(floor)) = (floor_transparent_distance, &self.floor_mesh) {
+                sorted_meshes.push((distance, floor));
+            }
+            sorted_meshes.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            let sorted_mesh_refs: Vec<&SceneMesh> = sorted_meshes
+                .into_iter()
+                .map(|(_, mesh)| mesh)
+                .collect();
+            let transparent_pipeline = if self.double_sided {
+                &self.pipelines.transparent_pipeline_double_sided
+            } else {
+                &self.pipelines.transparent_pipeline
+            };
+            self.render_transparent_pass(
+                &mut encoder,
+                &depth_view,
+                color_target_view_ref,
+                &sorted_mesh_refs,
+                transparent_pipeline,
+            );
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

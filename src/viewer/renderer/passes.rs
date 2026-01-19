@@ -332,6 +332,75 @@ impl Renderer {
     }
 
     /// SSAO blur pass that smooths the occlusion mask before lighting.
+    pub fn render_transparent_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        depth_view: &wgpu::TextureView,
+        color_target_view: &wgpu::TextureView,
+        meshes: &[&SceneMesh],
+        transparent_pipeline: &wgpu::RenderPipeline,
+    ) {
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("transparent_render_pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: color_target_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        render_pass.set_bind_group(0, &self.camera_light_bind_group, &[]);
+        render_pass.set_bind_group(3, &self.shadow_bind_group, &[]);
+        render_pass.set_bind_group(4, &self.env_map.bind_group, &[]);
+
+        if !meshes.is_empty() {
+            render_pass.set_pipeline(transparent_pipeline);
+            for mesh in meshes {
+                render_pass.set_bind_group(1, &mesh.material_bind_group, &[]);
+                render_pass.set_bind_group(2, &mesh.model_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..mesh.mesh.index_count, 0, 0..1);
+            }
+        }
+
+        if !self.curves.is_empty() {
+            render_pass.set_pipeline(&self.pipelines.line_pipeline);
+            for curve in self.curves.values() {
+                render_pass.set_bind_group(1, &curve.material_bind_group, &[]);
+                render_pass.set_bind_group(2, &curve.model_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, curve.mesh.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(curve.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..curve.mesh.index_count, 0, 0..1);
+            }
+        }
+
+        if !self.points.is_empty() {
+            render_pass.set_pipeline(&self.pipelines.point_pipeline);
+            for pts in self.points.values() {
+                render_pass.set_bind_group(1, &pts.material_bind_group, &[]);
+                render_pass.set_bind_group(2, &pts.model_bind_group, &[]);
+                render_pass.set_vertex_buffer(0, pts.vertex_buffer.slice(..));
+                render_pass.draw(0..pts.vertex_count, 0..1);
+            }
+        }
+    }
+
+    /// SSAO blur pass that smooths the occlusion mask before lighting.
     pub fn render_ssao_blur_pass(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
@@ -420,6 +489,22 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 5,
                     resource: self.lighting_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&self.env_map.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(&self.env_map.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: self.env_map.uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: self.camera_buffer.as_entire_binding(),
                 },
             ],
         }));

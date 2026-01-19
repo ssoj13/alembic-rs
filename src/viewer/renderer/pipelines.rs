@@ -9,6 +9,8 @@ pub struct Pipelines {
     pub wireframe_pipeline_double_sided: wgpu::RenderPipeline,
     pub gbuffer_pipeline: wgpu::RenderPipeline,
     pub gbuffer_pipeline_double_sided: wgpu::RenderPipeline,
+    pub transparent_pipeline: wgpu::RenderPipeline,
+    pub transparent_pipeline_double_sided: wgpu::RenderPipeline,
     pub line_pipeline: wgpu::RenderPipeline,
     pub point_pipeline: wgpu::RenderPipeline,
     pub shadow_pipeline: wgpu::RenderPipeline,
@@ -92,6 +94,26 @@ pub fn create_pipelines(
     let gbuffer_pipeline_double_sided =
         standard_surface::create_pipeline(device, layouts, &gbuffer_double_sided_config);
 
+    let transparent_config = PipelineConfig {
+        label: Some("transparent_pipeline"),
+        blend: true,
+        depth_write: false,
+        depth_compare: Some(wgpu::CompareFunction::LessEqual),
+        ..config.clone()
+    };
+    let transparent_pipeline = standard_surface::create_pipeline(device, layouts, &transparent_config);
+
+    let transparent_double_sided_config = PipelineConfig {
+        label: Some("transparent_pipeline_double_sided"),
+        blend: true,
+        depth_write: false,
+        depth_compare: Some(wgpu::CompareFunction::LessEqual),
+        cull_mode: None,
+        ..config.clone()
+    };
+    let transparent_pipeline_double_sided =
+        standard_surface::create_pipeline(device, layouts, &transparent_double_sided_config);
+
     let line_config = PipelineConfig {
         label: Some("line_pipeline"),
         topology: wgpu::PrimitiveTopology::LineList,
@@ -117,6 +139,8 @@ pub fn create_pipelines(
         wireframe_pipeline_double_sided,
         gbuffer_pipeline,
         gbuffer_pipeline_double_sided,
+        transparent_pipeline,
+        transparent_pipeline_double_sided,
         line_pipeline,
         point_pipeline,
         shadow_pipeline,
