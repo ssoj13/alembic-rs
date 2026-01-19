@@ -11,6 +11,10 @@ pub struct Pipelines {
     pub pipeline_after_prepass_double_sided: wgpu::RenderPipeline,
     pub wireframe_pipeline: wgpu::RenderPipeline,
     pub wireframe_pipeline_double_sided: wgpu::RenderPipeline,
+    pub pipeline_xray: wgpu::RenderPipeline,
+    pub pipeline_xray_double_sided: wgpu::RenderPipeline,
+    pub wireframe_pipeline_xray: wgpu::RenderPipeline,
+    pub wireframe_pipeline_xray_double_sided: wgpu::RenderPipeline,
     pub gbuffer_pipeline: wgpu::RenderPipeline,
     pub gbuffer_pipeline_double_sided: wgpu::RenderPipeline,
     pub line_pipeline: wgpu::RenderPipeline,
@@ -92,6 +96,40 @@ pub fn create_pipelines(
     };
     let wireframe_pipeline_double_sided = standard_surface::create_pipeline(device, layouts, &wireframe_double_sided_config);
 
+    let xray_config = PipelineConfig {
+        label: Some("xray_pipeline"),
+        depth_write: false,
+        ..config.clone()
+    };
+    let pipeline_xray = standard_surface::create_pipeline(device, layouts, &xray_config);
+
+    let xray_double_sided_config = PipelineConfig {
+        label: Some("xray_pipeline_double_sided"),
+        depth_write: false,
+        cull_mode: None,
+        ..config.clone()
+    };
+    let pipeline_xray_double_sided =
+        standard_surface::create_pipeline(device, layouts, &xray_double_sided_config);
+
+    let wireframe_xray_config = PipelineConfig {
+        label: Some("wireframe_xray_pipeline"),
+        wireframe: true,
+        depth_write: false,
+        ..config.clone()
+    };
+    let wireframe_pipeline_xray = standard_surface::create_pipeline(device, layouts, &wireframe_xray_config);
+
+    let wireframe_xray_double_sided_config = PipelineConfig {
+        label: Some("wireframe_xray_pipeline_double_sided"),
+        wireframe: true,
+        depth_write: false,
+        cull_mode: None,
+        ..config.clone()
+    };
+    let wireframe_pipeline_xray_double_sided =
+        standard_surface::create_pipeline(device, layouts, &wireframe_xray_double_sided_config);
+
     let gbuffer_formats = vec![
         wgpu::TextureFormat::Rgba8Unorm,
         wgpu::TextureFormat::Rgba16Float,
@@ -144,6 +182,10 @@ pub fn create_pipelines(
         pipeline_after_prepass_double_sided,
         wireframe_pipeline,
         wireframe_pipeline_double_sided,
+        pipeline_xray,
+        pipeline_xray_double_sided,
+        wireframe_pipeline_xray,
+        wireframe_pipeline_xray_double_sided,
         gbuffer_pipeline,
         gbuffer_pipeline_double_sided,
         line_pipeline,

@@ -1269,7 +1269,7 @@ impl Renderer {
 
         // Opaque render pass
         let xray_active = self.xray_alpha < 0.999;
-        let use_depth_prepass = self.use_depth_prepass && !self.show_wireframe;
+        let use_depth_prepass = self.use_depth_prepass && !self.show_wireframe && !xray_active;
         {
             let mut meshes: Vec<&SceneMesh> = self.meshes.values().collect();
             if let Some(floor) = &self.floor_mesh {
@@ -1291,6 +1291,13 @@ impl Renderer {
             match self.double_sided {
                 false => &self.pipelines.pipeline_after_prepass,
                 true => &self.pipelines.pipeline_after_prepass_double_sided,
+            }
+        } else if xray_active {
+            match (self.show_wireframe, self.double_sided) {
+                (false, false) => &self.pipelines.pipeline_xray,
+                (false, true) => &self.pipelines.pipeline_xray_double_sided,
+                (true, false) => &self.pipelines.wireframe_pipeline_xray,
+                (true, true) => &self.pipelines.wireframe_pipeline_xray_double_sided,
             }
         } else {
             match (self.show_wireframe, self.double_sided) {

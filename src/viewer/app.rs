@@ -1554,6 +1554,15 @@ impl ViewerApp {
             );
         }
 
+        if self.settings.smooth_normals {
+            renderer.recalculate_smooth_normals(
+                self.settings.smooth_angle,
+                self.settings.smooth_normals,
+            );
+        } else {
+            renderer.recalculate_smooth_normals(self.settings.smooth_angle, false);
+        }
+
         // Update stats
         self.mesh_count = stats.mesh_count;
         self.vertex_count = stats.vertex_count;
