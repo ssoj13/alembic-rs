@@ -579,6 +579,7 @@ impl ViewerApp {
                     renderer.recalculate_smooth_normals(
                         self.settings.smooth_angle,
                         self.settings.smooth_normals,
+                        true,
                     );
                     changed = true;
                 }
@@ -1483,6 +1484,8 @@ impl ViewerApp {
         renderer.meshes.retain(|path, _| new_mesh_paths.contains(path.as_str()));
         renderer.curves.retain(|path, _| new_curve_paths.contains(path.as_str()));
 
+        let mut smooth_dirty = false;
+
         // Update or add meshes (use path as key for uniqueness)
         for mesh in scene.meshes {
             if renderer.has_mesh(&mesh.path) {
@@ -1494,6 +1497,7 @@ impl ViewerApp {
                 if let Some(old_hash) = renderer.get_vertex_hash(&mesh.path) {
                     if new_hash != old_hash {
                         renderer.update_mesh_vertices(&mesh.path, &mesh.vertices, &mesh.indices);
+                        smooth_dirty = true;
                     }
                 }
             } else {
@@ -1517,6 +1521,7 @@ impl ViewerApp {
                     &material,
                     mesh.smooth_data,
                 );
+                smooth_dirty = true;
             }
         }
 
@@ -1550,13 +1555,12 @@ impl ViewerApp {
             );
         }
 
-        if self.settings.smooth_normals {
+        if self.settings.smooth_normals && smooth_dirty {
             renderer.recalculate_smooth_normals(
                 self.settings.smooth_angle,
-                self.settings.smooth_normals,
+                true,
+                false,
             );
-        } else {
-            renderer.recalculate_smooth_normals(self.settings.smooth_angle, false);
         }
 
         // Update stats

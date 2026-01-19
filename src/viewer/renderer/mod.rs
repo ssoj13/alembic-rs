@@ -143,6 +143,7 @@ pub struct SceneMesh {
     // For dynamic smooth normal recalculation
     pub smooth_data: Option<SmoothNormalData>,
     pub base_vertices: Option<Vec<Vertex>>,  // vertices with flat normals
+    pub smooth_dirty: bool,
 }
 
 /// Compute a quick hash for vertex change detection
@@ -899,6 +900,7 @@ impl Renderer {
             name,
             smooth_data,
             base_vertices: Some(vertices.to_vec()),
+            smooth_dirty: true,
         });
     }
     
@@ -1111,6 +1113,7 @@ impl Renderer {
             scene_mesh.vertex_hash = new_hash;
             scene_mesh.bounds = compute_mesh_bounds(vertices, scene_mesh.transform);
             scene_mesh.base_vertices = Some(vertices.to_vec());
+            scene_mesh.smooth_dirty = true;
         }
         true
     }
@@ -1125,9 +1128,13 @@ impl Renderer {
         self.meshes.get(name).map(|m| m.vertex_hash)
     }
     
-    /// Recalculate smooth normals for all meshes with given angle
-    pub fn recalculate_smooth_normals(&mut self, angle_deg: f32, enabled: bool) {
+    /// Recalculate smooth normals for meshes with given angle.
+    /// When force_all is true, all meshes are updated; otherwise only dirty meshes.
+    pub fn recalculate_smooth_normals(&mut self, angle_deg: f32, enabled: bool, force_all: bool) {
         for scene_mesh in self.meshes.values_mut() {
+            if !force_all && !scene_mesh.smooth_dirty {
+                continue;
+            }
             if let (Some(smooth_data), Some(base_verts)) = (&scene_mesh.smooth_data, &scene_mesh.base_vertices) {
                 let mut new_vertices = base_verts.clone();
                 
@@ -1147,6 +1154,7 @@ impl Renderer {
                     usage: wgpu::BufferUsages::VERTEX,
                 });
                 scene_mesh.mesh.vertex_buffer = vertex_buffer;
+                scene_mesh.smooth_dirty = false;
             }
         }
     }
@@ -1288,6 +1296,7 @@ impl Renderer {
             name: "_FLOOR_".into(),
             smooth_data: None,
             base_vertices: None,
+            smooth_dirty: false,
         });
     }
     
