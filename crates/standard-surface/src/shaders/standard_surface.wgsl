@@ -23,7 +23,7 @@ struct Camera {
     position: vec3<f32>,
     xray_alpha: f32,  // X-Ray mode: 1.0 = normal, 0.5 = transparent
     flat_shading: f32, // 1.0 = flat (face normals), 0.0 = smooth
-    auto_normals: f32, // 1.0 = auto-flip backface normals, 0.0 = disabled
+    auto_normals: f32, // 1.0 = auto-flip inverted normals, 0.0 = disabled
     _pad2: f32,
     _pad3: f32,
 }
@@ -327,7 +327,7 @@ fn compute_light(
 }
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
     // View direction (needed for backface detection)
     let V = normalize(camera.position - in.world_position);
     
@@ -342,7 +342,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         N = normalize(in.world_normal);
     }
     
-    // Auto-flip normal if facing away from camera (handles flipped normals)
+    // Ensure backfaces light correctly when culling is disabled.
+    if !is_front {
+        N = -N;
+    }
+
+    // Auto-flip normal if facing away from camera (handles inverted normals)
     if camera.auto_normals > 0.5 && dot(N, V) < 0.0 {
         N = -N;
     }

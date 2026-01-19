@@ -66,7 +66,7 @@ impl Default for Settings {
             show_shadows: true,
             xray_alpha: 0.70,
             double_sided: true,
-            auto_normals: true,  // Auto-flip backface normals by default
+            auto_normals: true,  // Auto-flip inverted normals by default
             smooth_normals: true,
             smooth_angle: 62.0,
             show_floor: true,

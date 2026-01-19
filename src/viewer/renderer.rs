@@ -24,8 +24,12 @@ pub struct Renderer {
     // Pipelines
     pipeline: wgpu::RenderPipeline,
     pipeline_double_sided: wgpu::RenderPipeline,
+    pipeline_transparent: wgpu::RenderPipeline,
+    pipeline_double_sided_transparent: wgpu::RenderPipeline,
     wireframe_pipeline: wgpu::RenderPipeline,
     wireframe_pipeline_double_sided: wgpu::RenderPipeline,
+    wireframe_pipeline_transparent: wgpu::RenderPipeline,
+    wireframe_pipeline_double_sided_transparent: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
     point_pipeline: wgpu::RenderPipeline,
     shadow_pipeline: wgpu::RenderPipeline,
@@ -244,20 +248,54 @@ impl Renderer {
             ..config.clone()
         };
         let wireframe_pipeline = standard_surface::create_pipeline(&device, &layouts, &wireframe_config);
-        
+
+        // Transparent pipelines (disable depth writes to avoid self-occlusion with blending)
+        let transparent_config = PipelineConfig {
+            depth_write: false,
+            ..config.clone()
+        };
+        let pipeline_transparent = standard_surface::create_pipeline(&device, &layouts, &transparent_config);
+
+        let wireframe_transparent_config = PipelineConfig {
+            wireframe: true,
+            ..transparent_config.clone()
+        };
+        let wireframe_pipeline_transparent =
+            standard_surface::create_pipeline(&device, &layouts, &wireframe_transparent_config);
+
         // Double-sided pipelines (no backface culling)
         let double_sided_config = PipelineConfig {
             cull_mode: None,
             ..config.clone()
         };
         let pipeline_double_sided = standard_surface::create_pipeline(&device, &layouts, &double_sided_config);
-        
+
+        let double_sided_transparent_config = PipelineConfig {
+            cull_mode: None,
+            depth_write: false,
+            ..config.clone()
+        };
+        let pipeline_double_sided_transparent =
+            standard_surface::create_pipeline(&device, &layouts, &double_sided_transparent_config);
+
         let wireframe_double_sided_config = PipelineConfig {
             wireframe: true,
             cull_mode: None,
             ..double_sided_config.clone()
         };
         let wireframe_pipeline_double_sided = standard_surface::create_pipeline(&device, &layouts, &wireframe_double_sided_config);
+
+        let wireframe_double_sided_transparent_config = PipelineConfig {
+            wireframe: true,
+            cull_mode: None,
+            depth_write: false,
+            ..config.clone()
+        };
+        let wireframe_pipeline_double_sided_transparent = standard_surface::create_pipeline(
+            &device,
+            &layouts,
+            &wireframe_double_sided_transparent_config,
+        );
         
         // Line pipeline for curves, hair, grid
         let line_config = PipelineConfig {
@@ -459,8 +497,12 @@ impl Renderer {
             queue,
             pipeline,
             pipeline_double_sided,
+            pipeline_transparent,
+            pipeline_double_sided_transparent,
             wireframe_pipeline,
             wireframe_pipeline_double_sided,
+            wireframe_pipeline_transparent,
+            wireframe_pipeline_double_sided_transparent,
             line_pipeline,
             point_pipeline,
             shadow_pipeline,
@@ -1242,11 +1284,16 @@ impl Renderer {
             }
 
             // Select pipeline based on display mode
-            let pipeline = match (self.show_wireframe, self.double_sided) {
-                (false, false) => &self.pipeline,
-                (false, true) => &self.pipeline_double_sided,
-                (true, false) => &self.wireframe_pipeline,
-                (true, true) => &self.wireframe_pipeline_double_sided,
+            let is_transparent = self.xray_alpha < 0.999;
+            let pipeline = match (self.show_wireframe, self.double_sided, is_transparent) {
+                (false, false, false) => &self.pipeline,
+                (false, false, true) => &self.pipeline_transparent,
+                (false, true, false) => &self.pipeline_double_sided,
+                (false, true, true) => &self.pipeline_double_sided_transparent,
+                (true, false, false) => &self.wireframe_pipeline,
+                (true, false, true) => &self.wireframe_pipeline_transparent,
+                (true, true, false) => &self.wireframe_pipeline_double_sided,
+                (true, true, true) => &self.wireframe_pipeline_double_sided_transparent,
             };
 
             render_pass.set_pipeline(pipeline);
