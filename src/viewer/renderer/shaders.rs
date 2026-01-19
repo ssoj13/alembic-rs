@@ -18,7 +18,7 @@ fn vs_fullscreen(@builtin(vertex_index) index: u32) -> VsOut {
     let pos = positions[index];
     var out: VsOut;
     out.pos = vec4<f32>(pos, 0.0, 1.0);
-    out.uv = vec2<f32>(pos.x * 0.5 + 0.5, 1.0 - (pos.y * 0.5 + 0.5));
+    out.uv = vec2<f32>(pos.x * 0.5 + 0.5, pos.y * 0.5 + 0.5);
     return out;
 }
 
@@ -107,7 +107,7 @@ fn vs_fullscreen(@builtin(vertex_index) index: u32) -> VsOut {
     let pos = positions[index];
     var out: VsOut;
     out.pos = vec4<f32>(pos, 0.0, 1.0);
-    out.uv = vec2<f32>(pos.x * 0.5 + 0.5, 1.0 - (pos.y * 0.5 + 0.5));
+    out.uv = vec2<f32>(pos.x * 0.5 + 0.5, pos.y * 0.5 + 0.5);
     return out;
 }
 
@@ -154,7 +154,7 @@ fn vs_fullscreen(@builtin(vertex_index) index: u32) -> VsOut {
     let pos = positions[index];
     var out: VsOut;
     out.pos = vec4<f32>(pos, 0.0, 1.0);
-    out.uv = vec2<f32>(pos.x * 0.5 + 0.5, 1.0 - (pos.y * 0.5 + 0.5));
+    out.uv = vec2<f32>(pos.x * 0.5 + 0.5, pos.y * 0.5 + 0.5);
     return out;
 }
 
@@ -215,7 +215,7 @@ fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
     let phi = atan2(-d.z, d.x) - rotation;
     let theta = acos(clamp(d.y, -1.0, 1.0));
     let u = (phi + PI) / (2.0 * PI);
-    let v = 1.0 - (theta / PI);
+    let v = theta / PI;
     return vec2<f32>(u, v);
 }
 
@@ -223,10 +223,7 @@ fn sample_background(uv: vec2<f32>) -> vec4<f32> {
     if env.enabled < 0.5 || env.intensity <= 0.0 || params.hdr_visible < 0.5 {
         return params.background;
     }
-    // Fullscreen UVs are vertically flipped for screen-space passes.
-    // Undo that flip for skybox ray reconstruction.
-    let uv_unflipped = vec2<f32>(uv.x, 1.0 - uv.y);
-    let ndc = vec4<f32>(uv_unflipped * 2.0 - vec2<f32>(1.0), 1.0, 1.0);
+    let ndc = vec4<f32>(uv * 2.0 - vec2<f32>(1.0), 1.0, 1.0);
     let world = camera.inv_view_proj * ndc;
     let world_pos = world.xyz / world.w;
     let dir = normalize(world_pos - camera.position);
