@@ -34,57 +34,11 @@ impl Renderer {
         }
     }
 
-    pub fn render_depth_prepass(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        depth_view: &wgpu::TextureView,
-        meshes: &[&SceneMesh],
-        use_depth_prepass: bool,
-    ) {
-        if !use_depth_prepass {
-            return;
-        }
-
-        let prepass_pipeline = if self.double_sided {
-            &self.pipelines.depth_prepass_pipeline_double_sided
-        } else {
-            &self.pipelines.depth_prepass_pipeline
-        };
-
-        let mut prepass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("depth_prepass"),
-            color_attachments: &[],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-
-        prepass.set_pipeline(prepass_pipeline);
-        prepass.set_bind_group(0, &self.camera_light_bind_group, &[]);
-        prepass.set_bind_group(3, &self.shadow_bind_group, &[]);
-        prepass.set_bind_group(4, &self.env_map.bind_group, &[]);
-        for mesh in meshes {
-            prepass.set_bind_group(1, &mesh.material_bind_group, &[]);
-            prepass.set_bind_group(2, &mesh.model_bind_group, &[]);
-            prepass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
-            prepass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            prepass.draw_indexed(0..mesh.mesh.index_count, 0, 0..1);
-        }
-    }
-
     pub fn render_gbuffer_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         depth_view: &wgpu::TextureView,
         meshes: &[&SceneMesh],
-        use_depth_prepass: bool,
     ) {
 
         let gbuffer = match &self.gbuffer {
@@ -98,11 +52,7 @@ impl Renderer {
             &self.pipelines.gbuffer_pipeline
         };
 
-        let gbuffer_depth_load = if use_depth_prepass {
-            wgpu::LoadOp::Load
-        } else {
-            wgpu::LoadOp::Clear(1.0)
-        };
+        let gbuffer_depth_load = wgpu::LoadOp::Clear(1.0);
 
         let mut gbuffer_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("gbuffer_pass"),
@@ -456,6 +406,7 @@ impl Renderer {
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         occlusion_view: &wgpu::TextureView,
+        depth_view: &wgpu::TextureView,
     ) {
         let gbuffer = match &self.gbuffer {
             Some(gbuffer) => gbuffer,
@@ -505,6 +456,10 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 9,
                     resource: self.camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::TextureView(depth_view),
                 },
             ],
         }));

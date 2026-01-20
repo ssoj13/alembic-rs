@@ -3,8 +3,6 @@
 use standard_surface::{BindGroupLayouts, PipelineConfig};
 
 pub struct Pipelines {
-    pub depth_prepass_pipeline: wgpu::RenderPipeline,
-    pub depth_prepass_pipeline_double_sided: wgpu::RenderPipeline,
     pub wireframe_pipeline: wgpu::RenderPipeline,
     pub wireframe_pipeline_double_sided: wgpu::RenderPipeline,
     pub gbuffer_pipeline: wgpu::RenderPipeline,
@@ -43,24 +41,6 @@ pub fn create_pipelines(
         cull_mode: None,
         ..config.clone()
     };
-    let depth_prepass_config = PipelineConfig {
-        label: Some("depth_prepass_pipeline"),
-        depth_only: true,
-        depth_write: true,
-        ..config.clone()
-    };
-    let depth_prepass_pipeline = standard_surface::create_pipeline(device, layouts, &depth_prepass_config);
-
-    let depth_prepass_double_sided_config = PipelineConfig {
-        label: Some("depth_prepass_pipeline_double_sided"),
-        depth_only: true,
-        depth_write: true,
-        cull_mode: None,
-        ..config.clone()
-    };
-    let depth_prepass_pipeline_double_sided =
-        standard_surface::create_pipeline(device, layouts, &depth_prepass_double_sided_config);
-
     let wireframe_double_sided_config = PipelineConfig {
         label: Some("wireframe_pipeline_double_sided"),
         wireframe: true,
@@ -133,8 +113,6 @@ pub fn create_pipelines(
     let shadow_pipeline = standard_surface::create_shadow_pipeline(device, layouts);
 
     Pipelines {
-        depth_prepass_pipeline,
-        depth_prepass_pipeline_double_sided,
         wireframe_pipeline,
         wireframe_pipeline_double_sided,
         gbuffer_pipeline,

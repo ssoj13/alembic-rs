@@ -538,10 +538,6 @@ impl ViewerApp {
                 renderer.show_shadows = self.settings.show_shadows;
                 changed = true;
             }
-            if ui.checkbox(&mut self.settings.depth_prepass, "Depth Prepass").changed() {
-                renderer.use_depth_prepass = self.settings.depth_prepass;
-                changed = true;
-            }
             if ui.checkbox(&mut self.settings.ssao, "SSAO").changed() {
                 renderer.use_ssao = self.settings.ssao;
                 changed = true;
@@ -1801,7 +1797,6 @@ impl eframe::App for ViewerApp {
                     renderer.show_wireframe = self.settings.show_wireframe;
                     renderer.flat_shading = self.settings.flat_shading;
                     renderer.show_shadows = self.settings.show_shadows;
-                    renderer.use_depth_prepass = self.settings.depth_prepass;
                     renderer.use_ssao = self.settings.ssao;
                     renderer.ssao_strength = self.settings.ssao_strength;
                     renderer.hdr_visible = self.settings.hdr_visible;

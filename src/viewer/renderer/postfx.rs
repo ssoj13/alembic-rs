@@ -20,7 +20,7 @@ pub fn create_postfx_pipelines(
 ) -> PostFxPipelines {
     let ssao_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("ssao_shader"),
-        source: wgpu::ShaderSource::Wgsl(SSAO_SHADER.into()),
+        source: wgpu::ShaderSource::Wgsl((*SSAO_SHADER).clone().into()),
     });
     let ssao_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("ssao_bind_group_layout"),
@@ -105,7 +105,7 @@ pub fn create_postfx_pipelines(
     });
     let ssao_blur_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("ssao_blur_shader"),
-        source: wgpu::ShaderSource::Wgsl(SSAO_BLUR_SHADER.into()),
+        source: wgpu::ShaderSource::Wgsl((*SSAO_BLUR_SHADER).clone().into()),
     });
     let ssao_blur_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("ssao_blur_bind_group_layout"),
@@ -191,7 +191,7 @@ pub fn create_postfx_pipelines(
 
     let lighting_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("lighting_shader"),
-        source: wgpu::ShaderSource::Wgsl(LIGHTING_SHADER.into()),
+        source: wgpu::ShaderSource::Wgsl((*LIGHTING_SHADER).clone().into()),
     });
     let lighting_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("lighting_bind_group_layout"),
@@ -285,6 +285,16 @@ pub fn create_postfx_pipelines(
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
                     min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 10,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    multisampled: false,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    sample_type: wgpu::TextureSampleType::Depth,
                 },
                 count: None,
             },

@@ -106,7 +106,6 @@ pub struct Renderer {
     pub flat_shading: bool,
     pub show_grid: bool,
     pub show_shadows: bool,
-    pub use_depth_prepass: bool,
     pub use_ssao: bool,
     pub ssao_strength: f32,
     pub hdr_visible: bool,
@@ -517,7 +516,6 @@ impl Renderer {
             flat_shading: false,
             show_grid: true,
             show_shadows: true,
-            use_depth_prepass: true,
             use_ssao: false,
             ssao_strength: 0.5,
             hdr_visible: true,
@@ -1327,14 +1325,12 @@ impl Renderer {
         self.render_shadow_pass(&mut encoder);
 
         // Opaque render pass (Stage 1: G-Buffer + lighting)
-        let xray_active = false;
         if self.show_wireframe {
             let mut meshes: Vec<&SceneMesh> = self.meshes.values().collect();
             if let Some(floor) = &self.floor_mesh {
                 meshes.push(floor);
             }
-            self.render_depth_prepass(&mut encoder, &depth_view, &meshes, true);
-            let opaque_depth_load = wgpu::LoadOp::Load;
+            let opaque_depth_load = wgpu::LoadOp::Clear(1.0);
             let wire_pipeline = if self.double_sided {
                 &self.pipelines.wireframe_pipeline_double_sided
             } else {
@@ -1353,7 +1349,6 @@ impl Renderer {
             return;
         }
 
-        let use_depth_prepass = self.use_depth_prepass && !xray_active;
         let opacity_threshold = 0.999;
         let mut opaque_mesh_names: Vec<String> = Vec::new();
         let mut transparent_meshes: Vec<(f32, String)> = Vec::new();
@@ -1392,9 +1387,8 @@ impl Renderer {
                 }
             }
 
-            self.render_depth_prepass(&mut encoder, &depth_view, &opaque_meshes, use_depth_prepass);
             if use_gbuffer {
-                self.render_gbuffer_pass(&mut encoder, &depth_view, &opaque_meshes, use_depth_prepass);
+                self.render_gbuffer_pass(&mut encoder, &depth_view, &opaque_meshes);
             }
         }
 
@@ -1448,7 +1442,7 @@ impl Renderer {
                 Some(gbuffer) => gbuffer.occlusion_view.clone(),
                 None => return,
             };
-            self.render_lighting_pass(&mut encoder, color_target_view_ref, &occlusion_view);
+            self.render_lighting_pass(&mut encoder, color_target_view_ref, &occlusion_view, &depth_view);
         }
 
         if !transparent_meshes.is_empty()
