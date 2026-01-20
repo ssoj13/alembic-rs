@@ -1686,7 +1686,9 @@ impl eframe::App for ViewerApp {
                 let margin = radius * 3.0;
                 let min_near = (radius * 0.01).max(0.1);
                 let target_near = (dist - margin).max(min_near);
-                let target_far = (dist + margin).max(target_near + 10.0);
+                // Far plane: at least 2x scene size (diameter = 2*radius, so 4*radius minimum)
+                let min_far = radius * 4.0;
+                let target_far = (dist + margin).max(min_far).max(target_near + 10.0);
                 let dt = ctx.input(|i| i.stable_dt);
                 let t = (dt * 6.0).clamp(0.0, 1.0);
                 self.viewport.camera.near =

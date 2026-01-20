@@ -123,7 +123,7 @@ impl Renderer {
             None => return,
         };
 
-        // When SSAO disabled, just clear occlusion to white (no occlusion)
+        // When SSAO disabled, clear occlusion to white (no occlusion)
         if !use_ssao {
             let _clear_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ssao_clear_pass"),
