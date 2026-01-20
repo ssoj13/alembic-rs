@@ -118,14 +118,31 @@ impl Renderer {
         depth_view: &wgpu::TextureView,
         use_ssao: bool,
     ) {
-        if !use_ssao {
-            return;
-        }
-
         let gbuffer = match &self.gbuffer {
             Some(gbuffer) => gbuffer,
             None => return,
         };
+
+        // When SSAO disabled, just clear occlusion to white (no occlusion)
+        if !use_ssao {
+            let _clear_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("ssao_clear_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &gbuffer.occlusion_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::WHITE),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            return;
+        }
+
         if self.ssao_targets.is_none() {
             return;
         }

@@ -31,7 +31,7 @@ fn vs_fullscreen(@builtin(vertex_index) index: u32) -> VsOut {
 }
 "#;
 
-/// SSAO fragment shader
+/// SSAO fragment shader - simple screen-space ambient occlusion
 pub const SSAO_FRAGMENT: &str = r#"
 const PI: f32 = 3.141592653589793;
 
@@ -57,53 +57,109 @@ struct SsaoParams {
 @group(0) @binding(3) var<uniform> params: SsaoParams;
 @group(0) @binding(4) var<uniform> camera: Camera;
 
+// Reconstruct view-space position from depth
 fn reconstruct_view_pos(ndc_xy: vec2<f32>, depth: f32) -> vec3<f32> {
     let ndc = vec4<f32>(ndc_xy, depth, 1.0);
     let world = camera.inv_view_proj * ndc;
     let world_pos = world.xyz / world.w;
-    let view_pos4 = camera.view * vec4<f32>(world_pos, 1.0);
-    return view_pos4.xyz;
+    // Transform to view space
+    let view_pos = camera.view * vec4<f32>(world_pos, 1.0);
+    return view_pos.xyz;
 }
 
-// Convert UV offset to NDC (for neighbor sampling)
+// Transform world normal to view space
+fn normal_to_view(world_normal: vec3<f32>) -> vec3<f32> {
+    // Extract rotation part of view matrix (upper 3x3)
+    let view_rot = mat3x3<f32>(
+        camera.view[0].xyz,
+        camera.view[1].xyz,
+        camera.view[2].xyz
+    );
+    return normalize(view_rot * world_normal);
+}
+
 fn uv_to_ndc(uv: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
 }
 
 @fragment
 fn fs_ssao(in: VsOut) -> @location(0) vec4<f32> {
-    let n = textureSample(gbuffer_normals, samp, in.uv).xyz * 2.0 - vec3<f32>(1.0);
-    let depth = textureSample(depth_tex, samp, in.uv);
-
-    if depth >= 0.999 {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    let center_depth = textureSample(depth_tex, samp, in.uv);
+    
+    // Skip background
+    if center_depth >= 0.999 {
+        return vec4<f32>(1.0, 1.0, 1.0, 0.0);
     }
-
-    let p = reconstruct_view_pos(in.ndc, depth);
-
-    // Simple SSAO: sample 4 taps around pixel
-    let radius = 0.002 * clamp(abs(p.z), 0.5, 10.0);
-    var occlusion = 0.0;
-    let offsets = array<vec2<f32>, 4>(
-        vec2<f32>(radius, 0.0),
-        vec2<f32>(-radius, 0.0),
-        vec2<f32>(0.0, radius),
-        vec2<f32>(0.0, -radius)
+    
+    // Load normal and convert to view space
+    let world_normal = normalize(textureSample(gbuffer_normals, samp, in.uv).xyz * 2.0 - 1.0);
+    let view_normal = normal_to_view(world_normal);
+    
+    // Reconstruct view-space position
+    let view_pos = reconstruct_view_pos(in.ndc, center_depth);
+    
+    // Adaptive radius: larger samples for distant pixels
+    // In view space, -Z is forward, so abs(view_pos.z) is distance
+    let pixel_depth = abs(view_pos.z);
+    let base_radius = 0.05; // UV space radius at depth=1
+    let screen_radius = base_radius * clamp(pixel_depth * 0.02, 0.5, 4.0);
+    
+    // 8 samples in Poisson disc pattern
+    let samples = array<vec2<f32>, 8>(
+        vec2<f32>(-0.326, -0.406),
+        vec2<f32>(-0.840, -0.074),
+        vec2<f32>(-0.696,  0.457),
+        vec2<f32>(-0.203,  0.621),
+        vec2<f32>( 0.962, -0.195),
+        vec2<f32>( 0.473, -0.480),
+        vec2<f32>( 0.519,  0.767),
+        vec2<f32>( 0.185, -0.893)
     );
     
-    for (var i: u32 = 0u; i < 4u; i = i + 1u) {
-        let sample_uv = in.uv + offsets[i];
-        let sample_ndc = uv_to_ndc(sample_uv);
+    var occlusion = 0.0;
+    let falloff_start = pixel_depth * 0.01;  // Start falloff at 1% of depth
+    let falloff_end = pixel_depth * 0.1;     // End falloff at 10% of depth
+    
+    for (var i = 0u; i < 8u; i = i + 1u) {
+        let offset = samples[i] * screen_radius;
+        let sample_uv = clamp(in.uv + offset, vec2<f32>(0.001), vec2<f32>(0.999));
         let sample_depth = textureSample(depth_tex, samp, sample_uv);
-        let sample_pos = reconstruct_view_pos(sample_ndc, sample_depth);
-        let delta = sample_pos.z - p.z;
-        if delta < -0.02 {
-            occlusion = occlusion + 0.25;
+        
+        // Skip background
+        if sample_depth >= 0.999 {
+            continue;
+        }
+        
+        // Reconstruct sample position in view space
+        let sample_ndc = uv_to_ndc(sample_uv);
+        let sample_view_pos = reconstruct_view_pos(sample_ndc, sample_depth);
+        
+        // Vector from center to sample in view space
+        let diff = sample_view_pos - view_pos;
+        let dist = length(diff);
+        
+        // Hemisphere test: is sample below tangent plane?
+        // In view space, normal points toward camera (positive Z component expected)
+        let diff_normalized = diff / max(dist, 0.0001);
+        let cos_angle = dot(view_normal, diff_normalized);
+        
+        // Sample contributes occlusion if:
+        // 1. It's below the tangent plane (cos_angle < bias)
+        // 2. It's within reasonable range (prevents halos on distant objects)
+        let bias = 0.05;
+        if cos_angle < -bias {
+            // Range check with smooth falloff
+            let range = smoothstep(falloff_end, falloff_start, dist);
+            // Angle-based falloff (more occlusion when sample is directly below)
+            let angle_factor = clamp(-cos_angle, 0.0, 1.0);
+            occlusion = occlusion + range * angle_factor;
         }
     }
-
-    let ndotv = max(n.z, 0.0);
-    let ao = 1.0 - occlusion * params.strength.x * (1.0 - ndotv);
+    
+    // Normalize and apply strength
+    occlusion = occlusion / 8.0;
+    let ao = 1.0 - saturate(occlusion * params.strength.x * 2.0);
+    
     return vec4<f32>(ao, ao, ao, 1.0);
 }
 "#;
