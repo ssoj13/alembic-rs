@@ -88,7 +88,7 @@ fn fs_ssao(in: VsOut) -> @location(0) vec4<f32> {
     
     // Skip background
     if center_depth >= 0.999 {
-        return vec4<f32>(1.0, 1.0, 1.0, 0.0);
+        return vec4<f32>(1.0, 1.0, 1.0, 1.0);
     }
     
     // Load normal and convert to view space
@@ -97,12 +97,10 @@ fn fs_ssao(in: VsOut) -> @location(0) vec4<f32> {
     
     // Reconstruct view-space position
     let view_pos = reconstruct_view_pos(in.ndc, center_depth);
-    
-    // Adaptive radius: larger samples for distant pixels
-    // In view space, -Z is forward, so abs(view_pos.z) is distance
     let pixel_depth = abs(view_pos.z);
-    let base_radius = 0.05; // UV space radius at depth=1
-    let screen_radius = base_radius * clamp(pixel_depth * 0.02, 0.5, 4.0);
+    
+    // Radius from UI (params.strength.y), default 0.015
+    let screen_radius = params.strength.y;
     
     // 8 samples in Poisson disc pattern
     let samples = array<vec2<f32>, 8>(
@@ -117,8 +115,14 @@ fn fs_ssao(in: VsOut) -> @location(0) vec4<f32> {
     );
     
     var occlusion = 0.0;
-    let falloff_start = pixel_depth * 0.01;  // Start falloff at 1% of depth
-    let falloff_end = pixel_depth * 0.1;     // End falloff at 10% of depth
+    var valid_samples = 0.0;
+    
+    // FIX: Falloff relative to screen radius, not absolute distance
+    // At screen_radius=0.015, samples are ~1.5% of screen apart
+    // In view space this maps to roughly pixel_depth * screen_radius * 2 (for typical FOV)
+    let expected_dist = pixel_depth * screen_radius * 2.0;
+    let falloff_start = expected_dist * 0.5;
+    let falloff_end = expected_dist * 3.0;
     
     for (var i = 0u; i < 8u; i = i + 1u) {
         let offset = samples[i] * screen_radius;
@@ -130,36 +134,35 @@ fn fs_ssao(in: VsOut) -> @location(0) vec4<f32> {
             continue;
         }
         
+        valid_samples = valid_samples + 1.0;
+        
         // Reconstruct sample position in view space
         let sample_ndc = uv_to_ndc(sample_uv);
         let sample_view_pos = reconstruct_view_pos(sample_ndc, sample_depth);
         
-        // Vector from center to sample in view space
+        // Vector from center to sample
         let diff = sample_view_pos - view_pos;
         let dist = length(diff);
         
-        // Hemisphere test: is sample below tangent plane?
-        // In view space, normal points toward camera (positive Z component expected)
+        // Hemisphere test: sample below tangent plane?
         let diff_normalized = diff / max(dist, 0.0001);
         let cos_angle = dot(view_normal, diff_normalized);
         
-        // Sample contributes occlusion if:
-        // 1. It's below the tangent plane (cos_angle < bias)
-        // 2. It's within reasonable range (prevents halos on distant objects)
-        let bias = 0.05;
+        // Occlusion if sample is "behind" the surface (negative dot product)
+        let bias = 0.02;
         if cos_angle < -bias {
-            // Range check with smooth falloff
             let range = smoothstep(falloff_end, falloff_start, dist);
-            // Angle-based falloff (more occlusion when sample is directly below)
             let angle_factor = clamp(-cos_angle, 0.0, 1.0);
             occlusion = occlusion + range * angle_factor;
         }
     }
     
-    // Normalize and apply strength
-    occlusion = occlusion / 8.0;
-    let ao = 1.0 - saturate(occlusion * params.strength.x * 2.0);
+    // Normalize by valid samples
+    if valid_samples > 0.0 {
+        occlusion = occlusion / valid_samples;
+    }
     
+    let ao = 1.0 - saturate(occlusion * params.strength.x * 2.0);
     return vec4<f32>(ao, ao, ao, 1.0);
 }
 "#;

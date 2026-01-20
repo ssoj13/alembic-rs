@@ -32,8 +32,6 @@ const DEFAULT_BACKGROUND_COLOR: [f32; 4] = [0.1, 0.1, 0.12, 1.0];
 pub struct Renderer {
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
-    pub output_format: wgpu::TextureFormat,
-    
     // Pipelines
     pipelines: Pipelines,
     postfx: PostFxPipelines,
@@ -108,6 +106,7 @@ pub struct Renderer {
     pub show_shadows: bool,
     pub use_ssao: bool,
     pub ssao_strength: f32,
+    pub ssao_radius: f32,
     pub hdr_visible: bool,
     pub xray_alpha: f32,
     pub double_sided: bool,
@@ -228,7 +227,6 @@ pub struct SceneCurves {
     #[allow(dead_code)] // kept for potential animation updates
     pub transform: Mat4,
     pub bounds: (Vec3, Vec3),
-    pub opacity: f32,
     #[allow(dead_code)]
     pub name: String,
 }
@@ -244,7 +242,6 @@ pub struct ScenePoints {
     #[allow(dead_code)]
     pub transform: Mat4,
     pub bounds: (Vec3, Vec3),
-    pub opacity: f32,
     #[allow(dead_code)]
     pub name: String,
     /// Per-point widths (radius) for point sprites (not yet used in rendering)
@@ -489,7 +486,6 @@ impl Renderer {
             skybox_index_buffer,
             skybox_index_count,
             camera_buffer,
-            output_format: format,
             light_buffer,
             camera_light_bind_group,
             depth_texture: None,
@@ -518,6 +514,7 @@ impl Renderer {
             show_shadows: true,
             use_ssao: false,
             ssao_strength: 0.5,
+            ssao_radius: 0.015,
             hdr_visible: true,
             xray_alpha: 1.0,
             double_sided: true,
@@ -943,7 +940,6 @@ impl Renderer {
         
         // Calculate bounds
         let bounds = compute_mesh_bounds(vertices, transform);
-        let opacity = params_opacity(params);
         
         self.curves.insert(name.clone(), SceneCurves {
             mesh,
@@ -952,7 +948,6 @@ impl Renderer {
             model_buffer,
             transform,
             bounds,
-            opacity,
             name,
         });
     }
@@ -1013,7 +1008,6 @@ impl Renderer {
 
         // Calculate bounds
         let bounds = compute_points_bounds(positions, transform);
-        let opacity = params_opacity(params);
         
         self.points.insert(name.clone(), ScenePoints {
             vertex_buffer,
@@ -1023,7 +1017,6 @@ impl Renderer {
             model_buffer,
             transform,
             bounds,
-            opacity,
             name,
             widths: widths.to_vec(),
         });

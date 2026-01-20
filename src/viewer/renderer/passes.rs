@@ -148,7 +148,7 @@ impl Renderer {
         }
 
         let ssao_params = super::resources::SsaoParams {
-            strength: [self.ssao_strength, 0.0, 0.0, 0.0],
+            strength: [self.ssao_strength, self.ssao_radius, 0.0, 0.0],
         };
         self.queue.write_buffer(&self.ssao_params_buffer, 0, bytemuck::bytes_of(&ssao_params));
         self.ssao_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {

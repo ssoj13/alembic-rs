@@ -550,6 +550,13 @@ impl ViewerApp {
                 }
             });
             ui.horizontal(|ui| {
+                ui.label("Radius:");
+                if ui.add(egui::Slider::new(&mut self.settings.ssao_radius, 0.005..=0.1).step_by(0.005)).changed() {
+                    renderer.ssao_radius = self.settings.ssao_radius;
+                    changed = true;
+                }
+            });
+            ui.horizontal(|ui| {
                 ui.label("Opacity:");
                 if ui.add(egui::Slider::new(&mut self.settings.xray_alpha, 0.01..=1.0).step_by(0.01)).changed() {
                     renderer.xray_alpha = self.settings.xray_alpha;
@@ -1683,12 +1690,13 @@ impl eframe::App for ViewerApp {
                 let radius = bounds.radius().max(0.1);
                 let cam_pos = self.viewport.camera.position();
                 let dist = (cam_pos - center).length();
-                let margin = radius * 3.0;
-                let min_near = (radius * 0.01).max(0.1);
-                let target_near = (dist - margin).max(min_near);
-                // Far plane: at least 2x scene size (diameter = 2*radius, so 4*radius minimum)
-                let min_far = radius * 4.0;
-                let target_far = (dist + margin).max(min_far).max(target_near + 10.0);
+                let margin = radius * 2.0;
+                // Near: small fraction of distance, but not too small for Z precision
+                let min_near = 0.1;
+                let max_near = dist * 0.1; // Never clip more than 10% of view distance
+                let target_near = (dist - margin).clamp(min_near, max_near);
+                // Far: enough to see entire scene
+                let target_far = (dist + margin * 2.0).max(radius * 4.0);
                 let dt = ctx.input(|i| i.stable_dt);
                 let t = (dt * 6.0).clamp(0.0, 1.0);
                 self.viewport.camera.near =
@@ -1801,6 +1809,7 @@ impl eframe::App for ViewerApp {
                     renderer.show_shadows = self.settings.show_shadows;
                     renderer.use_ssao = self.settings.ssao;
                     renderer.ssao_strength = self.settings.ssao_strength;
+                    renderer.ssao_radius = self.settings.ssao_radius;
                     renderer.hdr_visible = self.settings.hdr_visible;
                     renderer.xray_alpha = self.settings.xray_alpha;
                     renderer.double_sided = self.settings.double_sided;

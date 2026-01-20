@@ -14,6 +14,7 @@ pub struct Settings {
     pub show_shadows: bool,
     pub ssao: bool,
     pub ssao_strength: f32,
+    pub ssao_radius: f32,
     pub xray_alpha: f32,
     pub double_sided: bool,
     pub auto_normals: bool,
@@ -68,6 +69,7 @@ impl Default for Settings {
             show_shadows: true,
             ssao: false,
             ssao_strength: 0.5,
+            ssao_radius: 0.015,
             xray_alpha: 1.0,
             double_sided: true,
             auto_normals: true,  // Auto-flip inverted normals by default
