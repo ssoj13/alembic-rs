@@ -152,7 +152,7 @@ impl ViewerApp {
         self.status_message = "Viewport ready".into();
     }
 
-    fn menu_bar(&mut self, ui: &mut egui::Ui) {
+    fn menu_bar(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         // Collect recent files to avoid borrow issues
         let recent: Vec<PathBuf> = self.settings.recent_files().into_iter().cloned().collect();
         
@@ -193,7 +193,7 @@ impl ViewerApp {
                 
                 ui.separator();
                 if ui.button("Exit").clicked() {
-                    std::process::exit(0);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
 
@@ -1462,18 +1462,14 @@ impl ViewerApp {
             renderer.set_floor(&self.scene_bounds);
         }
         
-        // Update scene cameras (always update for animation support)
-        if !scene.cameras.is_empty() {
-            self.scene_cameras = scene.cameras;
-        }
+        // Always update scene cameras (clear stale data when loading new file)
+        self.scene_cameras = scene.cameras;
 
-        // Update scene lights
-        if !scene.lights.is_empty() && self.scene_lights.is_empty() {
-            self.scene_lights = scene.lights;
-            // Apply scene lights if setting enabled
-            if self.settings.use_scene_lights {
-                renderer.set_scene_lights(&self.scene_lights);
-            }
+        // Always update scene lights (clear stale data when loading new file)
+        self.scene_lights = scene.lights;
+        // Apply scene lights if setting enabled
+        if self.settings.use_scene_lights && !self.scene_lights.is_empty() {
+            renderer.set_scene_lights(&self.scene_lights);
         }
 
         // Collect paths using references (use path for uniqueness, not name)
@@ -1852,7 +1848,7 @@ impl eframe::App for ViewerApp {
 
         // Top menu bar
         TopBottomPanel::top("menu_bar").show(ctx, |ui| {
-            self.menu_bar(ui);
+            self.menu_bar(ctx, ui);
         });
 
         // Timeline (above status bar) - always visible
@@ -1918,7 +1914,11 @@ impl eframe::App for ViewerApp {
             }
         });
         
-        // Request continuous repaint for smooth camera animation
-        ctx.request_repaint();
+        // Request repaint only when animation is playing
+        // egui handles repaint for pointer interactions automatically
+        // This saves CPU when idle (was causing 100% CPU usage)
+        if self.playing {
+            ctx.request_repaint();
+        }
     }
 }

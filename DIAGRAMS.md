@@ -474,6 +474,107 @@ pie title Dead Code Analysis (31 #[allow(dead_code)])
     "Reference Code (kept)" : 2
 ```
 
+## 15. Bug Hunt Findings (2026-01-20)
+
+### Material Inheritance Bug Flow
+
+```mermaid
+sequenceDiagram
+    participant MC as MeshConverter
+    participant Mat as Material Props
+    participant Inh as Inheritance Resolver
+
+    Note over MC: CURRENT (BUGGY)
+    MC->>Mat: Apply material properties
+    Mat-->>MC: Properties applied
+    MC->>Inh: resolve_material_inheritance()
+    Inh-->>MC: Inheritance resolved (TOO LATE!)
+
+    Note over MC: CORRECT ORDER
+    MC->>Inh: resolve_material_inheritance()
+    Inh-->>MC: Inheritance resolved FIRST
+    MC->>Mat: Apply material properties
+    Mat-->>MC: Properties correctly applied
+```
+
+**Location:** `src/viewer/mesh_converter.rs:588-598`
+
+### Viewer Scene State Bug
+
+```mermaid
+stateDiagram-v2
+    [*] --> Empty: Initial
+    Empty --> HasCameras: Load file with cameras
+    HasCameras --> HasCameras: Load file with cameras (UPDATE)
+    HasCameras --> HasCameras: Load file WITHOUT cameras (BUG: stale data!)
+
+    note right of HasCameras
+        BUG: Old cameras never cleared
+        when loading file without cameras
+    end note
+```
+
+**Location:** `src/viewer/app.rs:1466-1477`
+
+### Python Object Traversal Performance
+
+```mermaid
+flowchart TD
+    A[Python: obj.getProperty] --> B[Rust: with_object()]
+    B --> C[Get archive root]
+    C --> D[Split path into parts]
+    D --> E[Loop: for each part]
+    E --> F[Find child by name]
+    F --> G[Navigate to child]
+    G --> E
+    E --> H[Finally access property]
+
+    style B fill:#f99
+    style E fill:#f99
+
+    Note1[Every method call<br/>repeats this entire flow!]
+    Note1 -.-> B
+```
+
+**Location:** `src/python/object.rs:38-63`
+
+### Dead Code Distribution
+
+```mermaid
+pie showData title Dead Code by Module (31 instances)
+    "viewer/renderer" : 15
+    "viewer/mesh_converter" : 8
+    "viewer/app" : 3
+    "ogawa/abc_impl" : 2
+    "viewer/environment" : 2
+    "viewer/viewport" : 1
+```
+
+## 16. Bug Priority Matrix
+
+```mermaid
+quadrantChart
+    title Bug Severity vs Fix Effort
+    x-axis Easy Fix --> Hard Fix
+    y-axis Low Impact --> High Impact
+    quadrant-1 Do First
+    quadrant-2 Plan Carefully
+    quadrant-3 Quick Wins
+    quadrant-4 Backlog
+
+    Material Inheritance: [0.3, 0.9]
+    Exit Bypass: [0.2, 0.85]
+    Matrix Convention: [0.4, 0.8]
+    Scene Refresh: [0.35, 0.65]
+    Vertex Hash: [0.5, 0.6]
+    CPU Usage: [0.25, 0.55]
+    Python valid(): [0.15, 0.5]
+    String Arrays: [0.6, 0.45]
+    Missing Constructors: [0.3, 0.4]
+    Dead Code: [0.4, 0.2]
+    Code Duplication: [0.7, 0.3]
+```
+
 ## Legend
 
 | Symbol | Meaning |

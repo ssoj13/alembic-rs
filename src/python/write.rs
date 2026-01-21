@@ -484,9 +484,13 @@ impl PyOXform {
     }
     
     /// Add sample from 4x4 matrix (row-major, f32).
+    ///
+    /// Matrix layout matches Python/NumPy convention: `matrix[row][col]`.
+    /// This is also consistent with Alembic C++ API.
     #[pyo3(signature = (matrix, inherits=true))]
     fn addMatrixSample(&mut self, matrix: [[f32; 4]; 4], inherits: bool) -> PyResult<()> {
-        let m = glam::Mat4::from_cols_array_2d(&matrix);
+        // Input is row-major (Python/NumPy convention), transpose to column-major for glam
+        let m = glam::Mat4::from_cols_array_2d(&matrix).transpose();
         self.inner_mut()?.add_sample(OXformSample::from_matrix(m, inherits));
         Ok(())
     }

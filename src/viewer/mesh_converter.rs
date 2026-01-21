@@ -573,7 +573,11 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
     
     meshes.extend(converted);
     
-    // Build lookup: material_path -> material properties
+    // Resolve material inheritance FIRST (copy values from parent materials)
+    // Must happen before building mat_props lookup, otherwise inherited values won't propagate
+    resolve_material_inheritance(&mut materials);
+    
+    // Build lookup: material_path -> material properties (after inheritance resolved)
     let mat_props: std::collections::HashMap<&str, &SceneMaterial> = materials.iter()
         .map(|m| (m.path.as_str(), m))
         .collect();
@@ -593,9 +597,6 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
             }
         }
     }
-
-    // Resolve material inheritance (copy values from parent materials)
-    resolve_material_inheritance(&mut materials);
     
     CollectedScene { meshes, curves, points, cameras, lights, materials, material_assignments }
 }

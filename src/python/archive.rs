@@ -67,8 +67,11 @@ impl PyIArchive {
     }
     
     /// Check if the archive is valid.
+    ///
+    /// In Rust, this always returns true for a successfully opened archive
+    /// (construction fails if the archive is invalid).
     fn valid(&self) -> bool {
-        true
+        self.inner.valid()
     }
     
     /// Check if an object exists at path.
