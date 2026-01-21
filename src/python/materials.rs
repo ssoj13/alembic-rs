@@ -237,25 +237,23 @@ impl PyIMaterial {
     }
     
     /// Get flattened material parameters as dict.
-    fn getFlattenedParams(&self) -> HashMap<String, PyObject> {
-        Python::with_gil(|py| {
-            self.with_material(|m: &IMaterial<'_>| {
-                let flat = m.flatten();
-                let mut result = HashMap::new();
-                
-                for (target, network) in &flat.networks {
-                    for (node_name, node) in &network.nodes {
-                        for param in &node.parameters {
-                            let key = format!("{}.{}.{}", target, node_name, param.name);
-                            let value = param_to_pyobject(py, &param.value);
-                            result.insert(key, value);
-                        }
+    fn getFlattenedParams(&self, py: Python<'_>) -> HashMap<String, Py<PyAny>> {
+        self.with_material(|m: &IMaterial<'_>| {
+            let flat = m.flatten();
+            let mut result = HashMap::new();
+            
+            for (target, network) in &flat.networks {
+                for (node_name, node) in &network.nodes {
+                    for param in &node.parameters {
+                        let key = format!("{}.{}.{}", target, node_name, param.name);
+                        let value = param_to_pyobject(py, &param.value);
+                        result.insert(key, value);
                     }
                 }
-                
-                Some(result)
-            }).unwrap_or_default()
-        })
+            }
+            
+            Some(result)
+        }).unwrap_or_default()
     }
     
     /// Check if material is valid.
@@ -269,8 +267,8 @@ impl PyIMaterial {
     }
 }
 
-/// Convert ShaderParamValue to PyObject.
-fn param_to_pyobject(py: Python<'_>, value: &crate::material::ShaderParamValue) -> PyObject {
+/// Convert ShaderParamValue to Py<PyAny>.
+fn param_to_pyobject(py: Python<'_>, value: &crate::material::ShaderParamValue) -> Py<PyAny> {
     use crate::material::ShaderParamValue;
     
     match value {

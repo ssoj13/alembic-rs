@@ -168,34 +168,30 @@ impl PyICompoundProperty {
     /// Read scalar property value at sample index.
     /// Returns Python types: int, float, str, list, etc.
     #[pyo3(signature = (name, index=0))]
-    fn getScalarValue(&self, name: &str, index: usize) -> PyResult<PyObject> {
-        Python::with_gil(|py| {
-            self.with_compound(|c| {
-                let prop = c.getPropertyByName(name)?;
-                let scalar = prop.asScalar()?;
-                let hdr = scalar.getHeader();
-                
-                read_scalar_as_python(py, scalar, index, hdr.data_type)
-            })
-            .ok_or_else(|| PyValueError::new_err(format!("Failed to read scalar '{}'", name)))
+    fn getScalarValue(&self, py: Python<'_>, name: &str, index: usize) -> PyResult<Py<PyAny>> {
+        self.with_compound(|c| {
+            let prop = c.getPropertyByName(name)?;
+            let scalar = prop.asScalar()?;
+            let hdr = scalar.getHeader();
+            
+            read_scalar_as_python(py, scalar, index, hdr.data_type)
         })
+        .ok_or_else(|| PyValueError::new_err(format!("Failed to read scalar '{}'", name)))
     }
     
     /// Read array property values at sample index.
     /// Returns list of Python values.
     #[pyo3(signature = (name, index=0))]
-    fn getArrayValue(&self, name: &str, index: usize) -> PyResult<PyObject> {
-        Python::with_gil(|py| {
-            self.with_compound(|c| {
-                let prop = c.getPropertyByName(name)?;
-                let array = prop.asArray()?;
-                let hdr = array.getHeader();
-                let data = array.getSampleVec(index).ok()?;
-                
-                read_array_as_python(py, &data, hdr.data_type)
-            })
-            .ok_or_else(|| PyValueError::new_err(format!("Failed to read array '{}'", name)))
+    fn getArrayValue(&self, py: Python<'_>, name: &str, index: usize) -> PyResult<Py<PyAny>> {
+        self.with_compound(|c| {
+            let prop = c.getPropertyByName(name)?;
+            let array = prop.asArray()?;
+            let hdr = array.getHeader();
+            let data = array.getSampleVec(index).ok()?;
+            
+            read_array_as_python(py, &data, hdr.data_type)
         })
+        .ok_or_else(|| PyValueError::new_err(format!("Failed to read array '{}'", name)))
     }
     
     /// Iterate property names.
@@ -249,7 +245,7 @@ fn read_scalar_as_python(
     scalar: &dyn ScalarPropertyReader,
     index: usize,
     data_type: DataType,
-) -> Option<PyObject> {
+) -> Option<Py<PyAny>> {
     use PlainOldDataType::*;
     
     let num_samples = scalar.getNumSamples();
@@ -407,7 +403,7 @@ fn read_array_as_python(
     py: Python<'_>,
     data: &[u8],
     data_type: DataType,
-) -> Option<PyObject> {
+) -> Option<Py<PyAny>> {
     use PlainOldDataType::*;
     
     let extent = data_type.extent;

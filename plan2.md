@@ -341,20 +341,25 @@ Current test files:
 | 5 | Unconditional repaint 100% CPU | app.rs:1922 | Only `request_repaint()` when `self.playing` |
 | 6 | Python valid() always true | python/archive.rs:70 | Delegate to `self.inner.valid()` |
 
-### Pre-Existing Python Binding Bugs (discovered during verification)
+### Pre-Existing Python Binding Bugs - FIXED
 
-These errors existed before the bug hunt and need separate attention:
+| # | Issue | File:Line | Fix |
+|---|-------|-----------|-----|
+| 7 | `ICompoundProperty.property()` missing | python/object.rs:369, 428 | Changed to `getProperty()` |
+| 8 | `OPointsSample::new` type mismatch | python/write.rs:762 | Convert `Vec<u64>` to `Vec<i64>` |
+| 9 | `OSubDSample.with_scheme()` missing | python/write.rs:851 | Added builder method to struct |
 
-| Issue | File:Line | Problem |
-|-------|-----------|--------|
-| `ICompoundProperty.property()` missing | python/object.rs:369, 428 | Method doesn't exist on struct |
-| `OPointsSample::new` type mismatch | python/write.rs:762 | Expects `Vec<i64>`, got `Vec<u64>` |
-| `OSubDSample.with_scheme()` missing | python/write.rs:851 | Method doesn't exist on struct |
+### PyO3 Deprecation Warnings - FIXED
+
+| # | Issue | Files | Fix |
+|---|-------|-------|-----|
+| 10 | `PyObject` deprecated | properties.rs, materials.rs | Changed to `Py<PyAny>` |
+| 11 | `Python::with_gil` deprecated | properties.rs, materials.rs | Added `py: Python<'_>` to method signatures |
 
 **Build Status:**
 - ✅ Core library compiles
 - ✅ Viewer feature compiles  
-- ❌ Python feature has pre-existing API mismatches
+- ✅ Python feature compiles (0 warnings)
 
 ---
 

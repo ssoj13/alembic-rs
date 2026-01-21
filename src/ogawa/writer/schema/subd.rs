@@ -55,6 +55,13 @@ impl OSubDSample {
             normal_indices: None,
         }
     }
+    
+    /// Set subdivision scheme (builder pattern).
+    /// Common values: "catmullClark", "loop", "bilinear"
+    pub fn with_scheme(mut self, scheme: impl Into<String>) -> Self {
+        self.subdivision_scheme = scheme.into();
+        self
+    }
 }
 
 /// SubD schema writer.

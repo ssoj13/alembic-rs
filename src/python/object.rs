@@ -366,7 +366,7 @@ impl PyIObject {
             let geom = geom_box.asCompound()?;
             let mut names = Vec::new();
             for i in 0..geom.getNumProperties() {
-                if let Some(prop) = geom.property(i) {
+                if let Some(prop) = geom.getProperty(i) {
                     let name = prop.getName();
                     // Filter out standard properties
                     if !name.starts_with('.') && !name.is_empty() {
@@ -425,7 +425,7 @@ impl PyIObject {
             
             // Fallback: first property
             if geom.getNumProperties() > 0 {
-                if let Some(prop) = geom.property(0) {
+                if let Some(prop) = geom.getProperty(0) {
                     return Some(prop.getHeader().time_sampling_index);
                 }
             }

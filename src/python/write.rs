@@ -759,7 +759,9 @@ impl PyOPoints {
             .map(|p| glam::Vec3::new(p[0], p[1], p[2]))
             .collect();
         
-        let mut sample = OPointsSample::new(pos, ids);
+        // Convert u64 to i64 (Alembic uses signed IDs internally)
+        let ids_i64: Vec<i64> = ids.iter().map(|&id| id as i64).collect();
+        let mut sample = OPointsSample::new(pos, ids_i64);
         
         if let Some(vels) = velocities {
             sample.velocities = Some(vels.iter()
