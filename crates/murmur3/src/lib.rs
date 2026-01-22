@@ -9,6 +9,7 @@
 /// This matches Alembic's `MurmurHash3_x64_128` implementation.
 /// - `seed`: optional hash seed (None = seedless, like Alembic).
 /// - `pod_size`: POD byte size for big-endian byte swapping (C++ `podSize`).
+///
 /// Returns 128-bit hash as (h1, h2).
 /// If `pod_size` is None, no swapping is applied.
 #[inline]

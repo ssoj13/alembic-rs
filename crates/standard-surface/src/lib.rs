@@ -648,7 +648,7 @@ pub fn create_pipeline(
             module: &shader,
             entry_point: Some(fragment_entry),
             compilation_options: Default::default(),
-            targets: &color_targets,
+            targets: color_targets,
         })
     };
 
@@ -673,7 +673,7 @@ pub fn create_pipeline(
         depth_stencil: config.depth_format.map(|format| wgpu::DepthStencilState {
             format,
             depth_write_enabled: config.depth_write,
-            depth_compare: config.depth_compare.unwrap_or_else(|| {
+            depth_compare: config.depth_compare.unwrap_or({
                 if config.depth_equal {
                     wgpu::CompareFunction::LessEqual
                 } else {

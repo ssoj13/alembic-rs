@@ -775,7 +775,7 @@ impl OgawaPropertyReader {
         if dims.is_empty() && !matches!(pod, PlainOldDataType::String | PlainOldDataType::Wstring) {
             let elem_size = self.parsed.data_type.num_bytes() as u64;
             let mut num_items = (data_size - DATA_KEY_SIZE as u64) / elem_size;
-            if (data_size - DATA_KEY_SIZE as u64) % elem_size != 0 {
+            if !(data_size - DATA_KEY_SIZE as u64).is_multiple_of(elem_size) {
                 num_items += 1;
             }
             dims = vec![num_items as usize];
@@ -787,7 +787,7 @@ impl OgawaPropertyReader {
             if needed > data_size.saturating_sub(DATA_KEY_SIZE as u64) {
                 let elem_size = self.parsed.data_type.num_bytes() as u64;
                 let mut num_items = (data_size - DATA_KEY_SIZE as u64) / elem_size;
-                if (data_size - DATA_KEY_SIZE as u64) % elem_size != 0 {
+                if !(data_size - DATA_KEY_SIZE as u64).is_multiple_of(elem_size) {
                     num_items += 1;
                 }
                 dims = vec![num_items as usize];

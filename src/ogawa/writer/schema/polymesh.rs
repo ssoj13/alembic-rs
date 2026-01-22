@@ -150,8 +150,8 @@ impl OPolyMesh {
         }
         
         // Normals property created in set() if present
-        if sample.normals.is_some() {
-            if sample.normals_is_simple_array {
+        if sample.normals.is_some()
+            && sample.normals_is_simple_array {
                 let mut n_meta = MetaData::new();
                 n_meta.set("arrayExtent", "1");
                 n_meta.set("geoScope", "fvr");
@@ -166,7 +166,6 @@ impl OPolyMesh {
                 );
                 n.data_write_order = 5;
             }
-        }
         
         // === STEP 2: Write data ===
         // The actual write order is determined by data_write_order field.

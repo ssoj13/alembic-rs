@@ -489,7 +489,7 @@ fn dump_object_meta(obj: &IObject, depth: usize, pattern: Option<&str>) {
     if matches {
         let meta = obj.getMetaData();
         let schema = meta.get("schema").unwrap_or_default();
-        let type_str = schema_to_type(&schema);
+        let type_str = schema_to_type(schema);
         
         println!("{}[{}] {}", indent, type_str, name);
         

@@ -834,8 +834,8 @@ impl Renderer {
         vertices: &[Vertex],
         indices: &[u32],
     ) -> Mesh {
-        let vertex_buffer_size = std::mem::size_of::<Vertex>() * vertices.len();
-        let index_buffer_size = std::mem::size_of::<u32>() * indices.len();
+        let vertex_buffer_size = std::mem::size_of_val(vertices);
+        let index_buffer_size = std::mem::size_of_val(indices);
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mesh_vertex_buffer"),
             contents: bytemuck::cast_slice(vertices),

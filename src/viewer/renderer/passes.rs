@@ -201,6 +201,7 @@ impl Renderer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]  // Render pass needs all these GPU resources
     pub fn render_opaque_pass(
         &self,
         encoder: &mut wgpu::CommandEncoder,

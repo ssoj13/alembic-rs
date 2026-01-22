@@ -173,7 +173,7 @@ impl OArchive {
                         Some((h0, h1)) => Some(SpookyHash::short_end_mix(h0, h1, d0, d1)),
                     };
 
-                    let key_changed = prev_key.as_ref().map_or(true, |k| *k != content_key);
+                    let key_changed = prev_key.as_ref().is_none_or(|k| *k != content_key);
                     if sample_index == 0 || key_changed {
                         if sample_index > 0 && state.first_changed_index != 0 {
                             for _ in (state.last_changed_index + 1)..sample_index {
@@ -247,7 +247,7 @@ impl OArchive {
                         (*content_key.digest(), content_key)
                     };
 
-                    let key_changed = prev_key.as_ref().map_or(true, |k| *k != content_key);
+                    let key_changed = prev_key.as_ref().is_none_or(|k| *k != content_key);
                     let dims_for_hash = if key_changed {
                         &sample.dims
                     } else {

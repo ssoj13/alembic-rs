@@ -1058,6 +1058,7 @@ pub struct MeshStats {
 }
 
 /// Resolve material inheritance - fill in missing values from parent materials
+#[allow(clippy::type_complexity)]  // HashMap with tuple is clear enough for local use
 pub fn resolve_material_inheritance(materials: &mut [SceneMaterial]) {
     // Resolve in multiple passes (for chains)
     for _ in 0..10 {  // Max 10 levels of inheritance

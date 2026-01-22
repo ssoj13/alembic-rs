@@ -280,7 +280,7 @@ alembic-rs
 └── bytemuck - safe POD casting
 ```
 
-## BUGHUNT Status (2026-01-15)
+## BUGHUNT Status (2026-01-22)
 
 ### Fixed Issues
 
@@ -291,18 +291,32 @@ alembic-rs
 | Dead O* stubs in abc/mod.rs | ✅ Fixed - removed |
 | Code duplication (~60 lines) | ✅ Fixed - shared helpers in OProperty |
 
-### Remaining Items
+### Current Analysis (2026-01-22)
 
 | Category | Count | Severity |
 |----------|-------|----------|
-| Dead code annotations | 31 | Low (intentional for GPU resources) |
-| ICamera doesn't use geom::util | 1 | Low |
-| TODO in viewport.rs | 1 | Low |
-| Viewer perf: curves/points re-upload | 2 | Medium |
-| Viewer correctness: weak vertex hash | 1 | Medium |
-| Viewer UX: mouse mapping mismatch | 1 | Low |
+| Critical Bugs (unwrap/panic) | 3 | HIGH |
+| Logic Bugs | 14 | MEDIUM |
+| Dead code markers | 37 | LOW |
+| Unused Functions | 17 | MEDIUM |
+| Error Handling Issues | 18 | HIGH |
+| Interface Inconsistencies | 8 | MEDIUM |
+| Code Duplication | 12 | LOW |
+| Clippy Warnings | 22 | LOW |
+
+### Critical Bugs Found
+
+1. **abc_impl.rs:247** - `unwrap()` on Option in `findObject()` can panic
+2. **writer/property.rs:280,296,314** - `panic!()` in public API methods
+3. **writer/archive/properties.rs:169-170** - `unwrap()` on slice conversion
+
+### Tests Status
+
+- **Unit tests**: 109 passed ✅
+- **Integration test**: 1 failed (missing test data file `gears_out.abc`)
+- **Clippy**: 22 warnings (all fixable)
 
 ### See Also
 
-- [BUGHUNT_REPORT.md](./BUGHUNT_REPORT.md) - Full analysis and fix details
+- [PLAN1.md](./PLAN1.md) - Full bug hunt report with recommendations
 - [DIAGRAMS.md](./DIAGRAMS.md) - Architecture diagrams

@@ -295,11 +295,10 @@ impl ViewerApp {
                 .hint_text("wheel*")
                 .desired_width(ui.available_width()));
         });
-        if !self.object_filter.is_empty() {
-            if ui.small_button("✕ Clear").clicked() {
+        if !self.object_filter.is_empty()
+            && ui.small_button("✕ Clear").clicked() {
                 self.object_filter.clear();
             }
-        }
         ui.separator();
 
         let filter = self.object_filter.to_lowercase();
@@ -1267,7 +1266,7 @@ impl ViewerApp {
                     }
                 }
             } else if let Some(subd) = crate::geom::ISubD::new(obj) {
-                ui.label(format!("Type: SubD"));
+                ui.label("Type: SubD".to_string());
                 let num_samples = subd.getNumSamples();
                 ui.label(format!("Samples: {}", num_samples));
                 let sample_idx = if num_samples > 0 {
@@ -1283,7 +1282,7 @@ impl ViewerApp {
                     }
                 }
             } else if let Some(curves) = crate::geom::ICurves::new(obj) {
-                ui.label(format!("Type: Curves"));
+                ui.label("Type: Curves".to_string());
                 let num_samples = curves.getNumSamples();
                 ui.label(format!("Samples: {}", num_samples));
                 let sample_idx = if num_samples > 0 {
@@ -1299,7 +1298,7 @@ impl ViewerApp {
                     }
                 }
             } else if let Some(points) = crate::geom::IPoints::new(obj) {
-                ui.label(format!("Type: Points"));
+                ui.label("Type: Points".to_string());
                 let num_samples = points.getNumSamples();
                 ui.label(format!("Samples: {}", num_samples));
                 let sample_idx = if num_samples > 0 {
@@ -1320,10 +1319,10 @@ impl ViewerApp {
                     }
                 }
             } else if let Some(light) = crate::geom::ILight::new(obj) {
-                ui.label(format!("Type: Light"));
+                ui.label("Type: Light".to_string());
                 ui.label(format!("Samples: {}", light.getNumSamples()));
             } else if let Some(mat) = crate::material::IMaterial::new(obj) {
-                ui.label(format!("Type: Material"));
+                ui.label("Type: Material".to_string());
                 let targets = mat.target_names();
                 ui.label(format!("Targets: {}", targets.join(", ")));
                 if mat.has_inheritance() {
