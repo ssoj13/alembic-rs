@@ -153,7 +153,7 @@ fn test_explore_structure() {
     println!("\n=== Exploring chess3.abc structure ===");
     println!("File size: {} bytes", archive.streams().size());
     
-    explore_group(&root, "", 0, 3);
+    explore_group(root, "", 0, 3);
 }
 
 fn explore_group(group: &alembic::ogawa::IGroup, prefix: &str, depth: usize, max_depth: usize) {
@@ -193,37 +193,35 @@ fn explore_group(group: &alembic::ogawa::IGroup, prefix: &str, depth: usize, max
                     }
                 }
             }
+        } else if actual_offset == 0 {
+            println!("{}{}{}: Empty Data", indent, prefix, i);
         } else {
-            if actual_offset == 0 {
-                println!("{}{}{}: Empty Data", indent, prefix, i);
-            } else {
-                match group.data(i) {
-                    Ok(data) => {
-                        println!("{}{}{}: Data @ 0x{:X} ({} bytes)", 
-                                indent, prefix, i, actual_offset, data.size());
-                        
-                        // Try to read and interpret small data blocks
-                        if data.size() > 0 && data.size() < 200 {
-                            if let Ok(bytes) = data.read_all() {
-                                // Check if it looks like a string
-                                if bytes.iter().all(|&b| b == 0 || (b >= 32 && b < 127)) {
-                                    if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                        let s = s.trim_matches('\0');
-                                        if !s.is_empty() && s.len() < 100 {
-                                            println!("{}     String: \"{}\"", indent, s);
-                                        }
+            match group.data(i) {
+                Ok(data) => {
+                    println!("{}{}{}: Data @ 0x{:X} ({} bytes)", 
+                            indent, prefix, i, actual_offset, data.size());
+                    
+                    // Try to read and interpret small data blocks
+                    if data.size() > 0 && data.size() < 200 {
+                        if let Ok(bytes) = data.read_all() {
+                            // Check if it looks like a string
+                            if bytes.iter().all(|&b| b == 0 || (32..127).contains(&b)) {
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    let s = s.trim_matches('\0');
+                                    if !s.is_empty() && s.len() < 100 {
+                                        println!("{}     String: \"{}\"", indent, s);
                                     }
                                 }
-                                if bytes.len() <= 64 {
-                                    println!("{}     Hex: {:02X?}", indent, &bytes[..bytes.len().min(32)]);
-                                }
+                            }
+                            if bytes.len() <= 64 {
+                                println!("{}     Hex: {:02X?}", indent, &bytes[..bytes.len().min(32)]);
                             }
                         }
                     }
-                    Err(e) => {
-                        println!("{}{}{}: Data @ 0x{:X} - Error: {:?}", 
-                                indent, prefix, i, actual_offset, e);
-                    }
+                }
+                Err(e) => {
+                    println!("{}{}{}: Data @ 0x{:X} - Error: {:?}", 
+                            indent, prefix, i, actual_offset, e);
                 }
             }
         }
@@ -385,7 +383,7 @@ fn test_read_alembic_header_data() {
                                 if data.size() > 0 && data.size() < 200 {
                                     if let Ok(bytes) = data.read_all() {
                                         // Check if string-like
-                                        if bytes.iter().all(|&b| b == 0 || (b >= 32 && b < 127)) {
+                                        if bytes.iter().all(|&b| b == 0 || (32..127).contains(&b)) {
                                             if let Ok(s) = String::from_utf8(bytes.clone()) {
                                                 let s = s.trim_matches('\0');
                                                 if !s.is_empty() {

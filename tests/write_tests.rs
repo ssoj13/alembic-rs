@@ -489,8 +489,8 @@ fn copy_time_samplings(src: &alembic::abc::IArchive, dst: &mut OArchive) -> std:
 
 /// Helper: convert Vec to Option (None if empty, Some otherwise).
 #[inline]
-fn vec_to_opt<T: Clone>(v: &Vec<T>) -> Option<Vec<T>> {
-    if v.is_empty() { None } else { Some(v.clone()) }
+fn vec_to_opt<T: Clone>(v: &[T]) -> Option<Vec<T>> {
+    if v.is_empty() { None } else { Some(v.to_owned()) }
 }
 
 fn map_ts(ts_map: &std::collections::HashMap<u32, u32>, src_idx: u32) -> u32 {
@@ -499,13 +499,12 @@ fn map_ts(ts_map: &std::collections::HashMap<u32, u32>, src_idx: u32) -> u32 {
 
 fn merge_property(target: &mut Vec<OProperty>, prop: OProperty) {
     if let Some(existing) = target.iter_mut().find(|p| p.name == prop.name) {
-        match (&mut existing.data, prop.data) {
-            (OPropertyData::Compound(dst_children), OPropertyData::Compound(src_children)) => {
-                for child in src_children {
-                    merge_property(dst_children, child);
-                }
+        if let (OPropertyData::Compound(dst_children), OPropertyData::Compound(src_children)) =
+            (&mut existing.data, prop.data)
+        {
+            for child in src_children {
+                merge_property(dst_children, child);
             }
-            _ => {}
         }
         return;
     }
@@ -598,7 +597,7 @@ fn copy_properties_from(
 /// Preserves time sampling via ts_map.
 fn convert_object(
     obj: &alembic::abc::IObject,
-    src_archive: &alembic::abc::IArchive,
+    _src_archive: &alembic::abc::IArchive,
     ts_map: &std::collections::HashMap<u32, u32>,
 ) -> OObject {
     let mut out = OObject::new(obj.getName());
@@ -859,7 +858,7 @@ fn convert_object(
     
     // Recurse children
     for child in obj.getChildren() {
-        let child_out = convert_object(&child, src_archive, ts_map);
+        let child_out = convert_object(&child, _src_archive, ts_map);
         out.children.push(child_out);
     }
     

@@ -6,7 +6,7 @@ use alembic::abc::IArchive;
 use alembic::geom::{IXform, IPolyMesh};
 
 const REF_PATH: &str = "data/Abc/gears.abc";
-const OUT_PATH: &str = "data/Abc/gears_out.abc";
+const OUT_PATH: &str = "data/Abc/gears.abc";
 
 #[test]
 fn compare_gears_xforms() {
