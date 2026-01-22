@@ -68,6 +68,69 @@ fn alembic_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     
     // Register AbcGeom submodule (geometry schemas)
     let abc_geom = PyModule::new(m.py(), "AbcGeom")?;
+    
+    // ========================================================================
+    // GeometryScope constants (matches original Alembic API)
+    // ========================================================================
+    abc_geom.add("kConstantScope", 0u8)?;
+    abc_geom.add("kUniformScope", 1u8)?;
+    abc_geom.add("kVaryingScope", 2u8)?;
+    abc_geom.add("kVertexScope", 3u8)?;
+    abc_geom.add("kFacevaryingScope", 4u8)?;
+    abc_geom.add("kUnknownScope", 127u8)?;
+    
+    // ========================================================================
+    // CurveType constants
+    // ========================================================================
+    abc_geom.add("kCubic", 0u8)?;
+    abc_geom.add("kLinear", 1u8)?;
+    abc_geom.add("kBezier", 2u8)?;
+    abc_geom.add("kBspline", 3u8)?;
+    abc_geom.add("kCatmullRom", 4u8)?;
+    abc_geom.add("kHermite", 5u8)?;
+    
+    // ========================================================================
+    // CurvePeriodicity constants
+    // ========================================================================
+    abc_geom.add("kNonPeriodic", 0u8)?;
+    abc_geom.add("kPeriodic", 1u8)?;
+    
+    // ========================================================================
+    // BasisType constants
+    // ========================================================================
+    abc_geom.add("kNoBasis", 0u8)?;
+    abc_geom.add("kBezierBasis", 1u8)?;
+    abc_geom.add("kBsplineBasis", 2u8)?;
+    abc_geom.add("kCatmullRomBasis", 3u8)?;
+    abc_geom.add("kHermiteBasis", 4u8)?;
+    abc_geom.add("kPowerBasis", 5u8)?;
+    
+    // ========================================================================
+    // SubDScheme constants
+    // ========================================================================
+    abc_geom.add("kCatmullClark", 0u8)?;
+    abc_geom.add("kLoop", 1u8)?;
+    abc_geom.add("kBilinear", 2u8)?;
+    
+    // ========================================================================
+    // TopologyVariance constants
+    // ========================================================================
+    abc_geom.add("kHeterogeneous", 0u8)?;
+    abc_geom.add("kHomogeneous", 1u8)?;
+    abc_geom.add("kStatic", 2u8)?;
+    
+    // ========================================================================
+    // FaceSetExclusivity constants
+    // ========================================================================
+    abc_geom.add("kFaceSetNonExclusive", 0u8)?;
+    abc_geom.add("kFaceSetExclusive", 1u8)?;
+    
+    // ========================================================================
+    // ObjectVisibility constants
+    // ========================================================================
+    abc_geom.add("kVisibilityDeferred", -1i8)?;
+    abc_geom.add("kVisibilityHidden", 0i8)?;
+    abc_geom.add("kVisibilityVisible", 1i8)?;
     abc_geom.add_class::<geom::PyPolyMeshSample>()?;
     abc_geom.add_class::<geom::PySubDSample>()?;
     abc_geom.add_class::<geom::PyCurvesSample>()?;

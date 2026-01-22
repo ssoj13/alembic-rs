@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use crate::abc::IArchive;
 use crate::geom::{IPolyMesh, ISubD, ICurves, IPoints, ICamera, ILight, IXform, INuPatch, IFaceSet};
+use super::geom::PyIFaceSet;
 use super::geom::{
     PyPolyMeshSample, PySubDSample, PyCurvesSample, PyPointsSample,
     PyCameraSample, PyXformSample, PyLightSample, PyNuPatchSample, PyFaceSetSample,
@@ -133,6 +134,78 @@ impl PyIPolyMeshSchema {
     /// Get time sampling index.
     fn getTimeSamplingIndex(&self) -> u32 {
         self.with_mesh(|m| Some(m.getTimeSamplingIndex())).unwrap_or(0)
+    }
+    
+    /// Get topology variance (kHeterogeneous=0, kHomogeneous=1, kStatic=2).
+    fn getTopologyVariance(&self) -> u8 {
+        self.with_mesh(|m| {
+            let tv = m.topology_variance();
+            Some(match tv {
+                crate::core::TopologyVariance::Heterogeneous => 0,
+                crate::core::TopologyVariance::Homogeneous => 1,
+                crate::core::TopologyVariance::Static => 2,
+            })
+        }).unwrap_or(0)
+    }
+    
+    /// Get list of face set names.
+    fn getFaceSetNames(&self) -> Vec<String> {
+        self.with_mesh(|m| Some(m.face_set_names())).unwrap_or_default()
+    }
+    
+    /// Check if mesh has a face set with given name.
+    fn hasFaceSet(&self, name: &str) -> bool {
+        self.with_mesh(|m| Some(m.has_face_set(name))).unwrap_or(false)
+    }
+    
+    /// Get number of face sets.
+    fn getNumFaceSets(&self) -> usize {
+        self.with_mesh(|m| Some(m.num_face_sets())).unwrap_or(0)
+    }
+    
+    /// Get a face set by name.
+    fn getFaceSet(&self, name: &str) -> Option<PyIFaceSet> {
+        let full_path = if self.path.is_empty() {
+            format!("/{}", name)
+        } else {
+            format!("/{}/{}", self.path.join("/"), name)
+        };
+        // Verify it exists
+        if self.with_mesh(|m| Some(m.has_face_set(name))).unwrap_or(false) {
+            Some(PyIFaceSet::new(self.archive.clone(), full_path))
+        } else {
+            None
+        }
+    }
+    
+    /// Check if mesh has arbitrary geom params.
+    fn hasArbGeomParams(&self) -> bool {
+        self.with_mesh(|m| Some(m.has_arb_geom_params())).unwrap_or(false)
+    }
+    
+    /// Get list of arbitrary geom param names.
+    fn getArbGeomParamNames(&self) -> Vec<String> {
+        self.with_mesh(|m| Some(m.arb_geom_param_names())).unwrap_or_default()
+    }
+    
+    /// Check if mesh has user properties.
+    fn hasUserProperties(&self) -> bool {
+        self.with_mesh(|m| Some(m.has_user_properties())).unwrap_or(false)
+    }
+    
+    /// Get list of user property names.
+    fn getUserPropertyNames(&self) -> Vec<String> {
+        self.with_mesh(|m| Some(m.user_property_names())).unwrap_or_default()
+    }
+    
+    /// Check if mesh has UVs param.
+    fn hasUVs(&self) -> bool {
+        self.with_mesh(|m| Some(m.has_uvs())).unwrap_or(false)
+    }
+    
+    /// Check if mesh has normals param.
+    fn hasNormals(&self) -> bool {
+        self.with_mesh(|m| Some(m.has_normals())).unwrap_or(false)
     }
     
     fn __repr__(&self) -> String {
@@ -360,6 +433,41 @@ impl PyISubDSchema {
     }
     
     fn getTimeSamplingIndex(&self) -> u32 { self.with_subd(|s| Some(s.getTimeSamplingIndex())).unwrap_or(0) }
+    
+    /// Get subdivision scheme (kCatmullClark=0, kLoop=1, kBilinear=2).
+    fn getSubdivisionScheme(&self) -> u8 {
+        self.with_subd(|s| {
+            s.getSample(0).ok().map(|sample| {
+                match sample.scheme {
+                    crate::geom::SubDScheme::CatmullClark => 0,
+                    crate::geom::SubDScheme::Loop => 1,
+                    crate::geom::SubDScheme::Bilinear => 2,
+                }
+            })
+        }).flatten().unwrap_or(0)
+    }
+    
+    /// Get face-varying interpolate boundary value.
+    fn getFaceVaryingInterpolateBoundary(&self) -> i32 {
+        self.with_subd(|s| {
+            s.getSample(0).ok().map(|sample| sample.fv_interp_boundary)
+        }).flatten().unwrap_or(0)
+    }
+    
+    /// Get face-varying propagate corners flag.
+    fn getFaceVaryingPropagateCornersFlag(&self) -> i32 {
+        self.with_subd(|s| {
+            s.getSample(0).ok().map(|sample| sample.fv_propagate_corners)
+        }).flatten().unwrap_or(0)
+    }
+    
+    /// Get interpolate boundary value.
+    fn getInterpolateBoundary(&self) -> i32 {
+        self.with_subd(|s| {
+            s.getSample(0).ok().map(|sample| sample.interp_boundary)
+        }).flatten().unwrap_or(0)
+    }
+    
     fn __repr__(&self) -> String { format!("<ISubDSchema {} samples>", self.getNumSamples()) }
 }
 
@@ -438,6 +546,28 @@ impl PyICurvesSchema {
     }
     
     fn getTimeSamplingIndex(&self) -> u32 { self.with_curves(|c| Some(c.getTimeSamplingIndex())).unwrap_or(0) }
+    
+    /// Get curve type (kCubic=0, kLinear=1, kBezier=2, kBspline=3, kCatmullRom=4, kHermite=5).
+    fn getCurveType(&self) -> u8 {
+        self.with_curves(|c| {
+            c.getSample(0).ok().map(|sample| sample.curve_type.to_u8())
+        }).flatten().unwrap_or(0)
+    }
+    
+    /// Get curve periodicity (kNonPeriodic=0, kPeriodic=1).
+    fn getCurvePeriodicity(&self) -> u8 {
+        self.with_curves(|c| {
+            c.getSample(0).ok().map(|sample| sample.periodicity.to_u8())
+        }).flatten().unwrap_or(0)
+    }
+    
+    /// Get basis type (kNoBasis=0, kBezierBasis=1, kBsplineBasis=2, kCatmullRomBasis=3, kHermiteBasis=4, kPowerBasis=5).
+    fn getBasis(&self) -> u8 {
+        self.with_curves(|c| {
+            c.getSample(0).ok().map(|sample| sample.basis.to_u8())
+        }).flatten().unwrap_or(0)
+    }
+    
     fn __repr__(&self) -> String { format!("<ICurvesSchema {} samples>", self.getNumSamples()) }
 }
 
