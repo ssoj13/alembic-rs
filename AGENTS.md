@@ -201,6 +201,48 @@ Time Sampling Notes (reference)
 Screen
 ```
 
+## Viewer Frame Update (Current)
+
+```
+UI Thread (eframe::App::update)
+    |
+    v
+process_worker_results()  <-- non-blocking recv
+    |
+    v
+apply_scene(frame, CollectedScene)
+    |
+    |-- update stats + bounds + floor + scene lights/cameras
+    |-- retain meshes/curves by path (points NOT retained)
+    |-- meshes:
+    |     update transform
+    |     if vertex_hash changed -> recreate GPU buffers
+    |     else -> reuse
+    |-- curves:
+    |     add_curves() always creates new buffers + bind groups
+    |-- points:
+    |     add_points() always creates new buffers + bind groups
+    |
+    v
+Renderer::render() -> GPU passes
+```
+
+## Camera Input Mapping (Current vs Desired)
+
+```
+Current (viewport.rs):
+  LMB drag  -> orbit
+  MMB drag  -> pan
+  Shift+LMB -> pan
+  Wheel     -> zoom
+
+Desired (Houdini/Maya-like):
+  LMB drag  -> orbit
+  MMB drag  -> pan
+  RMB drag  -> zoom
+  Wheel     -> (optional) zoom
+```
+
 ## Key Data Structures
 
 ```
@@ -256,6 +298,9 @@ alembic-rs
 | Dead code annotations | 31 | Low (intentional for GPU resources) |
 | ICamera doesn't use geom::util | 1 | Low |
 | TODO in viewport.rs | 1 | Low |
+| Viewer perf: curves/points re-upload | 2 | Medium |
+| Viewer correctness: weak vertex hash | 1 | Medium |
+| Viewer UX: mouse mapping mismatch | 1 | Low |
 
 ### See Also
 

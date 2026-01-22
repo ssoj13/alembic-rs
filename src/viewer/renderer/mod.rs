@@ -124,6 +124,8 @@ pub struct Mesh {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
+    vertex_buffer_size: usize,
+    index_buffer_size: usize,
 }
 
 /// Scene mesh with transform and material
@@ -144,24 +146,27 @@ pub struct SceneMesh {
     pub smooth_dirty: bool,
 }
 
-/// Compute a quick hash for vertex change detection
-/// Uses vertex count + first/last position for speed
-pub fn compute_vertex_hash(vertices: &[standard_surface::Vertex]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    vertices.len().hash(&mut hasher);
-    if let Some(first) = vertices.first() {
-        // Hash first vertex position as bits
-        first.position[0].to_bits().hash(&mut hasher);
-        first.position[1].to_bits().hash(&mut hasher);
-        first.position[2].to_bits().hash(&mut hasher);
-    }
-    if let Some(last) = vertices.last() {
-        last.position[0].to_bits().hash(&mut hasher);
-        last.position[1].to_bits().hash(&mut hasher);
-        last.position[2].to_bits().hash(&mut hasher);
-    }
-    hasher.finish()
+/// Compute a content hash for mesh data (vertices + indices).
+pub fn compute_mesh_hash(vertices: &[standard_surface::Vertex], indices: &[u32]) -> u64 {
+    let vert_bytes = bytemuck::cast_slice(vertices);
+    let index_bytes = bytemuck::cast_slice(indices);
+    let (h1, h2) = spooky_hash::SpookyHash::hash128(vert_bytes, 0, 0);
+    let (h3, h4) = spooky_hash::SpookyHash::hash128(index_bytes, h1, h2);
+    h3 ^ h4
+}
+
+/// Compute a content hash for curves (vertices + indices).
+pub fn compute_curves_hash(vertices: &[standard_surface::Vertex], indices: &[u32]) -> u64 {
+    compute_mesh_hash(vertices, indices)
+}
+
+/// Compute a content hash for points (positions + widths).
+pub fn compute_points_hash(positions: &[[f32; 3]], widths: &[f32]) -> u64 {
+    let pos_bytes = bytemuck::cast_slice(positions);
+    let width_bytes = bytemuck::cast_slice(widths);
+    let (h1, h2) = spooky_hash::SpookyHash::hash128(pos_bytes, 0, 0);
+    let (h3, h4) = spooky_hash::SpookyHash::hash128(width_bytes, h1, h2);
+    h3 ^ h4
 }
 
 /// Compute average opacity from material params.
@@ -227,6 +232,7 @@ pub struct SceneCurves {
     #[allow(dead_code)] // kept for potential animation updates
     pub transform: Mat4,
     pub bounds: (Vec3, Vec3),
+    pub data_hash: u64,
     #[allow(dead_code)]
     pub name: String,
 }
@@ -235,6 +241,7 @@ pub struct SceneCurves {
 pub struct ScenePoints {
     pub vertex_buffer: wgpu::Buffer,
     pub vertex_count: u32,
+    pub vertex_buffer_size: usize,
     pub material_bind_group: wgpu::BindGroup,
     pub model_bind_group: wgpu::BindGroup,
     #[allow(dead_code)]
@@ -242,6 +249,7 @@ pub struct ScenePoints {
     #[allow(dead_code)]
     pub transform: Mat4,
     pub bounds: (Vec3, Vec3),
+    pub data_hash: u64,
     #[allow(dead_code)]
     pub name: String,
     /// Per-point widths (radius) for point sprites (not yet used in rendering)
@@ -815,18 +823,26 @@ impl Renderer {
             vertex_buffer,
             index_buffer,
             index_count: indices.len() as u32,
+            vertex_buffer_size: std::mem::size_of::<Vertex>() * vertices.len(),
+            index_buffer_size: std::mem::size_of::<u32>() * indices.len(),
         });
     }
 
     /// Create a mesh from vertices and indices
-    pub fn create_mesh(&self, vertices: &[Vertex], indices: &[u32]) -> Mesh {
-        let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    pub fn create_mesh(
+        device: &wgpu::Device,
+        vertices: &[Vertex],
+        indices: &[u32],
+    ) -> Mesh {
+        let vertex_buffer_size = std::mem::size_of::<Vertex>() * vertices.len();
+        let index_buffer_size = std::mem::size_of::<u32>() * indices.len();
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mesh_vertex_buffer"),
             contents: bytemuck::cast_slice(vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
 
-        let index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mesh_index_buffer"),
             contents: bytemuck::cast_slice(indices),
             usage: wgpu::BufferUsages::INDEX,
@@ -836,6 +852,8 @@ impl Renderer {
             vertex_buffer,
             index_buffer,
             index_count: indices.len() as u32,
+            vertex_buffer_size,
+            index_buffer_size,
         }
     }
 
@@ -849,7 +867,7 @@ impl Renderer {
         params: &StandardSurfaceParams,
         smooth_data: Option<SmoothNormalData>,
     ) {
-        let mesh = self.create_mesh(vertices, indices);
+        let mesh = Self::create_mesh(&self.device, vertices, indices);
 
         // Material
         let material_buffer = standard_surface::create_material_buffer(&self.device, params);
@@ -889,7 +907,7 @@ impl Renderer {
             model_bind_group,
             model_buffer,
             transform,
-            vertex_hash: compute_vertex_hash(vertices),
+            vertex_hash: compute_mesh_hash(vertices, indices),
             bounds,
             opacity,
             name,
@@ -908,7 +926,8 @@ impl Renderer {
         transform: Mat4,
         params: &StandardSurfaceParams,
     ) {
-        let mesh = self.create_mesh(vertices, indices);
+        let mesh = Self::create_mesh(&self.device, vertices, indices);
+        let data_hash = compute_curves_hash(vertices, indices);
         
         // Material (using same system as meshes)
         let material_buffer = standard_surface::create_material_buffer(&self.device, params);
@@ -948,6 +967,7 @@ impl Renderer {
             model_buffer,
             transform,
             bounds,
+            data_hash,
             name,
         });
     }
@@ -972,6 +992,7 @@ impl Renderer {
             uv: [0.0, 0.0],
         }).collect();
 
+        let vertex_buffer_size = std::mem::size_of::<Vertex>() * vertices.len();
         let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("points_vertex_buffer"),
             contents: bytemuck::cast_slice(&vertices),
@@ -1009,14 +1030,17 @@ impl Renderer {
         // Calculate bounds
         let bounds = compute_points_bounds(positions, transform);
         
+        let data_hash = compute_points_hash(positions, widths);
         self.points.insert(name.clone(), ScenePoints {
             vertex_buffer,
             vertex_count: positions.len() as u32,
+            vertex_buffer_size,
             material_bind_group,
             model_bind_group,
             model_buffer,
             transform,
             bounds,
+            data_hash,
             name,
             widths: widths.to_vec(),
         });
@@ -1096,11 +1120,22 @@ impl Renderer {
         if !self.meshes.contains_key(name) {
             return false;
         }
-        // Create new mesh first to avoid borrow issues
-        let new_mesh = self.create_mesh(vertices, indices);
-        let new_hash = compute_vertex_hash(vertices);
+        let new_hash = compute_mesh_hash(vertices, indices);
+        let vertex_bytes = bytemuck::cast_slice(vertices);
+        let index_bytes = bytemuck::cast_slice(indices);
+        let vertex_size = vertex_bytes.len();
+        let index_size = index_bytes.len();
         if let Some(scene_mesh) = self.meshes.get_mut(name) {
-            scene_mesh.mesh = new_mesh;
+            if vertex_size <= scene_mesh.mesh.vertex_buffer_size
+                && index_size <= scene_mesh.mesh.index_buffer_size
+            {
+                self.queue.write_buffer(&scene_mesh.mesh.vertex_buffer, 0, vertex_bytes);
+                self.queue.write_buffer(&scene_mesh.mesh.index_buffer, 0, index_bytes);
+                scene_mesh.mesh.index_count = indices.len() as u32;
+            } else {
+                let new_mesh = Self::create_mesh(&self.device, vertices, indices);
+                scene_mesh.mesh = new_mesh;
+            }
             scene_mesh.vertex_hash = new_hash;
             scene_mesh.bounds = compute_mesh_bounds(vertices, scene_mesh.transform);
             scene_mesh.base_vertices = Some(vertices.to_vec());
@@ -1167,6 +1202,99 @@ impl Renderer {
             return true;
         }
         false
+    }
+
+    /// Update curves vertices/indices for existing curves
+    pub fn update_curves_vertices(&mut self, name: &str, vertices: &[Vertex], indices: &[u32]) -> bool {
+        if !self.curves.contains_key(name) {
+            return false;
+        }
+        let new_hash = compute_curves_hash(vertices, indices);
+        let vertex_bytes = bytemuck::cast_slice(vertices);
+        let index_bytes = bytemuck::cast_slice(indices);
+        let vertex_size = vertex_bytes.len();
+        let index_size = index_bytes.len();
+        if let Some(curves) = self.curves.get_mut(name) {
+            if vertex_size <= curves.mesh.vertex_buffer_size
+                && index_size <= curves.mesh.index_buffer_size
+            {
+                self.queue.write_buffer(&curves.mesh.vertex_buffer, 0, vertex_bytes);
+                self.queue.write_buffer(&curves.mesh.index_buffer, 0, index_bytes);
+                curves.mesh.index_count = indices.len() as u32;
+            } else {
+                let new_mesh = Self::create_mesh(&self.device, vertices, indices);
+                curves.mesh = new_mesh;
+            }
+            curves.data_hash = new_hash;
+            curves.bounds = compute_mesh_bounds(vertices, curves.transform);
+        }
+        true
+    }
+
+    /// Check if curves exist
+    pub fn has_curves(&self, name: &str) -> bool {
+        self.curves.contains_key(name)
+    }
+
+    /// Get curves hash for change detection
+    pub fn get_curves_hash(&self, name: &str) -> Option<u64> {
+        self.curves.get(name).map(|c| c.data_hash)
+    }
+
+    /// Update points transform
+    #[allow(dead_code)]
+    pub fn update_points_transform(&mut self, name: &str, transform: Mat4) -> bool {
+        if let Some(points) = self.points.get_mut(name) {
+            let normal_matrix = transform.inverse().transpose();
+            let model_uniform = ModelUniform {
+                model: transform.to_cols_array_2d(),
+                normal_matrix: normal_matrix.to_cols_array_2d(),
+            };
+            self.queue.write_buffer(
+                &points.model_buffer,
+                0,
+                bytemuck::bytes_of(&model_uniform),
+            );
+            return true;
+        }
+        false
+    }
+
+    /// Update points vertices for existing points
+    pub fn update_points_vertices(&mut self, name: &str, positions: &[[f32; 3]], widths: &[f32]) -> bool {
+        if !self.points.contains_key(name) {
+            return false;
+        }
+        let new_hash = compute_points_hash(positions, widths);
+        let vertices: Vec<Vertex> = positions.iter().map(|pos| Vertex {
+            position: *pos,
+            normal: [0.0, 1.0, 0.0],
+            uv: [0.0, 0.0],
+        }).collect();
+        let vertex_bytes = bytemuck::cast_slice(&vertices);
+        let vertex_size = vertex_bytes.len();
+        if let Some(points) = self.points.get_mut(name) {
+            if vertex_size <= points.vertex_buffer_size {
+                self.queue.write_buffer(&points.vertex_buffer, 0, vertex_bytes);
+            } else {
+                points.vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("points_vertex_buffer"),
+                    contents: vertex_bytes,
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+                points.vertex_buffer_size = vertex_size;
+            }
+            points.vertex_count = positions.len() as u32;
+            points.data_hash = new_hash;
+            points.bounds = compute_points_bounds(positions, points.transform);
+            points.widths = widths.to_vec();
+        }
+        true
+    }
+
+    /// Get points hash for change detection
+    pub fn get_points_hash(&self, name: &str) -> Option<u64> {
+        self.points.get(name).map(|p| p.data_hash)
     }
 
     /// Load HDR/EXR environment map
@@ -1276,6 +1404,8 @@ impl Renderer {
                 vertex_buffer,
                 index_buffer,
                 index_count: indices.len() as u32,
+                vertex_buffer_size: std::mem::size_of::<Vertex>() * vertices.len(),
+                index_buffer_size: std::mem::size_of::<u32>() * indices.len(),
             },
             material_bind_group,
             model_bind_group,

@@ -81,17 +81,17 @@ pub struct ConvertedMesh {
 /// Converted curves data ready for GPU (as line strips)
 pub struct ConvertedCurves {
     pub path: String,
-    pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
+    pub vertices: Arc<Vec<Vertex>>,
+    pub indices: Arc<Vec<u32>>,
     pub transform: Mat4,
 }
 
 /// Converted points data ready for GPU
 pub struct ConvertedPoints {
     pub path: String,
-    pub positions: Vec<[f32; 3]>,
+    pub positions: Arc<Vec<[f32; 3]>>,
     #[allow(dead_code)]
-    pub widths: Vec<f32>,  // radius per point
+    pub widths: Arc<Vec<f32>>,  // radius per point
     pub transform: Mat4,
     pub bounds: Bounds,
 }
@@ -250,8 +250,8 @@ pub fn convert_curves(sample: &CurvesSample, path: &str, transform: Mat4) -> Opt
     
     Some(ConvertedCurves {
         path: path.to_string(),
-        vertices,
-        indices,
+        vertices: Arc::new(vertices),
+        indices: Arc::new(indices),
         transform,
     })
 }
@@ -442,8 +442,8 @@ pub fn convert_points(sample: &PointsSample, path: &str, transform: Mat4) -> Opt
     
     Some(ConvertedPoints {
         path: path.to_string(),
-        positions,
-        widths,
+        positions: Arc::new(positions),
+        widths: Arc::new(widths),
         transform,
         bounds,
     })
@@ -470,12 +470,38 @@ pub(crate) struct CachedMesh {
     local_bounds: Bounds,
 }
 
-/// Thread-safe mesh cache for constant geometry
-pub type MeshCache = Arc<Mutex<HashMap<String, CachedMesh>>>;
+/// Cached curves data for constant geometry
+#[derive(Clone)]
+pub(crate) struct CachedCurves {
+    vertices: Arc<Vec<Vertex>>,
+    indices: Arc<Vec<u32>>,
+}
+
+/// Cached points data for constant geometry
+#[derive(Clone)]
+pub(crate) struct CachedPoints {
+    positions: Arc<Vec<[f32; 3]>>,
+    widths: Arc<Vec<f32>>,
+    local_bounds: Bounds,
+}
+
+/// Thread-safe caches for constant geometry
+pub struct MeshCacheData {
+    meshes: HashMap<String, CachedMesh>,
+    curves: HashMap<String, CachedCurves>,
+    points: HashMap<String, CachedPoints>,
+}
+
+/// Thread-safe cache handle
+pub type MeshCache = Arc<Mutex<MeshCacheData>>;
 
 /// Create a new empty mesh cache
 pub fn new_mesh_cache() -> MeshCache {
-    Arc::new(Mutex::new(HashMap::new()))
+    Arc::new(Mutex::new(MeshCacheData {
+        meshes: HashMap::new(),
+        curves: HashMap::new(),
+        points: HashMap::new(),
+    }))
 }
 
 
@@ -496,10 +522,27 @@ struct CachedResult {
     local_bounds: Bounds,
 }
 
+struct CachedCurvesResult {
+    path: String,
+    vertices: Arc<Vec<Vertex>>,
+    indices: Arc<Vec<u32>>,
+    transform: Mat4,
+}
+
+struct CachedPointsResult {
+    path: String,
+    positions: Arc<Vec<[f32; 3]>>,
+    widths: Arc<Vec<f32>>,
+    transform: Mat4,
+    local_bounds: Bounds,
+}
+
 /// Recursively collect all geometry with optional caching for constant meshes
 pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize, cache: Option<&MeshCache>) -> CollectedScene {
     let mut mesh_tasks = Vec::new();
     let mut cached_results = Vec::new();
+    let mut cached_curve_results = Vec::new();
+    let mut cached_point_results = Vec::new();
     let mut curves = Vec::new();
     let mut points = Vec::new();
     let mut cameras = Vec::new();
@@ -515,6 +558,8 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
         sample_index,
         &mut mesh_tasks,
         &mut cached_results,
+        &mut cached_curve_results,
+        &mut cached_point_results,
         &mut curves,
         &mut points,
         &mut cameras,
@@ -540,7 +585,7 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
                             local_bounds.expand(*pos);
                         }
                         // Use path as cache key for uniqueness
-                        cache.lock().insert(task.path.clone(), CachedMesh {
+                        cache.lock().meshes.insert(task.path.clone(), CachedMesh {
                             vertices: Arc::clone(&converted.vertices),
                             indices: Arc::clone(&converted.indices),
                             local_bounds,
@@ -572,6 +617,28 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
     }
     
     meshes.extend(converted);
+
+    // Add cached curves
+    for cached in cached_curve_results {
+        curves.push(ConvertedCurves {
+            path: cached.path,
+            vertices: cached.vertices,
+            indices: cached.indices,
+            transform: cached.transform,
+        });
+    }
+
+    // Add cached points
+    for cached in cached_point_results {
+        let bounds = transform_bounds(&cached.local_bounds, cached.transform);
+        points.push(ConvertedPoints {
+            path: cached.path,
+            positions: cached.positions,
+            widths: cached.widths,
+            transform: cached.transform,
+            bounds,
+        });
+    }
     
     // Resolve material inheritance FIRST (copy values from parent materials)
     // Must happen before building mat_props lookup, otherwise inherited values won't propagate
@@ -620,6 +687,14 @@ fn transform_bounds(local: &Bounds, transform: Mat4) -> Bounds {
     bounds
 }
 
+fn bounds_from_vec3(positions: &[Vec3]) -> Bounds {
+    let mut bounds = Bounds::empty();
+    for pos in positions {
+        bounds.expand(*pos);
+    }
+    bounds
+}
+
 /// Phase 1: Collect all mesh samples (sequential reads from file)
 #[allow(clippy::too_many_arguments)]
 fn collect_samples_recursive(
@@ -628,6 +703,8 @@ fn collect_samples_recursive(
     sample_index: usize,
     mesh_tasks: &mut Vec<MeshTask>,
     cached_results: &mut Vec<CachedResult>,
+    cached_curve_results: &mut Vec<CachedCurvesResult>,
+    cached_point_results: &mut Vec<CachedPointsResult>,
     curves: &mut Vec<ConvertedCurves>,
     points: &mut Vec<ConvertedPoints>,
     cameras: &mut Vec<SceneCamera>,
@@ -680,7 +757,7 @@ fn collect_samples_recursive(
         // IMPORTANT: Use mesh_path as key, not mesh_name - different objects may have same name
         // but different world-space positions (e.g., brake_discShape in multiple wheels)
         let cached = if is_constant {
-            cache.and_then(|c| c.lock().get(&mesh_path).cloned())
+            cache.and_then(|c| c.lock().meshes.get(&mesh_path).cloned())
         } else {
             None
         };
@@ -719,7 +796,7 @@ fn collect_samples_recursive(
         
         // Use mesh_path as key for SubD too
         let cached = if is_constant {
-            cache.and_then(|c| c.lock().get(&mesh_path).cloned())
+            cache.and_then(|c| c.lock().meshes.get(&mesh_path).cloned())
         } else {
             None
         };
@@ -757,6 +834,8 @@ fn collect_samples_recursive(
     
     // Check if this object is Curves
     if let Some(icurves) = ICurves::new(obj) {
+        let curve_path = icurves.getFullName().to_string();
+        let is_constant = icurves.isConstant();
         let num_samples = icurves.getNumSamples();
         let sample_idx = if num_samples > 0 {
             // Clamp to last sample to mirror SampleSelector behavior.
@@ -764,9 +843,29 @@ fn collect_samples_recursive(
         } else {
             0
         };
-        if num_samples > 0 {
+        let cached = if is_constant {
+            cache.and_then(|c| c.lock().curves.get(&curve_path).cloned())
+        } else {
+            None
+        };
+        if let Some(cached_curves) = cached {
+            cached_curve_results.push(CachedCurvesResult {
+                path: curve_path,
+                vertices: cached_curves.vertices,
+                indices: cached_curves.indices,
+                transform: world_transform,
+            });
+        } else if num_samples > 0 {
             if let Ok(sample) = icurves.getSample(sample_idx) {
                 if let Some(converted) = convert_curves(&sample, icurves.getFullName(), world_transform) {
+                    if is_constant {
+                        if let Some(cache) = cache {
+                            cache.lock().curves.insert(converted.path.clone(), CachedCurves {
+                                vertices: Arc::clone(&converted.vertices),
+                                indices: Arc::clone(&converted.indices),
+                            });
+                        }
+                    }
                     curves.push(converted);
                 }
             }
@@ -775,6 +874,8 @@ fn collect_samples_recursive(
     
     // Check if this object is Points
     if let Some(ipoints) = IPoints::new(obj) {
+        let points_path = ipoints.getFullName().to_string();
+        let is_constant = ipoints.isConstant();
         let num_samples = ipoints.getNumSamples();
         let sample_idx = if num_samples > 0 {
             // Clamp to last sample to mirror SampleSelector behavior.
@@ -782,9 +883,32 @@ fn collect_samples_recursive(
         } else {
             0
         };
-        if num_samples > 0 {
+        let cached = if is_constant {
+            cache.and_then(|c| c.lock().points.get(&points_path).cloned())
+        } else {
+            None
+        };
+        if let Some(cached_points) = cached {
+            cached_point_results.push(CachedPointsResult {
+                path: points_path,
+                positions: cached_points.positions,
+                widths: cached_points.widths,
+                transform: world_transform,
+                local_bounds: cached_points.local_bounds,
+            });
+        } else if num_samples > 0 {
             if let Ok(sample) = ipoints.getSample(sample_idx) {
                 if let Some(converted) = convert_points(&sample, ipoints.getFullName(), world_transform) {
+                    if is_constant {
+                        if let Some(cache) = cache {
+                            let local_bounds = bounds_from_vec3(&sample.positions);
+                            cache.lock().points.insert(converted.path.clone(), CachedPoints {
+                                positions: Arc::clone(&converted.positions),
+                                widths: Arc::clone(&converted.widths),
+                                local_bounds,
+                            });
+                        }
+                    }
                     points.push(converted);
                 }
             }
@@ -871,7 +995,22 @@ fn collect_samples_recursive(
 
     // Recurse into children
     for child in obj.getChildren() {
-        collect_samples_recursive(&child, world_transform, sample_index, mesh_tasks, cached_results, curves, points, cameras, lights, materials, material_assignments, cache);
+        collect_samples_recursive(
+            &child,
+            world_transform,
+            sample_index,
+            mesh_tasks,
+            cached_results,
+            cached_curve_results,
+            cached_point_results,
+            curves,
+            points,
+            cameras,
+            lights,
+            materials,
+            material_assignments,
+            cache,
+        );
     }
 }
 

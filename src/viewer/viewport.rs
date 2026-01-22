@@ -60,6 +60,7 @@ impl Viewport {
 
     /// Show viewport UI and handle input
     pub fn show(&mut self, ui: &mut Ui, wgpu_render_state: Option<&egui_wgpu::RenderState>) -> Response {
+        let _span = tracing::info_span!("viewport_show").entered();
         let available = ui.available_size();
         let size = Vec2::new(available.x.max(64.0), available.y.max(64.0));
 
@@ -195,12 +196,16 @@ impl Viewport {
             self.camera.orbit(delta.x, delta.y);
         }
 
-        // Pan with middle mouse or shift+left drag
-        if response.dragged_by(egui::PointerButton::Middle)
-            || (response.dragged_by(egui::PointerButton::Primary) && input.modifiers.shift)
-        {
+        // Pan with middle mouse drag
+        if response.dragged_by(egui::PointerButton::Middle) {
             let delta = response.drag_delta();
             self.camera.pan(delta.x, delta.y);
+        }
+
+        // Zoom with right mouse drag
+        if response.dragged_by(egui::PointerButton::Secondary) {
+            let delta = response.drag_delta();
+            self.camera.zoom(delta.y * 0.1);
         }
 
         // Zoom with scroll

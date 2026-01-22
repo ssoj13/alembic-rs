@@ -98,6 +98,7 @@ fn worker_loop(
                 
                 // Collect scene data for this frame (with caching for constant meshes)
                 let t0 = std::time::Instant::now();
+                let _span = tracing::info_span!("collect_scene_cached").entered();
                 let scene = mesh_converter::collect_scene_cached(&archive, final_frame, Some(&cache));
                 let elapsed = t0.elapsed();
                 if elapsed.as_millis() > 10 {

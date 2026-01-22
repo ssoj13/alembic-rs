@@ -15,11 +15,13 @@ pub use settings::Settings;
 
 use std::path::PathBuf;
 use anyhow::Result;
+use tracing_subscriber::prelude::*;
 
 /// Run the viewer with optional initial file
 pub fn run(initial_file: Option<PathBuf>) -> Result<()> {
     env_logger::init();
     
+    let trace_guard = init_tracing();
 
     // Friendly panic handler for GPU errors
     std::panic::set_hook(Box::new(|info| {
@@ -90,7 +92,24 @@ pub fn run(initial_file: Option<PathBuf>) -> Result<()> {
     eframe::run_native(
         "Alembic Viewer",
         options,
-        Box::new(move |cc| Ok(Box::new(app::ViewerApp::new(cc, initial_file.clone())))),
+        Box::new(move |cc| Ok(Box::new(app::ViewerApp::new(cc, initial_file.clone(), trace_guard)))),
     )
     .map_err(|e| anyhow::anyhow!("Failed to run: {}", e))
+}
+
+fn init_tracing() -> Option<tracing_chrome::FlushGuard> {
+    if std::env::var("ALEMBIC_TRACE").ok().as_deref() != Some("1") {
+        return None;
+    }
+
+    let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+        .file("trace.json")
+        .build();
+
+    let subscriber = tracing_subscriber::registry().with(chrome_layer);
+    if tracing::subscriber::set_global_default(subscriber).is_err() {
+        return None;
+    }
+
+    Some(guard)
 }

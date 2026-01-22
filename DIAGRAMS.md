@@ -575,6 +575,75 @@ quadrantChart
     Code Duplication: [0.7, 0.3]
 ```
 
+## 17. Viewer Frame Update (Current)
+
+```mermaid
+sequenceDiagram
+    participant UI as UI Thread
+    participant W as Worker
+    participant MC as collect_scene_cached
+    participant A as apply_scene
+    participant R as Renderer
+    participant GPU as GPU
+
+    UI->>W: request_frame()
+    W->>MC: collect_scene_cached()
+    MC-->>W: CollectedScene
+    W-->>UI: FrameReady(scene)
+    UI->>A: apply_scene()
+    A->>R: update_mesh_transform()
+    A->>R: update_mesh_vertices() (if hash changed)
+    A->>R: add_curves() (always)
+    A->>R: add_points() (always)
+    R->>GPU: create buffers + bind groups
+    UI->>R: render()
+    R->>GPU: submit passes
+```
+
+## 18. Viewer Frame Update (Proposed)
+
+```mermaid
+flowchart TB
+    A[FrameReady(scene)] --> B{Mesh constant?}
+    B -->|yes| C[Use cached vertices/indices]
+    B -->|no| D[Convert mesh sample]
+    C --> E[Hash/Version check]
+    D --> E
+    E -->|same| F[Update transform only]
+    E -->|changed| G[Write/update GPU buffers]
+    G --> H[Update bounds + smooth normals if enabled]
+    F --> H
+    H --> I[Render]
+
+    A --> J{Curves/Points constant?}
+    J -->|yes| K[Cache + update transform]
+    J -->|no| L[Convert sample]
+    L --> M[Hash/size check]
+    K --> M
+    M -->|same| N[Transform update only]
+    M -->|changed| O[Write/update GPU buffers]
+    O --> I
+    N --> I
+```
+
+## 19. Camera Input Mapping (Current vs Desired)
+
+```mermaid
+flowchart LR
+    subgraph Current
+        L1[LMB drag] --> O1[Orbit]
+        M1[MMB drag] --> P1[Pan]
+        S1[Shift+LMB] --> P1
+        W1[Wheel] --> Z1[Zoom]
+    end
+    subgraph Desired
+        L2[LMB drag] --> O2[Orbit]
+        M2[MMB drag] --> P2[Pan]
+        R2[RMB drag] --> Z2[Zoom]
+        W2[Wheel] --> Z2
+    end
+```
+
 ## Legend
 
 | Symbol | Meaning |

@@ -85,10 +85,15 @@ pub struct ViewerApp {
     pending_frame: Option<usize>,  // Frame we've requested but not yet received
     epoch: u64,  // Incremented on each request, used to discard stale results
     is_fullscreen: bool,
+    _trace_guard: Option<tracing_chrome::FlushGuard>,
 }
 
 impl ViewerApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>, initial_file: Option<PathBuf>) -> Self {
+    pub fn new(
+        _cc: &eframe::CreationContext<'_>,
+        initial_file: Option<PathBuf>,
+        trace_guard: Option<tracing_chrome::FlushGuard>,
+    ) -> Self {
         let settings = Settings::load();
         
         // Use last file if no initial file provided
@@ -123,6 +128,7 @@ impl ViewerApp {
             pending_frame: None,
             epoch: 0,
             is_fullscreen: false,
+            _trace_guard: trace_guard,
         }
     }
 
@@ -878,6 +884,7 @@ impl ViewerApp {
     }
     
     fn update_animation(&mut self) {
+        let _span = tracing::info_span!("update_animation").entered();
         if !self.playing || self.num_samples <= 1 {
             return;
         }
@@ -1421,6 +1428,7 @@ impl ViewerApp {
     
     /// Process any ready results from the worker (non-blocking).
     fn process_worker_results(&mut self) {
+        let _span = tracing::info_span!("process_worker_results").entered();
         let result = match &self.worker {
             Some(worker) => worker.try_recv(),
             None => return,
@@ -1443,6 +1451,7 @@ impl ViewerApp {
     
     /// Apply scene data to renderer (called when worker delivers results).
     fn apply_scene(&mut self, frame: usize, scene: mesh_converter::CollectedScene) {
+        let _span = tracing::info_span!("apply_scene").entered();
         let renderer = match &mut self.viewport.renderer {
             Some(r) => r,
             None => return,
@@ -1478,10 +1487,13 @@ impl ViewerApp {
             scene.meshes.iter().map(|m| m.path.as_str()).collect();
         let new_curve_paths: std::collections::HashSet<&str> = 
             scene.curves.iter().map(|c| c.path.as_str()).collect();
+        let new_point_paths: std::collections::HashSet<&str> =
+            scene.points.iter().map(|p| p.path.as_str()).collect();
         
         // Remove meshes that no longer exist (retain avoids intermediate Vec)
         renderer.meshes.retain(|path, _| new_mesh_paths.contains(path.as_str()));
         renderer.curves.retain(|path, _| new_curve_paths.contains(path.as_str()));
+        renderer.points.retain(|path, _| new_point_paths.contains(path.as_str()));
 
         let mut smooth_dirty = false;
 
@@ -1492,7 +1504,7 @@ impl ViewerApp {
                 renderer.update_mesh_transform(&mesh.path, mesh.transform);
                 
                 // Only update vertices if they actually changed (expensive buffer recreation)
-                let new_hash = super::renderer::compute_vertex_hash(&mesh.vertices);
+                let new_hash = super::renderer::compute_mesh_hash(&mesh.vertices, &mesh.indices);
                 if let Some(old_hash) = renderer.get_vertex_hash(&mesh.path) {
                     if new_hash != old_hash {
                         renderer.update_mesh_vertices(&mesh.path, &mesh.vertices, &mesh.indices);
@@ -1530,13 +1542,23 @@ impl ViewerApp {
             0.3,
         );
         for curves in scene.curves {
-            renderer.add_curves(
-                curves.path,  // Use path for unique key
-                &curves.vertices,
-                &curves.indices,
-                curves.transform,
-                &curves_material,
-            );
+            if renderer.has_curves(&curves.path) {
+                renderer.update_curves_transform(&curves.path, curves.transform);
+                let new_hash = super::renderer::compute_curves_hash(&curves.vertices, &curves.indices);
+                if let Some(old_hash) = renderer.get_curves_hash(&curves.path) {
+                    if new_hash != old_hash {
+                        renderer.update_curves_vertices(&curves.path, &curves.vertices, &curves.indices);
+                    }
+                }
+            } else {
+                renderer.add_curves(
+                    curves.path,  // Use path for unique key
+                    &curves.vertices,
+                    &curves.indices,
+                    curves.transform,
+                    &curves_material,
+                );
+            }
         }
 
         // Update or add points
@@ -1545,13 +1567,23 @@ impl ViewerApp {
             0.5,
         );
         for pts in scene.points {
-            renderer.add_points(
-                pts.path,  // Use path for unique key
-                &pts.positions,
-                &pts.widths,
-                pts.transform,
-                &points_material,
-            );
+            if renderer.has_points(&pts.path) {
+                renderer.update_points_transform(&pts.path, pts.transform);
+                let new_hash = super::renderer::compute_points_hash(&pts.positions, &pts.widths);
+                if let Some(old_hash) = renderer.get_points_hash(&pts.path) {
+                    if new_hash != old_hash {
+                        renderer.update_points_vertices(&pts.path, &pts.positions, &pts.widths);
+                    }
+                }
+            } else {
+                renderer.add_points(
+                    pts.path,  // Use path for unique key
+                    &pts.positions,
+                    &pts.widths,
+                    pts.transform,
+                    &points_material,
+                );
+            }
         }
 
         if self.settings.smooth_normals && smooth_dirty {
@@ -1665,6 +1697,7 @@ impl eframe::App for ViewerApp {
     }
     
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let _span = tracing::info_span!("viewer_update").entered();
         // Update scene camera override
         self.viewport.scene_camera = self.active_camera.and_then(|i| {
             self.scene_cameras.get(i).map(|cam| {
