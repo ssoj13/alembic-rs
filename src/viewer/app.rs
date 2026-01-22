@@ -59,6 +59,8 @@ pub struct ViewerApp {
     playing: bool,
     playback_dir: i32, // 1 = forward, -1 = backward
     last_frame_time: Instant,
+    scene_is_static: bool,
+    last_scene_hash: Option<u64>,
     
     // UI state
     status_message: String,
@@ -89,6 +91,32 @@ pub struct ViewerApp {
 }
 
 impl ViewerApp {
+    fn hash_scene_object(path: &str, transform: Mat4, data_hash: u64) -> u64 {
+        let mut hasher = spooky_hash::SpookyHash::new(0, 0);
+        hasher.update(path.as_bytes());
+        let cols = transform.to_cols_array();
+        hasher.update(bytemuck::cast_slice(&cols));
+        hasher.update(&data_hash.to_le_bytes());
+        let (h1, h2) = hasher.finalize();
+        h1 ^ h2
+    }
+
+    fn compute_scene_hash(scene: &mesh_converter::CollectedScene) -> u64 {
+        let mut acc = 0u64;
+        for mesh in &scene.meshes {
+            let data_hash = super::renderer::compute_mesh_hash(&mesh.vertices, &mesh.indices);
+            acc ^= Self::hash_scene_object(&mesh.path, mesh.transform, data_hash);
+        }
+        for curves in &scene.curves {
+            let data_hash = super::renderer::compute_curves_hash(&curves.vertices, &curves.indices);
+            acc ^= Self::hash_scene_object(&curves.path, curves.transform, data_hash);
+        }
+        for pts in &scene.points {
+            let data_hash = super::renderer::compute_points_hash(&pts.positions, &pts.widths);
+            acc ^= Self::hash_scene_object(&pts.path, pts.transform, data_hash);
+        }
+        acc
+    }
     pub fn new(
         _cc: &eframe::CreationContext<'_>,
         initial_file: Option<PathBuf>,
@@ -112,6 +140,8 @@ impl ViewerApp {
             playing: false,
             playback_dir: 1,
             last_frame_time: Instant::now(),
+            scene_is_static: false,
+            last_scene_hash: None,
             status_message: "Ready".into(),
             mesh_count: 0,
             vertex_count: 0,
@@ -885,6 +915,9 @@ impl ViewerApp {
     
     fn update_animation(&mut self) {
         let _span = tracing::info_span!("update_animation").entered();
+        if self.scene_is_static {
+            return;
+        }
         if !self.playing || self.num_samples <= 1 {
             return;
         }
@@ -1413,6 +1446,8 @@ impl ViewerApp {
         self.num_samples = 0;
         self.current_frame = 0;
         self.playing = false;
+        self.scene_is_static = false;
+        self.last_scene_hash = None;
         self.status_message = "Scene cleared".into();
     }
     
@@ -1456,6 +1491,19 @@ impl ViewerApp {
             Some(r) => r,
             None => return,
         };
+
+        self.scene_is_static = scene.is_static;
+        if self.scene_is_static {
+            self.playing = false;
+            self.pending_frame = None;
+        }
+
+        let scene_hash = Self::compute_scene_hash(&scene);
+        if self.last_scene_hash == Some(scene_hash) {
+            self.current_frame = frame;
+            return;
+        }
+        self.last_scene_hash = Some(scene_hash);
 
         let stats = mesh_converter::compute_stats(&scene.meshes);
         let bounds = mesh_converter::compute_scene_bounds(&scene.meshes, &scene.points);

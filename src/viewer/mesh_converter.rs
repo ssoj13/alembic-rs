@@ -456,6 +456,7 @@ pub struct CollectedScene {
     pub points: Vec<ConvertedPoints>,
     pub cameras: Vec<SceneCamera>,
     pub lights: Vec<SceneLight>,
+    pub is_static: bool,
     #[allow(dead_code)]  // used internally for color resolution
     pub materials: Vec<SceneMaterial>,
     #[allow(dead_code)]  // used internally for color resolution
@@ -549,6 +550,7 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
     let mut lights = Vec::new();
     let mut materials = Vec::new();
     let mut material_assignments = Vec::new();
+    let mut has_animation = false;
     let root = archive.getTop();
 
     // Phase 1: Collect all mesh samples, curves, points, cameras, lights, materials (sequential file reads)
@@ -566,6 +568,7 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
         &mut lights,
         &mut materials,
         &mut material_assignments,
+        &mut has_animation,
         cache,
     );
     
@@ -665,7 +668,16 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
         }
     }
     
-    CollectedScene { meshes, curves, points, cameras, lights, materials, material_assignments }
+    CollectedScene {
+        meshes,
+        curves,
+        points,
+        cameras,
+        lights,
+        is_static: !has_animation,
+        materials,
+        material_assignments,
+    }
 }
 
 /// Transform local bounds to world space
@@ -711,6 +723,7 @@ fn collect_samples_recursive(
     lights: &mut Vec<SceneLight>,
     materials: &mut Vec<SceneMaterial>,
     material_assignments: &mut Vec<MaterialAssignment>,
+    has_animation: &mut bool,
     cache: Option<&MeshCache>,
 ) {
     // Check if this object is an Xform
@@ -722,6 +735,9 @@ fn collect_samples_recursive(
         } else {
             0
         };
+        if num_samples > 1 && !xform.isConstant() {
+            *has_animation = true;
+        }
         if num_samples > 0 {
             if let Ok(sample) = xform.getSample(sample_idx) {
                 (sample.matrix(), sample.inherits)
@@ -746,6 +762,9 @@ fn collect_samples_recursive(
         let mesh_path = polymesh.getFullName().to_string();
         let is_constant = polymesh.isConstant();
         let num_samples = polymesh.getNumSamples();
+        if num_samples > 1 && !is_constant {
+            *has_animation = true;
+        }
         let sample_idx = if num_samples > 0 {
             // Clamp to last sample to mirror SampleSelector behavior.
             sample_index.min(num_samples - 1)
@@ -787,6 +806,9 @@ fn collect_samples_recursive(
         let mesh_path = subd.getFullName().to_string();
         let is_constant = subd.isConstant();
         let num_samples = subd.getNumSamples();
+        if num_samples > 1 && !is_constant {
+            *has_animation = true;
+        }
         let sample_idx = if num_samples > 0 {
             // Clamp to last sample to mirror SampleSelector behavior.
             sample_index.min(num_samples - 1)
@@ -837,6 +859,9 @@ fn collect_samples_recursive(
         let curve_path = icurves.getFullName().to_string();
         let is_constant = icurves.isConstant();
         let num_samples = icurves.getNumSamples();
+        if num_samples > 1 && !is_constant {
+            *has_animation = true;
+        }
         let sample_idx = if num_samples > 0 {
             // Clamp to last sample to mirror SampleSelector behavior.
             sample_index.min(num_samples - 1)
@@ -877,6 +902,9 @@ fn collect_samples_recursive(
         let points_path = ipoints.getFullName().to_string();
         let is_constant = ipoints.isConstant();
         let num_samples = ipoints.getNumSamples();
+        if num_samples > 1 && !is_constant {
+            *has_animation = true;
+        }
         let sample_idx = if num_samples > 0 {
             // Clamp to last sample to mirror SampleSelector behavior.
             sample_index.min(num_samples - 1)
@@ -918,6 +946,9 @@ fn collect_samples_recursive(
     // Check if this object is a Camera
     if let Some(icamera) = ICamera::new(obj) {
         let num_samples = icamera.getNumSamples();
+        if num_samples > 1 && !icamera.isConstant() {
+            *has_animation = true;
+        }
         let sample_idx = if num_samples > 0 {
             // Clamp to last sample to mirror SampleSelector behavior.
             sample_index.min(num_samples - 1)
@@ -941,6 +972,10 @@ fn collect_samples_recursive(
 
     // Check if this object is a Light
     if let Some(ilight) = ILight::new(obj) {
+        let num_samples = ilight.getNumSamples();
+        if num_samples > 1 && !ilight.isConstant() {
+            *has_animation = true;
+        }
         // Lights use transform for position/direction
         lights.push(SceneLight::from_transform(
             ilight.getName().to_string(),
@@ -1009,6 +1044,7 @@ fn collect_samples_recursive(
             lights,
             materials,
             material_assignments,
+            has_animation,
             cache,
         );
     }
