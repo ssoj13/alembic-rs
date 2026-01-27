@@ -126,6 +126,7 @@ pub struct Renderer {
     pub path_tracer: Option<super::pathtracer::PathTraceCompute>,
     /// When true, render using path tracer instead of rasterizer.
     pub use_path_tracing: bool,
+    pub pt_max_samples: u32,
     /// Surface format needed for path tracer blit pipeline creation.
     #[allow(dead_code)]
     surface_format: wgpu::TextureFormat,
@@ -559,6 +560,7 @@ impl Renderer {
             camera_position: Vec3::ZERO,
             path_tracer: None,
             use_path_tracing: false,
+            pt_max_samples: 512,
             surface_format: format,
         }
     }
@@ -580,19 +582,38 @@ impl Renderer {
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
         self.camera_position = position;
 
-        // Update path tracer camera if active
+        // Update path tracer camera — only reset accumulation if camera actually moved
         if let Some(pt) = &mut self.path_tracer {
             let inv_view = view.inverse();
-            let proj = view_proj * view.inverse();  // extract proj from view_proj = proj * view
+            let proj = view_proj * view.inverse();
             let inv_proj = proj.inverse();
+
+            let pos_arr = position.to_array();
+            // Compare with epsilon to avoid spurious resets from near/far interpolation drift
+            let vp_arr = view_proj.to_cols_array_2d();
+            let camera_changed = pt.last_camera_pos.map_or(true, |prev| {
+                (prev[0] - pos_arr[0]).abs() > 1e-5
+                    || (prev[1] - pos_arr[1]).abs() > 1e-5
+                    || (prev[2] - pos_arr[2]).abs() > 1e-5
+            }) || pt.last_view_proj.map_or(true, |prev| {
+                prev.iter().flatten().zip(vp_arr.iter().flatten())
+                    .any(|(a, b)| (a - b).abs() > 1e-5)
+            });
+
             let cam = super::pathtracer::PtCameraUniform {
                 inv_view: inv_view.to_cols_array_2d(),
                 inv_proj: inv_proj.to_cols_array_2d(),
-                position: position.to_array(),
+                position: pos_arr,
                 frame_count: pt.frame_count,
             };
             pt.update_camera(&self.queue, &cam);
-            pt.reset_accumulation(); // camera moved → restart progressive rendering
+            pt.last_camera_pos = Some(pos_arr);
+            pt.last_view_proj = Some(vp_arr);
+
+            if camera_changed {
+                tracing::debug!("PT: camera changed, resetting accumulation");
+                pt.reset_accumulation();
+            }
         }
     }
 
@@ -1680,6 +1701,7 @@ impl Renderer {
         if self.use_path_tracing {
             if let Some(pt) = &mut self.path_tracer {
                 pt.resize(&self.device, width, height);
+                pt.max_samples = self.pt_max_samples;
                 let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("pt_encoder"),
                 });

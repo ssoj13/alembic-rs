@@ -59,9 +59,11 @@ pub struct Settings {
     // Lighting
     pub use_scene_lights: bool,
     
-    // Path tracing
+    // Path tracing (runtime-only, not persisted — always starts off)
+    #[serde(skip)]
     pub path_tracing: bool,
     pub pt_max_bounces: u32,
+    pub pt_max_samples: u32,
 }
 
 impl Default for Settings {
@@ -101,6 +103,7 @@ impl Default for Settings {
             use_scene_lights: false,
             path_tracing: false,
             pt_max_bounces: 4,
+            pt_max_samples: 512,
         }
     }
 }

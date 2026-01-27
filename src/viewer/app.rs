@@ -627,6 +627,7 @@ impl ViewerApp {
             // Path tracing toggle + settings
             if ui.checkbox(&mut self.settings.path_tracing, "Path Tracing").changed() {
                 renderer.use_path_tracing = self.settings.path_tracing;
+                renderer.pt_max_samples = self.settings.pt_max_samples;
                 if self.settings.path_tracing {
                     renderer.init_path_tracer(1280, 720);
                     renderer.upload_scene_to_path_tracer();
@@ -637,11 +638,27 @@ impl ViewerApp {
                 ui.horizontal(|ui| {
                     ui.label("Bounces:");
                     if ui.add(egui::Slider::new(&mut self.settings.pt_max_bounces, 1..=8)).changed() {
+                        // Reset accumulation when bounces change
+                        if let Some(pt) = &mut renderer.path_tracer {
+                            pt.reset_accumulation();
+                        }
+                        changed = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Max SPP:");
+                    if ui.add(egui::Slider::new(&mut self.settings.pt_max_samples, 16..=4096).logarithmic(true)).changed() {
                         changed = true;
                     }
                 });
                 if let Some(pt) = &renderer.path_tracer {
-                    ui.label(format!("Samples: {}", pt.frame_count));
+                    let done = pt.frame_count >= self.settings.pt_max_samples;
+                    let label = if done {
+                        format!("Samples: {} (done)", pt.frame_count)
+                    } else {
+                        format!("Samples: {} / {}", pt.frame_count, self.settings.pt_max_samples)
+                    };
+                    ui.label(label);
                 }
             }
             ui.separator();
@@ -1667,6 +1684,7 @@ impl ViewerApp {
         // Init/update path tracer if enabled
         if self.settings.path_tracing {
             renderer.use_path_tracing = true;
+            renderer.pt_max_samples = self.settings.pt_max_samples;
             if renderer.path_tracer.is_none() {
                 renderer.init_path_tracer(1280, 720);
             }
@@ -1777,6 +1795,9 @@ impl eframe::App for ViewerApp {
     
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let _span = tracing::info_span!("viewer_update").entered();
+
+        // Trace-level logging for update calls (use -vvv to see)
+        tracing::trace!("update: playing={} pt={}", self.playing, self.settings.path_tracing);
         // Update scene camera override
         self.viewport.scene_camera = self.active_camera.and_then(|i| {
             self.scene_cameras.get(i).map(|cam| {

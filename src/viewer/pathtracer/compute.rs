@@ -65,6 +65,12 @@ pub struct PathTraceCompute {
 
     // Progressive frame counter
     pub frame_count: u32,
+    /// Stop accumulating after this many samples
+    pub max_samples: u32,
+
+    // Camera change detection (skip reset if camera didn't move)
+    pub last_camera_pos: Option<[f32; 3]>,
+    pub last_view_proj: Option<[[f32; 4]; 4]>,
 
     // Whether scene data has been uploaded
     scene_ready: bool,
@@ -273,6 +279,9 @@ impl PathTraceCompute {
             nodes_buffer: None,
             triangles_buffer: None,
             materials_buffer: None,
+            max_samples: 512,
+            last_camera_pos: None,
+            last_view_proj: None,
             camera_buffer,
             output_texture,
             output_view,
@@ -437,6 +446,7 @@ impl PathTraceCompute {
     pub fn dispatch(&mut self, encoder: &mut wgpu::CommandEncoder, queue: &wgpu::Queue) -> bool {
         let Some(bg) = &self.bind_group else { return false; };
         if !self.scene_ready { return false; }
+        if self.frame_count >= self.max_samples { return true; } // converged
 
         self.frame_count += 1;
 

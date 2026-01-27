@@ -18,11 +18,11 @@ use std::path::PathBuf;
 use anyhow::Result;
 use tracing_subscriber::prelude::*;
 
-/// Run the viewer with optional initial file
-pub fn run(initial_file: Option<PathBuf>) -> Result<()> {
-    env_logger::init();
-    
-    let trace_guard = init_tracing();
+/// Run the viewer with optional initial file.
+/// `verbosity`: 0=warn, 1=info, 2=debug, 3=trace.
+/// `log_file`: optional path to redirect log output.
+pub fn run(initial_file: Option<PathBuf>, verbosity: u8, log_file: Option<PathBuf>) -> Result<()> {
+    let trace_guard = init_tracing(verbosity, log_file.as_deref());
 
     // Friendly panic handler for GPU errors
     std::panic::set_hook(Box::new(|info| {
@@ -67,17 +67,10 @@ pub fn run(initial_file: Option<PathBuf>) -> Result<()> {
                     };
                     wgpu::DeviceDescriptor {
                         label: Some("alembic-viewer device"),
-                        required_features: wgpu::Features::POLYGON_MODE_LINE
-                            | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
-                            | wgpu::Features::FLOAT32_FILTERABLE
-                            | wgpu::Features::DEPTH32FLOAT_STENCIL8
-                            | wgpu::Features::TEXTURE_COMPRESSION_BC
-                            | wgpu::Features::PUSH_CONSTANTS
-                            | wgpu::Features::MULTI_DRAW_INDIRECT_COUNT,
+                        required_features: wgpu::Features::POLYGON_MODE_LINE,
                         required_limits: wgpu::Limits {
                             max_texture_dimension_2d: 8192,
                             max_bind_groups: 8,
-                            max_push_constant_size: 128,  // For PUSH_CONSTANTS feature
                             ..base_limits
                         },
                         ..Default::default()
@@ -98,19 +91,67 @@ pub fn run(initial_file: Option<PathBuf>) -> Result<()> {
     .map_err(|e| anyhow::anyhow!("Failed to run: {}", e))
 }
 
-fn init_tracing() -> Option<tracing_chrome::FlushGuard> {
-    if std::env::var("ALEMBIC_TRACE").ok().as_deref() != Some("1") {
-        return None;
-    }
+/// Initialize tracing subscriber with console/file output and optional chrome profiler.
+/// Returns chrome flush guard if ALEMBIC_TRACE=1 is set.
+fn init_tracing(verbosity: u8, log_file: Option<&std::path::Path>) -> Option<tracing_chrome::FlushGuard> {
+    use tracing_subscriber::{fmt, EnvFilter};
 
-    let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
-        .file("trace.json")
-        .build();
+    let level = match verbosity {
+        0 => "warn",
+        1 => "info",
+        2 => "debug",
+        _ => "trace",
+    };
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(level));
 
-    let subscriber = tracing_subscriber::registry().with(chrome_layer);
-    if tracing::subscriber::set_global_default(subscriber).is_err() {
-        return None;
-    }
+    // Chrome profiler layer (optional, via ALEMBIC_TRACE=1)
+    let chrome_guard = if std::env::var("ALEMBIC_TRACE").ok().as_deref() == Some("1") {
+        let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+            .file("trace.json")
+            .build();
+        // Build with chrome layer + fmt
+        if let Some(path) = log_file {
+            let file = std::fs::File::create(path).expect("Failed to create log file");
+            let file_layer = fmt::layer()
+                .with_writer(file)
+                .with_ansi(false);
+            let subscriber = tracing_subscriber::registry()
+                .with(filter)
+                .with(chrome_layer)
+                .with(file_layer);
+            let _ = tracing::subscriber::set_global_default(subscriber);
+        } else {
+            let stderr_layer = fmt::layer()
+                .with_writer(std::io::stderr);
+            let subscriber = tracing_subscriber::registry()
+                .with(filter)
+                .with(chrome_layer)
+                .with(stderr_layer);
+            let _ = tracing::subscriber::set_global_default(subscriber);
+        }
+        Some(guard)
+    } else {
+        // No chrome profiler, just fmt output
+        if let Some(path) = log_file {
+            let file = std::fs::File::create(path).expect("Failed to create log file");
+            let file_layer = fmt::layer()
+                .with_writer(file)
+                .with_ansi(false);
+            let subscriber = tracing_subscriber::registry()
+                .with(filter)
+                .with(file_layer);
+            let _ = tracing::subscriber::set_global_default(subscriber);
+        } else {
+            let stderr_layer = fmt::layer()
+                .with_writer(std::io::stderr);
+            let subscriber = tracing_subscriber::registry()
+                .with(filter)
+                .with(stderr_layer);
+            let _ = tracing::subscriber::set_global_default(subscriber);
+        }
+        None
+    };
 
-    Some(guard)
+    chrome_guard
 }

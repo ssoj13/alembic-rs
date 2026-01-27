@@ -44,9 +44,9 @@ rfd = { version = "0.17", optional = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 dirs = { version = "6.0", optional = true }
 image = { version = "0.25", default-features = false, features = ["hdr", "exr"], optional = true }
-tracing = { version = "0.1", optional = true }
+tracing = "0.1"
 tracing-chrome = { version = "0.7", optional = true }
-tracing-subscriber = { version = "0.3", optional = true, features = ["registry"] }
+tracing-subscriber = { version = "0.3", features = ["registry", "fmt", "env-filter"] }
 
 
 [dev-dependencies]
@@ -66,5 +66,5 @@ python = ["pyo3"]
 viewer = [
     "standard-surface", "eframe", "egui", "egui-wgpu", "wgpu",
     "dolly", "mint", "log", "env_logger", "anyhow", "rfd", "serde", "dirs", "image",
-    "tracing", "tracing-chrome", "tracing-subscriber",
+    "tracing-chrome",
 ]

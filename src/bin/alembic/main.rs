@@ -11,78 +11,92 @@ use alembic::ogawa::writer::{
 };
 use alembic::util::PlainOldDataType;
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use std::sync::atomic::{AtomicU8, Ordering};
+use tracing::{info, debug, trace};
 
-/// Verbosity level (thread-safe)
-const LOG_QUIET: u8 = 0;
-const LOG_INFO: u8 = 1;
-const LOG_DEBUG: u8 = 2;
-const LOG_TRACE: u8 = 3;
+/// Parse CLI flags: -v/-vv/-vvv for verbosity, -l/--log for file output.
+/// Returns (verbosity: 0-3, log_file: Option, remaining args).
+fn parse_global_flags(args: &[String]) -> (u8, Option<PathBuf>, Vec<&str>) {
+    let mut verbosity: u8 = 0;
+    let mut log_file: Option<PathBuf> = None;
+    let mut filtered = Vec::new();
+    let mut skip_next = false;
 
-static LOG_LEVEL: AtomicU8 = AtomicU8::new(LOG_INFO);
-
-#[inline]
-fn log_level() -> u8 {
-    LOG_LEVEL.load(Ordering::Relaxed)
-}
-
-#[inline]
-fn set_log_level(level: u8) {
-    LOG_LEVEL.store(level, Ordering::Relaxed);
-}
-
-macro_rules! info {
-    ($($arg:tt)*) => {
-        if log_level() >= LOG_INFO {
-            println!("[INFO] {}", format!($($arg)*));
+    for (i, arg) in args.iter().enumerate() {
+        if skip_next { skip_next = false; continue; }
+        match arg.as_str() {
+            "-vvv" => verbosity = 3,
+            "-vv"  => verbosity = 2,
+            "-v"   => verbosity = 1,
+            "-q" | "--quiet" => verbosity = 0,
+            "-l" | "--log" => {
+                // Next arg is filename, or use default
+                if let Some(next) = args.get(i + 1) {
+                    if !next.starts_with('-') {
+                        log_file = Some(PathBuf::from(next));
+                        skip_next = true;
+                    } else {
+                        log_file = Some(PathBuf::from("alembic-cli.log"));
+                    }
+                } else {
+                    log_file = Some(PathBuf::from("alembic-cli.log"));
+                }
+            }
+            _ => filtered.push(arg.as_str()),
         }
-    };
+    }
+    (verbosity, log_file, filtered)
 }
 
-macro_rules! debug {
-    ($($arg:tt)*) => {
-        if log_level() >= LOG_DEBUG {
-            println!("[DEBUG] {}", format!($($arg)*));
-        }
-    };
-}
+/// Initialize tracing subscriber for CLI (no chrome profiler).
+fn init_cli_tracing(verbosity: u8, log_file: Option<&Path>) {
+    use tracing_subscriber::{fmt, EnvFilter, prelude::*};
 
-macro_rules! trace {
-    ($($arg:tt)*) => {
-        if log_level() >= LOG_TRACE {
-            println!("[TRACE] {}", format!($($arg)*));
-        }
+    let level = match verbosity {
+        0 => "warn",
+        1 => "info",
+        2 => "debug",
+        _ => "trace",
     };
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(level));
+
+    if let Some(path) = log_file {
+        let file = std::fs::File::create(path).expect("Failed to create log file");
+        let layer = fmt::layer().with_writer(file).with_ansi(false);
+        let subscriber = tracing_subscriber::registry().with(filter).with(layer);
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    } else {
+        let layer = fmt::layer().with_writer(std::io::stderr);
+        let subscriber = tracing_subscriber::registry().with(filter).with(layer);
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    }
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    
-    // Parse global flags
-    let mut filtered_args: Vec<&str> = Vec::new();
-    for arg in &args[1..] {
-        match arg.as_str() {
-            "-v" | "--verbose" => set_log_level(LOG_DEBUG),
-            "-vv" | "--trace" => set_log_level(LOG_TRACE),
-            "-q" | "--quiet" => set_log_level(LOG_QUIET),
-            _ => filtered_args.push(arg),
-        }
-    }
-    
+    let (verbosity, log_file, filtered_args) = parse_global_flags(&args[1..]);
+
     if filtered_args.is_empty() {
         print_help();
         return;
     }
-    
+
+    // Viewer initializes its own tracing (with chrome profiler support).
+    // All other commands use CLI tracing.
+    let is_viewer = matches!(filtered_args[0], "view" | "v");
+    if !is_viewer {
+        init_cli_tracing(verbosity, log_file.as_deref());
+    }
+
     match filtered_args[0] {
         // View command - launch 3D viewer
         "view" | "v" => {
             #[cfg(feature = "viewer")]
             {
-                let file = filtered_args.get(1).map(|s| std::path::PathBuf::from(*s));
-                if let Err(e) = alembic::viewer::run(file) {
+                let file = filtered_args.get(1).map(|s| PathBuf::from(*s));
+                if let Err(e) = alembic::viewer::run(file, verbosity, log_file) {
                     eprintln!("Viewer error: {}", e);
                     std::process::exit(1);
                 }
@@ -133,7 +147,7 @@ fn main() {
             }
             let json_mode = filtered_args.iter().any(|&s| s == "--json" || s == "-j");
             if json_mode {
-                set_log_level(LOG_QUIET);
+                // JSON mode: suppress log output (already handled by tracing level)
             }
             let pattern = filtered_args.get(2).filter(|&&s| s != "--json" && s != "-j").copied();
             cmd_dump(filtered_args[1], pattern, json_mode);
