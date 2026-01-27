@@ -41,6 +41,13 @@ impl SceneNode {
     }
 }
 
+/// Ray-scene intersection result
+struct PickResult {
+    t: f32,
+    point: Vec3,
+    mesh_name: String,
+}
+
 /// Main viewer application
 pub struct ViewerApp {
     viewport: Viewport,
@@ -143,21 +150,38 @@ impl ViewerApp {
         let ndc_x = rel_x * 2.0 - 1.0;
         let ndc_y = 1.0 - rel_y * 2.0; // flip Y
         
-        // Get camera matrices
-        let aspect = 16.0 / 9.0; // approximate
-        let proj = glam::Mat4::perspective_rh(
-            self.viewport.camera.fov,
-            aspect,
-            self.viewport.camera.near,
-            self.viewport.camera.far,
-        );
-        let view = self.viewport.camera.view_matrix();
+        // Get actual viewport aspect ratio
+        let aspect = if let Some(rt) = self.viewport.render_texture_size() {
+            rt.0 as f32 / rt.1.max(1) as f32
+        } else {
+            16.0 / 9.0
+        };
+        
+        // Use scene camera if active, otherwise orbit camera
+        let (proj, view) = if let Some(scene_cam) = &self.viewport.scene_camera {
+            let proj = glam::Mat4::perspective_rh(
+                scene_cam.fov_y,
+                aspect,
+                scene_cam.near,
+                scene_cam.far,
+            );
+            (proj, scene_cam.view)
+        } else {
+            let proj = glam::Mat4::perspective_rh(
+                self.viewport.camera.fov,
+                aspect,
+                self.viewport.camera.near,
+                self.viewport.camera.far,
+            );
+            (proj, self.viewport.camera.view_matrix())
+        };
         
         let inv_proj = proj.inverse();
         let inv_view = view.inverse();
         
         // Unproject to get ray direction
-        let near_clip = inv_proj * glam::Vec4::new(ndc_x, ndc_y, -1.0, 1.0);
+        // glam::perspective_rh uses depth range [0, 1], so near=0, far=1 in NDC
+        let near_clip = inv_proj * glam::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
         let near_point = near_clip.truncate() / near_clip.w;
         let far_clip = inv_proj * glam::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
         let far_point = far_clip.truncate() / far_clip.w;
@@ -168,8 +192,14 @@ impl ViewerApp {
         
         // Try to intersect with actual geometry first
         if let Some(renderer) = &self.viewport.renderer {
-            if let Some(t) = Self::ray_scene_intersect(renderer, ray_origin, ray_dir) {
-                return t;
+            if let Some(hit) = Self::ray_scene_intersect(renderer, ray_origin, ray_dir) {
+                // Extract short name from path (last component)
+                let short_name = hit.mesh_name.rsplit('/').next().unwrap_or(&hit.mesh_name);
+                println!("PICK: \"{}\" at ({:.1}, {:.1}, {:.1}), distance={:.2}",
+                    short_name, hit.point.x, hit.point.y, hit.point.z, hit.t);
+                return hit.t;
+            } else {
+                println!("PICK: MISS (no geometry at click position)");
             }
         }
         
@@ -198,7 +228,7 @@ impl ViewerApp {
         (ray_origin - center).length()
     }
     
-    /// Ray-triangle intersection (Moller-Trumbore)
+    /// Ray-triangle intersection (Moller-Trumbore, double-sided)
     fn ray_triangle_intersect(
         ray_origin: Vec3,
         ray_dir: Vec3,
@@ -211,6 +241,7 @@ impl ViewerApp {
         let h = ray_dir.cross(edge2);
         let a = edge1.dot(h);
         
+        // Double-sided: accept both front and back faces
         if a.abs() < EPSILON {
             return None; // Ray parallel to triangle
         }
@@ -239,34 +270,49 @@ impl ViewerApp {
         }
     }
     
-    /// Trace ray against all scene meshes, return closest hit distance
+    /// Trace ray against all scene meshes, return closest hit with details
     fn ray_scene_intersect(
         renderer: &super::renderer::Renderer,
         ray_origin: Vec3,
         ray_dir: Vec3,
-    ) -> Option<f32> {
-        let mut closest_t: Option<f32> = None;
+    ) -> Option<PickResult> {
+        let mut closest: Option<PickResult> = None;
+        let mut mesh_count = 0;
+        let mut tri_count = 0;
         
-        for mesh in renderer.meshes.values() {
+        for (path, mesh) in renderer.meshes.iter() {
             if let (Some(vertices), Some(indices)) = (&mesh.base_vertices, &mesh.base_indices) {
+                mesh_count += 1;
                 let transform = mesh.transform;
                 
                 // Check triangles
                 for tri in indices.chunks(3) {
                     if tri.len() < 3 { continue; }
+                    tri_count += 1;
                     
                     let v0 = transform.transform_point3(Vec3::from(vertices[tri[0] as usize].position));
                     let v1 = transform.transform_point3(Vec3::from(vertices[tri[1] as usize].position));
                     let v2 = transform.transform_point3(Vec3::from(vertices[tri[2] as usize].position));
                     
                     if let Some(t) = Self::ray_triangle_intersect(ray_origin, ray_dir, v0, v1, v2) {
-                        closest_t = Some(closest_t.map_or(t, |prev| prev.min(t)));
+                        let dominated = closest.as_ref().map_or(false, |c| c.t <= t);
+                        if !dominated {
+                            closest = Some(PickResult {
+                                t,
+                                point: ray_origin + ray_dir * t,
+                                mesh_name: path.clone(),
+                            });
+                        }
                     }
                 }
             }
         }
         
-        closest_t
+        if closest.is_none() && mesh_count > 0 {
+            println!("  (tested {} meshes, {} tris)", mesh_count, tri_count);
+        }
+        
+        closest
     }
     
     fn hash_scene_object(path: &str, transform: Mat4, data_hash: u64) -> u64 {

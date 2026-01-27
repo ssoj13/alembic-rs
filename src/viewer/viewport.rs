@@ -246,6 +246,11 @@ impl Viewport {
     pub fn take_focus_pick(&mut self) -> Option<(f32, f32)> {
         self.pending_focus_pick.take()
     }
+    
+    /// Get current render texture size (width, height)
+    pub fn render_texture_size(&self) -> Option<(u32, u32)> {
+        self.render_texture.as_ref().map(|rt| rt.size)
+    }
 }
 
 impl Default for Viewport {
