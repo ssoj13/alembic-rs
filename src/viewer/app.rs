@@ -624,15 +624,25 @@ impl ViewerApp {
             });
             
             ui.separator();
-            // Path tracing toggle
+            // Path tracing toggle + settings
             if ui.checkbox(&mut self.settings.path_tracing, "Path Tracing").changed() {
                 renderer.use_path_tracing = self.settings.path_tracing;
                 if self.settings.path_tracing {
-                    // Lazy-init path tracer on first enable
                     renderer.init_path_tracer(1280, 720);
                     renderer.upload_scene_to_path_tracer();
                 }
                 changed = true;
+            }
+            if self.settings.path_tracing {
+                ui.horizontal(|ui| {
+                    ui.label("Bounces:");
+                    if ui.add(egui::Slider::new(&mut self.settings.pt_max_bounces, 1..=8)).changed() {
+                        changed = true;
+                    }
+                });
+                if let Some(pt) = &renderer.path_tracer {
+                    ui.label(format!("Samples: {}", pt.frame_count));
+                }
             }
             ui.separator();
             
@@ -1652,6 +1662,15 @@ impl ViewerApp {
                 true,
                 false,
             );
+        }
+
+        // Init/update path tracer if enabled
+        if self.settings.path_tracing {
+            renderer.use_path_tracing = true;
+            if renderer.path_tracer.is_none() {
+                renderer.init_path_tracer(1280, 720);
+            }
+            renderer.upload_scene_to_path_tracer();
         }
 
         // Update stats

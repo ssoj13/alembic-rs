@@ -43,6 +43,7 @@ impl Bin {
 ///
 /// Returns a flat node array + reordered triangle index list.
 /// Triangles are NOT modified — indices map into the original slice.
+#[tracing::instrument(skip_all, fields(tri_count = triangles.len()))]
 pub fn build_bvh(triangles: &[Triangle]) -> Bvh {
     let n = triangles.len();
     if n == 0 {

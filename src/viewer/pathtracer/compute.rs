@@ -47,6 +47,7 @@ pub struct PathTraceCompute {
     // Storage buffers (uploaded from GpuSceneData)
     nodes_buffer: Option<wgpu::Buffer>,
     triangles_buffer: Option<wgpu::Buffer>,
+    materials_buffer: Option<wgpu::Buffer>,
 
     // Camera uniform
     camera_buffer: wgpu::Buffer,
@@ -54,6 +55,9 @@ pub struct PathTraceCompute {
     // Output texture (rgba32float storage)
     output_texture: wgpu::Texture,
     output_view: wgpu::TextureView,
+
+    // Accumulation buffer (vec4<f32> per pixel, read_write storage)
+    accum_buffer: wgpu::Buffer,
 
     // Dimensions
     width: u32,
@@ -127,6 +131,28 @@ impl PathTraceCompute {
                     },
                     count: None,
                 },
+                // @binding(4) Accumulation buffer (read_write storage)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // @binding(5) Materials storage
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -153,8 +179,9 @@ impl PathTraceCompute {
             mapped_at_creation: false,
         });
 
-        // Output storage texture
+        // Output storage texture + accumulation buffer
         let (output_texture, output_view) = Self::create_output(device, width, height);
+        let accum_buffer = Self::create_accum_buffer(device, width, height);
 
         // Blit pipeline (tone map PT output → screen)
         let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -245,9 +272,11 @@ impl PathTraceCompute {
             bind_group: None,
             nodes_buffer: None,
             triangles_buffer: None,
+            materials_buffer: None,
             camera_buffer,
             output_texture,
             output_view,
+            accum_buffer,
             width,
             height,
             frame_count: 0,
@@ -257,6 +286,17 @@ impl PathTraceCompute {
             blit_bind_group,
             blit_sampler,
         }
+    }
+
+    /// Create accumulation buffer (vec4<f32> per pixel).
+    fn create_accum_buffer(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Buffer {
+        let size = (width * height) as u64 * 16; // 4 x f32 per pixel
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("pt_accum"),
+            size: size.max(16), // min 16 bytes
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
     }
 
     /// Create output storage texture.
@@ -285,6 +325,7 @@ impl PathTraceCompute {
         let (tex, view) = Self::create_output(device, width, height);
         self.output_texture = tex;
         self.output_view = view;
+        self.accum_buffer = Self::create_accum_buffer(device, width, height);
         self.frame_count = 0; // reset accumulation
         self.rebuild_bind_group(device);
     }
@@ -307,8 +348,16 @@ impl PathTraceCompute {
             usage: wgpu::BufferUsages::STORAGE,
         });
 
+        let mats_bytes = data.materials_bytes();
+        let mats_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pt_materials"),
+            contents: if mats_bytes.is_empty() { &[0u8; 48] } else { mats_bytes },
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+
         self.nodes_buffer = Some(nodes_buffer);
         self.triangles_buffer = Some(tris_buffer);
+        self.materials_buffer = Some(mats_buffer);
         self.scene_ready = true;
         self.frame_count = 0;
         self.rebuild_bind_group(device);
@@ -316,7 +365,8 @@ impl PathTraceCompute {
 
     /// Rebuild bind groups after buffer/texture change.
     fn rebuild_bind_group(&mut self, device: &wgpu::Device) {
-        let (Some(nodes), Some(tris)) = (&self.nodes_buffer, &self.triangles_buffer) else {
+        let (Some(nodes), Some(tris), Some(mats)) =
+            (&self.nodes_buffer, &self.triangles_buffer, &self.materials_buffer) else {
             self.bind_group = None;
             return;
         };
@@ -340,6 +390,14 @@ impl PathTraceCompute {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(&self.output_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.accum_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: mats.as_entire_binding(),
                 },
             ],
         }));
@@ -372,11 +430,24 @@ impl PathTraceCompute {
     }
 
     /// Dispatch the compute shader. Returns false if scene not ready.
-    pub fn dispatch(&mut self, encoder: &mut wgpu::CommandEncoder) -> bool {
+    ///
+    /// Increments frame counter and writes it to camera uniform buffer
+    /// so the shader can do progressive accumulation (blend = 1/frame_count).
+    #[tracing::instrument(skip_all, fields(frame = self.frame_count))]
+    pub fn dispatch(&mut self, encoder: &mut wgpu::CommandEncoder, queue: &wgpu::Queue) -> bool {
         let Some(bg) = &self.bind_group else { return false; };
         if !self.scene_ready { return false; }
 
         self.frame_count += 1;
+
+        // Update frame_count in camera uniform (offset of frame_count field)
+        let fc_offset = std::mem::size_of::<[[f32; 4]; 4]>() * 2 // inv_view + inv_proj
+                      + std::mem::size_of::<[f32; 3]>();          // position
+        queue.write_buffer(
+            &self.camera_buffer,
+            fc_offset as u64,
+            bytemuck::bytes_of(&self.frame_count),
+        );
 
         let wg_x = (self.width + WG_SIZE - 1) / WG_SIZE;
         let wg_y = (self.height + WG_SIZE - 1) / WG_SIZE;

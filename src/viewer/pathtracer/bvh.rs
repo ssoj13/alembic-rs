@@ -104,17 +104,18 @@ pub struct GpuTriangle {
     pub _pad4: u32,
 }
 
-/// Standard Surface material params for GPU (64 bytes).
+/// Standard Surface material params for GPU (48 bytes).
+///
+/// Layout uses vec4 packing to avoid WGSL vec3 alignment issues:
+/// - `base_color_metallic`: rgb = base color, a = metallic
+/// - `emission_roughness`: rgb = emission, a = roughness
+/// - `opacity_ior_pad`: x = opacity, y = ior, zw = padding
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct GpuMaterial {
-    pub base_color: [f32; 3],
-    pub metallic: f32,
-    pub roughness: f32,
-    pub emission: [f32; 3],
-    pub opacity: f32,
-    pub ior: f32,
-    pub _pad: [f32; 2],
+    pub base_color_metallic: [f32; 4], // rgb=base_color, a=metallic
+    pub emission_roughness: [f32; 4],  // rgb=emission, a=roughness
+    pub opacity_ior_pad: [f32; 4],     // x=opacity, y=ior, zw=pad
 }
 
 /// CPU-side triangle used during BVH build (before GPU upload).

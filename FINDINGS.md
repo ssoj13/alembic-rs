@@ -368,6 +368,17 @@ Overall the port is **very complete and production-ready**. All major features a
 | 2026-01-27 | Binary compat verified | Complete | C++ abcls/abctree/abcecho all read our files. Byte-level ordering diffs but logically identical |
 | 2026-01-27 | F-key focus bug fix | Complete | Curves/hair now included in scene bounds (ConvertedCurves.bounds + compute_scene_bounds) |
 | 2026-01-27 | Path tracing UI toggle | Complete | Checkbox in Display panel, lazy init + scene upload on enable |
+| 2026-01-27 | Progressive path tracing | Complete | PCG RNG, cosine hemisphere sampling, 3-bounce GI, HDR sky+sun, accumulation buffer |
+| 2026-01-27 | PT real indices fix | Complete | upload_scene uses base_indices (real face data) instead of identity 0..N |
+| 2026-01-27 | PT materials pipeline | Complete | binding(5) materials buffer, GpuMaterial vec4-packed layout, per-mesh material_id |
+| 2026-01-27 | PT GGX specular shading | Complete | GGX importance sampling, Fresnel-weighted diffuse/spec split, metallic workflow, emission |
+| 2026-01-27 | WGSL `target` keyword fix | Complete | Renamed to `dest` — `target` is reserved in WGSL |
+| 2026-01-27 | WGSL alignment fix | Complete | vec3<f32> align=16 mismatch; restructured GpuMaterial to vec4-packed (48 bytes) |
+| 2026-01-27 | PT frame_count GPU sync | Complete | dispatch() now writes frame_count to camera buffer — was 0 causing div-by-zero → black screen |
+| 2026-01-27 | PT floor mesh in BVH | Complete | set_floor() stores base_vertices/base_indices; upload includes floor_mesh |
+| 2026-01-27 | PT auto-init on startup | Complete | If path_tracing saved in settings, PT inits automatically on scene load |
+| 2026-01-27 | PT UI controls | Complete | Bounces slider (1-8), sample counter next to checkbox |
+| 2026-01-27 | Tracing spans added | Complete | #[tracing::instrument] on render, dispatch, upload_scene, build_bvh |
 
 ---
 

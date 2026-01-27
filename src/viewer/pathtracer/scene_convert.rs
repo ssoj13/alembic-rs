@@ -52,15 +52,31 @@ pub fn extract_triangles(
     tris
 }
 
+/// Convert StandardSurfaceParams to GpuMaterial for path tracing.
+pub fn material_from_params(params: &standard_surface::StandardSurfaceParams) -> GpuMaterial {
+    let base = params.base_color_weight;
+    let emission = params.emission_color_weight;
+    GpuMaterial {
+        base_color_metallic: [base.x * base.w, base.y * base.w, base.z * base.w, params.params1.y],
+        emission_roughness: [
+            emission.x * emission.w,
+            emission.y * emission.w,
+            emission.z * emission.w,
+            params.params1.z.max(0.04), // clamp roughness for GGX stability
+        ],
+        opacity_ior_pad: [
+            (params.opacity.x + params.opacity.y + params.opacity.z) / 3.0,
+            params.params1.w,
+            0.0, 0.0,
+        ],
+    }
+}
+
 /// Create a default material (grey Lambert).
 pub fn default_material() -> GpuMaterial {
     GpuMaterial {
-        base_color: [0.8, 0.8, 0.8],
-        metallic: 0.0,
-        roughness: 0.5,
-        emission: [0.0, 0.0, 0.0],
-        opacity: 1.0,
-        ior: 1.5,
-        _pad: [0.0; 2],
+        base_color_metallic: [0.8, 0.8, 0.8, 0.0],
+        emission_roughness: [0.0, 0.0, 0.0, 0.5],
+        opacity_ior_pad: [1.0, 1.5, 0.0, 0.0],
     }
 }

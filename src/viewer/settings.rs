@@ -61,6 +61,7 @@ pub struct Settings {
     
     // Path tracing
     pub path_tracing: bool,
+    pub pt_max_bounces: u32,
 }
 
 impl Default for Settings {
@@ -99,6 +100,7 @@ impl Default for Settings {
             playback_fps: 24.0,
             use_scene_lights: false,
             path_tracing: false,
+            pt_max_bounces: 4,
         }
     }
 }

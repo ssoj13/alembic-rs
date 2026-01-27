@@ -155,6 +155,8 @@ pub struct SceneMesh {
     // For dynamic smooth normal recalculation
     pub smooth_data: Option<SmoothNormalData>,
     pub base_vertices: Option<Vec<Vertex>>,  // vertices with flat normals
+    pub base_indices: Option<Vec<u32>>,      // face indices for path tracer
+    pub material_params: StandardSurfaceParams, // CPU-side material for path tracer
     pub smooth_dirty: bool,
 }
 
@@ -609,6 +611,7 @@ impl Renderer {
     /// Build BVH from current scene meshes and upload to path tracer.
     /// Called when scene changes or path tracing is enabled.
     #[allow(dead_code)]
+    #[tracing::instrument(skip_all)]
     pub fn upload_scene_to_path_tracer(&mut self) {
         use super::pathtracer::{build, gpu_data, scene_convert};
 
@@ -617,18 +620,19 @@ impl Renderer {
             None => return,
         };
 
-        // Collect all triangles from scene meshes
+        // Collect triangles and materials from all scene meshes + floor
         let mut all_tris = Vec::new();
-        for mesh in self.meshes.values() {
-            // We need vertex data; if base_vertices exist use those, otherwise skip
-            if let Some(verts) = &mesh.base_vertices {
-                // Extract index data from GPU would be complex, so we use triangle fan from vertices
-                // For now, use the vertex buffer directly as triangle list (every 3 vertices = 1 tri)
+        let mut materials = Vec::new();
+
+        // Helper: extract from a SceneMesh if it has CPU-side data
+        let all_meshes = self.meshes.values()
+            .chain(self.floor_mesh.iter());
+        for mesh in all_meshes {
+            if let (Some(verts), Some(indices)) = (&mesh.base_vertices, &mesh.base_indices) {
+                let mat_id = materials.len() as u32;
+                materials.push(scene_convert::material_from_params(&mesh.material_params));
                 let tris = scene_convert::extract_triangles(
-                    verts,
-                    &(0..verts.len() as u32).collect::<Vec<_>>(),
-                    &mesh.transform,
-                    0, // default material
+                    verts, indices, &mesh.transform, mat_id,
                 );
                 all_tris.extend(tris);
             }
@@ -637,10 +641,12 @@ impl Renderer {
         if all_tris.is_empty() {
             return;
         }
+        if materials.is_empty() {
+            materials.push(scene_convert::default_material());
+        }
 
         // Build BVH
         let bvh = build::build_bvh(&all_tris);
-        let materials = vec![scene_convert::default_material()];
         let gpu_data = gpu_data::build_gpu_data(&bvh, &all_tris, &materials);
 
         pt.upload_scene(&self.device, &self.queue, &gpu_data);
@@ -1147,10 +1153,12 @@ impl Renderer {
             name,
             smooth_data,
             base_vertices: Some(vertices.to_vec()),
+            base_indices: Some(indices.to_vec()),
+            material_params: params.clone(),
             smooth_dirty: true,
         });
     }
-    
+
     /// Add curves (lines) to the scene
     pub fn add_curves(
         &mut self,
@@ -1373,6 +1381,7 @@ impl Renderer {
             scene_mesh.vertex_hash = new_hash;
             scene_mesh.bounds = compute_mesh_bounds(vertices, scene_mesh.transform);
             scene_mesh.base_vertices = Some(vertices.to_vec());
+            scene_mesh.base_indices = Some(indices.to_vec());
             scene_mesh.smooth_dirty = true;
         }
         true
@@ -1652,7 +1661,9 @@ impl Renderer {
             opacity,
             name: "_FLOOR_".into(),
             smooth_data: None,
-            base_vertices: None,
+            base_vertices: Some(vertices),
+            base_indices: Some(indices),
+            material_params: material,
             smooth_dirty: false,
         });
     }
@@ -1663,6 +1674,7 @@ impl Renderer {
     }
 
     /// Render the scene
+    #[tracing::instrument(skip_all, fields(w = width, h = height))]
     pub fn render(&mut self, view: &wgpu::TextureView, width: u32, height: u32, camera_distance: f32) {
         // Path tracing mode: dispatch compute shader and blit to screen
         if self.use_path_tracing {
@@ -1671,7 +1683,7 @@ impl Renderer {
                 let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("pt_encoder"),
                 });
-                pt.dispatch(&mut encoder);
+                pt.dispatch(&mut encoder, &self.queue);
                 pt.blit(&mut encoder, view);
                 self.queue.submit(std::iter::once(encoder.finish()));
             }
