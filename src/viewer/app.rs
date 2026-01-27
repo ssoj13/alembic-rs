@@ -1796,8 +1796,15 @@ impl eframe::App for ViewerApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let _span = tracing::info_span!("viewer_update").entered();
 
-        // Trace-level logging for update calls (use -vvv to see)
-        tracing::trace!("update: playing={} pt={}", self.playing, self.settings.path_tracing);
+        let _update_start = std::time::Instant::now();
+        macro_rules! checkpoint {
+            ($name:expr) => {
+                let _cp_elapsed = _update_start.elapsed().as_secs_f64() * 1000.0;
+                if _cp_elapsed > 16.0 {
+                    tracing::warn!("CHECKPOINT {}: {:.1}ms cumulative", $name, _cp_elapsed);
+                }
+            };
+        }
         // Update scene camera override
         self.viewport.scene_camera = self.active_camera.and_then(|i| {
             self.scene_cameras.get(i).map(|cam| {
@@ -1835,8 +1842,10 @@ impl eframe::App for ViewerApp {
             }
         }
         
+        checkpoint!("camera_setup");
         // Process any ready frames from background worker (non-blocking)
         self.process_worker_results();
+        checkpoint!("worker_results");
         
         // Escape - exit fullscreen first, then close app
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -1920,7 +1929,9 @@ impl eframe::App for ViewerApp {
             self.request_frame(0);
         }
 
+        checkpoint!("input_keys");
         self.initialize(ctx);
+        checkpoint!("initialize");
 
         // Initialize renderer if needed
         if self.viewport.renderer.is_none() {
@@ -1976,8 +1987,10 @@ impl eframe::App for ViewerApp {
             }
         }
         
+        checkpoint!("pending_files");
         // Update animation playback
         self.update_animation();
+        checkpoint!("animation");
 
         // Top menu bar
         TopBottomPanel::top("menu_bar").show(ctx, |ui| {
@@ -2028,6 +2041,7 @@ impl eframe::App for ViewerApp {
             self.settings.save();
         }
 
+        checkpoint!("panels_ui");
         // Central viewport
         CentralPanel::default().show(ctx, |ui| {
             let render_state = frame.wgpu_render_state();
@@ -2035,6 +2049,7 @@ impl eframe::App for ViewerApp {
         });
 
 
+        checkpoint!("viewport_render");
         // Track window size and position for saving on exit
         ctx.input(|i| {
             if let Some(rect) = i.viewport().inner_rect {
@@ -2052,6 +2067,11 @@ impl eframe::App for ViewerApp {
         // This saves CPU when idle (was causing 100% CPU usage)
         if self.playing || self.settings.path_tracing {
             ctx.request_repaint();
+        }
+
+        let update_ms = _update_start.elapsed().as_secs_f64() * 1000.0;
+        if update_ms > 16.0 {
+            tracing::warn!("SLOW UPDATE: {:.1}ms", update_ms);
         }
     }
 }

@@ -65,9 +65,16 @@ pub fn run(initial_file: Option<PathBuf>, verbosity: u8, log_file: Option<PathBu
                     } else {
                         wgpu::Limits::default()
                     };
+                    // Request optional features when adapter supports them
+                    let supported = adapter.features();
+                    let mut features = wgpu::Features::POLYGON_MODE_LINE;
+                    // Needed for 8x MSAA on some formats
+                    if supported.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
+                        features |= wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+                    }
                     wgpu::DeviceDescriptor {
                         label: Some("alembic-viewer device"),
-                        required_features: wgpu::Features::POLYGON_MODE_LINE,
+                        required_features: features,
                         required_limits: wgpu::Limits {
                             max_texture_dimension_2d: 8192,
                             max_bind_groups: 8,

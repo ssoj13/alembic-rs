@@ -59,8 +59,7 @@ pub struct Settings {
     // Lighting
     pub use_scene_lights: bool,
     
-    // Path tracing (runtime-only, not persisted — always starts off)
-    #[serde(skip)]
+    // Path tracing
     pub path_tracing: bool,
     pub pt_max_bounces: u32,
     pub pt_max_samples: u32,
@@ -128,7 +127,7 @@ impl Settings {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         
-        // Validate antialiasing - with TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES we support 1,2,4,8
+        // Validate antialiasing values (8x requires TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES)
         if !matches!(settings.antialiasing, 1 | 2 | 4 | 8) {
             settings.antialiasing = 4;
         }

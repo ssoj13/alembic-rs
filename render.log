@@ -1,0 +1,58 @@
+2026-01-27T17:33:45.403931Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT pending_files: 3615.7ms cumulative
+2026-01-27T17:33:45.404410Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT animation: 3616.2ms cumulative
+2026-01-27T17:33:45.424963Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT panels_ui: 3636.7ms cumulative
+2026-01-27T17:33:45.440970Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 3652.7ms cumulative
+2026-01-27T17:33:45.441071Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 3652.9ms
+2026-01-27T17:33:46.802052Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT worker_results: 85.2ms cumulative
+2026-01-27T17:33:46.802164Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT input_keys: 85.3ms cumulative
+2026-01-27T17:33:46.802196Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT initialize: 85.3ms cumulative
+2026-01-27T17:33:46.802221Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT pending_files: 85.4ms cumulative
+2026-01-27T17:33:46.802274Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT animation: 85.4ms cumulative
+2026-01-27T17:33:46.822628Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT panels_ui: 105.8ms cumulative
+2026-01-27T17:33:46.830883Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 114.0ms cumulative
+2026-01-27T17:33:46.830978Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 114.1ms
+2026-01-27T17:33:46.925887Z  WARN viewer_update:viewport_show: alembic::viewer::renderer: SLOW RENDER: 23.6ms
+2026-01-27T17:33:46.926121Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 33.7ms cumulative
+2026-01-27T17:33:46.926174Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 33.8ms
+2026-01-27T17:33:49.248963Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 16.3ms cumulative
+2026-01-27T17:33:49.249075Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 16.4ms
+2026-01-27T17:33:49.274111Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 16.2ms cumulative
+2026-01-27T17:33:49.274226Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 16.3ms
+2026-01-27T17:33:49.433634Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 17.8ms cumulative
+2026-01-27T17:33:49.433739Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 17.9ms
+2026-01-27T17:33:50.166177Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 16.3ms cumulative
+2026-01-27T17:33:50.166273Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 16.4ms
+2026-01-27T17:33:50.191164Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 17.5ms cumulative
+2026-01-27T17:33:50.191270Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 17.6ms
+2026-01-27T17:33:51.294564Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 21.5ms cumulative
+2026-01-27T17:33:51.294679Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 21.6ms
+2026-01-27T17:33:54.546355Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 20.1ms cumulative
+2026-01-27T17:33:54.546457Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 20.2ms
+2026-01-27T17:33:54.571974Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 16.6ms cumulative
+2026-01-27T17:33:54.572074Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 16.7ms
+2026-01-27T17:33:54.746433Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 16.2ms cumulative
+2026-01-27T17:33:54.746533Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 16.3ms
+2026-01-27T17:33:54.829053Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 16.0ms cumulative
+2026-01-27T17:33:54.829157Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 16.2ms
+2026-01-27T17:33:58.574727Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT panels_ui: 18.5ms cumulative
+2026-01-27T17:33:58.581138Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 24.9ms cumulative
+2026-01-27T17:33:58.581240Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 25.0ms
+2026-01-27T17:33:59.125125Z  WARN viewer_update:viewport_show: alembic::viewer::renderer: SLOW RENDER: 38.4ms
+2026-01-27T17:33:59.125367Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 43.3ms cumulative
+2026-01-27T17:33:59.125403Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 43.4ms
+2026-01-27T17:33:59.165241Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 21.7ms cumulative
+2026-01-27T17:33:59.165322Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 21.8ms
+2026-01-27T17:33:59.235829Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 18.8ms cumulative
+2026-01-27T17:33:59.235903Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 18.9ms
+2026-01-27T17:33:59.357742Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 18.8ms cumulative
+2026-01-27T17:33:59.357821Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 18.9ms
+2026-01-27T17:33:59.418367Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 18.0ms cumulative
+2026-01-27T17:33:59.418450Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 18.1ms
+2026-01-27T17:34:05.196555Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT worker_results: 5344.1ms cumulative
+2026-01-27T17:34:05.196645Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT input_keys: 5344.2ms cumulative
+2026-01-27T17:34:05.196663Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT initialize: 5344.3ms cumulative
+2026-01-27T17:34:05.196677Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT pending_files: 5344.3ms cumulative
+2026-01-27T17:34:05.196706Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT animation: 5344.3ms cumulative
+2026-01-27T17:34:05.199412Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT panels_ui: 5347.0ms cumulative
+2026-01-27T17:34:05.205415Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 5353.0ms cumulative
+2026-01-27T17:34:05.205467Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 5353.1ms

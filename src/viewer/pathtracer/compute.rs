@@ -435,6 +435,13 @@ impl PathTraceCompute {
 
     /// Reset progressive accumulation (call on camera move / scene change).
     pub fn reset_accumulation(&mut self) {
+        tracing::warn!("PT reset_accumulation called! was at frame {}", self.frame_count);
+        // Capture backtrace for debugging spurious resets
+        #[cfg(debug_assertions)]
+        {
+            let bt = std::backtrace::Backtrace::force_capture();
+            tracing::debug!("PT reset backtrace:\n{}", bt);
+        }
         self.frame_count = 0;
     }
 

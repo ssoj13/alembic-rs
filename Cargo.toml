@@ -68,3 +68,17 @@ viewer = [
     "dolly", "mint", "log", "env_logger", "anyhow", "rfd", "serde", "dirs", "image",
     "tracing-chrome",
 ]
+
+# Optimize heavy deps in debug builds to avoid UI/render stutters
+[profile.dev.package.wgpu]
+opt-level = 2
+[profile.dev.package.naga]
+opt-level = 2
+[profile.dev.package.egui]
+opt-level = 2
+[profile.dev.package.eframe]
+opt-level = 2
+[profile.dev.package.egui-wgpu]
+opt-level = 2
+[profile.dev.package.flate2]
+opt-level = 2

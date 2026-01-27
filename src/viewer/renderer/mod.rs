@@ -1695,8 +1695,8 @@ impl Renderer {
     }
 
     /// Render the scene
-    #[tracing::instrument(skip_all, fields(w = width, h = height))]
     pub fn render(&mut self, view: &wgpu::TextureView, width: u32, height: u32, camera_distance: f32) {
+        let render_start = std::time::Instant::now();
         // Path tracing mode: dispatch compute shader and blit to screen
         if self.use_path_tracing {
             if let Some(pt) = &mut self.path_tracer {
@@ -1708,6 +1708,10 @@ impl Renderer {
                 pt.dispatch(&mut encoder, &self.queue);
                 pt.blit(&mut encoder, view);
                 self.queue.submit(std::iter::once(encoder.finish()));
+                let render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
+                if render_ms > 5.0 {
+                    tracing::warn!("SLOW PT RENDER: {:.1}ms frame={}", render_ms, pt.frame_count);
+                }
             }
             return;
         }
@@ -1872,5 +1876,9 @@ impl Renderer {
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
+        let render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
+        if render_ms > 16.0 {
+            tracing::warn!("SLOW RENDER: {:.1}ms", render_ms);
+        }
     }
 }

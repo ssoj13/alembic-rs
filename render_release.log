@@ -1,0 +1,5 @@
+2026-01-27T17:37:05.070707Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT pending_files: 269.3ms cumulative
+2026-01-27T17:37:05.070859Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT animation: 269.5ms cumulative
+2026-01-27T17:37:05.073955Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT panels_ui: 272.6ms cumulative
+2026-01-27T17:37:05.079284Z  WARN viewer_update: alembic::viewer::app: CHECKPOINT viewport_render: 277.9ms cumulative
+2026-01-27T17:37:05.079351Z  WARN viewer_update: alembic::viewer::app: SLOW UPDATE: 278.0ms
