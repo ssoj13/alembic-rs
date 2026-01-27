@@ -92,7 +92,7 @@ pub struct Renderer {
     env_uniform_buffer: wgpu::Buffer,
     
     // Floor mesh (rendered before scene, managed separately)
-    floor_mesh: Option<SceneMesh>,
+    pub floor_mesh: Option<SceneMesh>,
     
     // Scene meshes (name -> mesh for efficient updates)
     pub meshes: HashMap<String, SceneMesh>,

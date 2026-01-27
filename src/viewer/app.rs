@@ -193,13 +193,18 @@ impl ViewerApp {
         // Try to intersect with actual geometry first
         if let Some(renderer) = &self.viewport.renderer {
             if let Some(hit) = Self::ray_scene_intersect(renderer, ray_origin, ray_dir) {
+                // Convert world-space hit point to view-space z-depth
+                // DoF shader expects depth along optical axis (view-space Z)
+                let hit_view = view * glam::Vec4::new(hit.point.x, hit.point.y, hit.point.z, 1.0);
+                let z_depth = -hit_view.z; // Negate because view space Z is negative forward
+                
                 // Extract short name from path (last component)
                 let short_name = hit.mesh_name.rsplit('/').next().unwrap_or(&hit.mesh_name);
-                println!("PICK: \"{}\" at ({:.1}, {:.1}, {:.1}), distance={:.2}",
-                    short_name, hit.point.x, hit.point.y, hit.point.z, hit.t);
-                return hit.t;
+                println!("PICK: \"{}\" at ({:.1}, {:.1}, {:.1}), z_depth={:.2}",
+                    short_name, hit.point.x, hit.point.y, hit.point.z, z_depth);
+                return z_depth;
             } else {
-                println!("PICK: MISS (no geometry at click position)");
+                println!("PICK: MISS");
             }
         }
         
@@ -280,12 +285,12 @@ impl ViewerApp {
         let mut mesh_count = 0;
         let mut tri_count = 0;
         
-        for (path, mesh) in renderer.meshes.iter() {
+        // Helper to test a mesh
+        let mut test_mesh = |name: &str, mesh: &super::renderer::SceneMesh| {
             if let (Some(vertices), Some(indices)) = (&mesh.base_vertices, &mesh.base_indices) {
                 mesh_count += 1;
                 let transform = mesh.transform;
                 
-                // Check triangles
                 for tri in indices.chunks(3) {
                     if tri.len() < 3 { continue; }
                     tri_count += 1;
@@ -300,12 +305,22 @@ impl ViewerApp {
                             closest = Some(PickResult {
                                 t,
                                 point: ray_origin + ray_dir * t,
-                                mesh_name: path.clone(),
+                                mesh_name: name.to_string(),
                             });
                         }
                     }
                 }
             }
+        };
+        
+        // Test scene meshes
+        for (path, mesh) in renderer.meshes.iter() {
+            test_mesh(path, mesh);
+        }
+        
+        // Test floor mesh
+        if let Some(floor) = &renderer.floor_mesh {
+            test_mesh("_FLOOR_", floor);
         }
         
         if closest.is_none() && mesh_count > 0 {
@@ -998,7 +1013,7 @@ impl ViewerApp {
                                 });
                                 ui.horizontal(|ui| {
                                     ui.label("Focus:");
-                                    if ui.add(egui::Slider::new(&mut self.settings.pt_focus_distance, 0.1..=100.0)
+                                    if ui.add(egui::Slider::new(&mut self.settings.pt_focus_distance, 0.1..=500.0)
                                         .logarithmic(true)).changed() 
                                     {
                                         renderer.pt_focus_distance = self.settings.pt_focus_distance;
