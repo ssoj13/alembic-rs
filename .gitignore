@@ -6,5 +6,6 @@
 cdxx.cmd
 tmpclaude-*-cwd
 cdx.cmd
-/*.txt
 /trace.json
+/*.txt
+/*.log
