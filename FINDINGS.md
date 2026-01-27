@@ -365,6 +365,9 @@ Overall the port is **very complete and production-ready**. All major features a
 | 2026-01-27 | Thread safety review | Complete | ArchiveReader trait is Send+Sync, IArchive auto-derives. No unsafe Send/Sync impls needed |
 | 2026-01-27 | PT compute pipeline | Complete | compute.rs: PathTraceCompute with dispatch/blit, blit.wgsl ACES tone map |
 | 2026-01-27 | PT scene converter | Complete | scene_convert.rs: Vertex/indices → Triangle with world-space transform |
+| 2026-01-27 | Binary compat verified | Complete | C++ abcls/abctree/abcecho all read our files. Byte-level ordering diffs but logically identical |
+| 2026-01-27 | F-key focus bug fix | Complete | Curves/hair now included in scene bounds (ConvertedCurves.bounds + compute_scene_bounds) |
+| 2026-01-27 | Path tracing UI toggle | Complete | Checkbox in Display panel, lazy init + scene upload on enable |
 
 ---
 

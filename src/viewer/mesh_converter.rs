@@ -84,6 +84,7 @@ pub struct ConvertedCurves {
     pub vertices: Arc<Vec<Vertex>>,
     pub indices: Arc<Vec<u32>>,
     pub transform: Mat4,
+    pub bounds: Bounds,
 }
 
 /// Converted points data ready for GPU
@@ -248,11 +249,13 @@ pub fn convert_curves(sample: &CurvesSample, path: &str, transform: Mat4) -> Opt
         return None;
     }
     
+    let bounds = bounds_from_vertices(&vertices, &transform);
     Some(ConvertedCurves {
         path: path.to_string(),
         vertices: Arc::new(vertices),
         indices: Arc::new(indices),
         transform,
+        bounds,
     })
 }
 
@@ -623,11 +626,13 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
 
     // Add cached curves
     for cached in cached_curve_results {
+        let bounds = bounds_from_vertices(&cached.vertices, &cached.transform);
         curves.push(ConvertedCurves {
             path: cached.path,
             vertices: cached.vertices,
             indices: cached.indices,
             transform: cached.transform,
+            bounds,
         });
     }
 
@@ -695,6 +700,16 @@ fn transform_bounds(local: &Bounds, transform: Mat4) -> Bounds {
     let mut bounds = Bounds::empty();
     for corner in corners {
         bounds.expand(transform.transform_point3(corner));
+    }
+    bounds
+}
+
+/// Compute AABB from vertex positions (world-space via transform).
+fn bounds_from_vertices(vertices: &[Vertex], transform: &Mat4) -> Bounds {
+    let mut bounds = Bounds::empty();
+    for v in vertices {
+        let p = transform.transform_point3(Vec3::from(v.position));
+        bounds.expand(p);
     }
     bounds
 }
@@ -1104,13 +1119,16 @@ pub fn compute_stats(meshes: &[ConvertedMesh]) -> MeshStats {
 }
 
 /// Compute combined bounds of all meshes and points
-pub fn compute_scene_bounds(meshes: &[ConvertedMesh], points: &[ConvertedPoints]) -> Bounds {
+pub fn compute_scene_bounds(meshes: &[ConvertedMesh], points: &[ConvertedPoints], curves: &[ConvertedCurves]) -> Bounds {
     let mut bounds = Bounds::empty();
     for mesh in meshes {
         bounds.merge(&mesh.bounds);
     }
     for pts in points {
         bounds.merge(&pts.bounds);
+    }
+    for crv in curves {
+        bounds.merge(&crv.bounds);
     }
     bounds
 }

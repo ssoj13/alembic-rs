@@ -58,6 +58,9 @@ pub struct Settings {
     
     // Lighting
     pub use_scene_lights: bool,
+    
+    // Path tracing
+    pub path_tracing: bool,
 }
 
 impl Default for Settings {
@@ -95,6 +98,7 @@ impl Default for Settings {
             side_panel_width: 200.0,
             playback_fps: 24.0,
             use_scene_lights: false,
+            path_tracing: false,
         }
     }
 }

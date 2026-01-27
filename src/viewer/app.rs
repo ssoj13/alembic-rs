@@ -623,6 +623,19 @@ impl ViewerApp {
                 }
             });
             
+            ui.separator();
+            // Path tracing toggle
+            if ui.checkbox(&mut self.settings.path_tracing, "Path Tracing").changed() {
+                renderer.use_path_tracing = self.settings.path_tracing;
+                if self.settings.path_tracing {
+                    // Lazy-init path tracer on first enable
+                    renderer.init_path_tracer(1280, 720);
+                    renderer.upload_scene_to_path_tracer();
+                }
+                changed = true;
+            }
+            ui.separator();
+            
             // Anti-aliasing (requires restart to take effect)
             ui.horizontal(|ui| {
                 ui.label("AA:");
@@ -1505,7 +1518,7 @@ impl ViewerApp {
         self.last_scene_hash = Some(scene_hash);
 
         let stats = mesh_converter::compute_stats(&scene.meshes);
-        let bounds = mesh_converter::compute_scene_bounds(&scene.meshes, &scene.points);
+        let bounds = mesh_converter::compute_scene_bounds(&scene.meshes, &scene.points, &scene.curves);
         self.scene_bounds = if bounds.is_valid() { Some(bounds) } else { None };
         
         // Update shadow bounds
@@ -1997,7 +2010,7 @@ impl eframe::App for ViewerApp {
         // Request repaint only when animation is playing
         // egui handles repaint for pointer interactions automatically
         // This saves CPU when idle (was causing 100% CPU usage)
-        if self.playing {
+        if self.playing || self.settings.path_tracing {
             ctx.request_repaint();
         }
     }
