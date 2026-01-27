@@ -72,6 +72,10 @@ pub fn run(initial_file: Option<PathBuf>, verbosity: u8, log_file: Option<PathBu
                     if supported.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
                         features |= wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
                     }
+                    // Needed for filtering Rgba32Float textures (path tracer blit)
+                    if supported.contains(wgpu::Features::FLOAT32_FILTERABLE) {
+                        features |= wgpu::Features::FLOAT32_FILTERABLE;
+                    }
                     wgpu::DeviceDescriptor {
                         label: Some("alembic-viewer device"),
                         required_features: features,
