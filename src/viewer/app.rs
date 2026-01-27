@@ -1867,16 +1867,16 @@ impl eframe::App for ViewerApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.is_fullscreen));
         }
         
-        // Navigate ABC files in directory: PageUp = prev, PageDown = next
-        // Navigate HDR files: Ctrl+PageUp = prev, Ctrl+PageDown = next
-        if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
+        // Navigate ABC files in directory: PageUp/Left = prev, PageDown/Right = next
+        // Navigate HDR files: Ctrl+PageUp/Left = prev, Ctrl+PageDown/Right = next
+        if ctx.input(|i| i.key_pressed(egui::Key::PageUp) || i.key_pressed(egui::Key::ArrowLeft)) {
             if ctx.input(|i| i.modifiers.ctrl) {
                 self.navigate_sibling_hdr(-1);
             } else {
                 self.navigate_sibling_abc(-1);
             }
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
+        if ctx.input(|i| i.key_pressed(egui::Key::PageDown) || i.key_pressed(egui::Key::ArrowRight)) {
             if ctx.input(|i| i.modifiers.ctrl) {
                 self.navigate_sibling_hdr(1);
             } else {
