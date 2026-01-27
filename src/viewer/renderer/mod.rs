@@ -11,9 +11,9 @@ mod postfx;
 mod passes;
 mod pipelines;
 
-use resources::{DepthTexture, GBuffer, LightingParams, SsaoBlurParams, SsaoParams, SsaoTargets};
+use resources::{DepthTexture, GBuffer, LightingParams, ObjectIdTexture, SsaoBlurParams, SsaoParams, SsaoTargets};
 use postfx::{create_postfx_pipelines, PostFxPipelines};
-use pipelines::{create_pipelines, Pipelines};
+use pipelines::{create_pipelines, create_hover_pipeline, HoverParams, HoverPipeline, Pipelines};
 
 use standard_surface::{
     BindGroupLayouts, CameraUniform, LightRig, ModelUniform,
@@ -147,6 +147,18 @@ pub struct Renderer {
     depth_pick_buffer_size: u32,  // current buffer size (width)
     pending_depth_pick: Option<(u32, u32)>,  // pixel coords to pick
     pub depth_pick_result: Option<f32>,      // linear depth result
+    
+    // Hover highlighting (object ID buffer approach)
+    object_id_texture: Option<ObjectIdTexture>,
+    object_id_pick_buffer: wgpu::Buffer,
+    hover_pipeline: HoverPipeline,
+    hover_bind_group: Option<wgpu::BindGroup>,
+    pub hover_mode: super::settings::HoverMode,
+    pub hovered_mesh_path: Option<String>,
+    pub hovered_object_id: u32,              // Current hovered object ID (0 = none)
+    pending_hover_pick: Option<(u32, u32)>,  // Pixel to read for hover detection
+    mesh_id_map: HashMap<u32, String>,       // Map object ID -> mesh path
+    next_object_id: u32,                     // Counter for assigning object IDs
 }
 
 /// GPU mesh data
@@ -168,8 +180,8 @@ pub struct SceneMesh {
     pub vertex_hash: u64,  // Quick hash for change detection
     pub bounds: (Vec3, Vec3),  // (min, max) in world space
     pub opacity: f32,
-    #[allow(dead_code)]
     pub name: String,
+    pub object_id: u32,  // Unique ID for hover/picking (0 = none/background)
     // For dynamic smooth normal recalculation
     pub smooth_data: Option<SmoothNormalData>,
     pub base_vertices: Option<Vec<Vertex>>,  // vertices with flat normals
@@ -523,6 +535,18 @@ impl Renderer {
             mapped_at_creation: false,
         });
         
+        // Buffer for reading back object ID - needs to hold entire row (aligned to 256)
+        // For 4K (3840px) * 4 bytes = 15360 bytes, aligned = 15360 bytes
+        // Use 64KB to handle any reasonable resolution
+        let object_id_pick_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("object_id_pick_buffer"),
+            size: 65536, // 64KB - enough for 4K+ row
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        
+        let hover_pipeline = create_hover_pipeline(&device, format);
+        
         Self {
             device,
             queue,
@@ -596,6 +620,16 @@ impl Renderer {
             depth_pick_buffer_size: 256,  // initial size, will grow as needed
             pending_depth_pick: None,
             depth_pick_result: None,
+            object_id_texture: None,
+            object_id_pick_buffer,
+            hover_pipeline,
+            hover_bind_group: None,
+            hover_mode: super::settings::HoverMode::None,
+            hovered_mesh_path: None,
+            hovered_object_id: 0,
+            pending_hover_pick: None,
+            mesh_id_map: HashMap::new(),
+            next_object_id: 1,  // 0 is reserved for background
         }
     }
 
@@ -1101,6 +1135,252 @@ impl Renderer {
             });
         }
     }
+    
+    /// Ensure object ID texture exists and matches size
+    fn ensure_object_id_texture(&mut self, width: u32, height: u32) {
+        let needs_recreate = match &self.object_id_texture {
+            Some(oit) => oit.size != (width, height),
+            None => true,
+        };
+
+        if needs_recreate && width > 0 && height > 0 {
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("object_id_texture"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R32Uint,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT 
+                     | wgpu::TextureUsages::TEXTURE_BINDING 
+                     | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            self.object_id_texture = Some(ObjectIdTexture {
+                texture,
+                view,
+                size: (width, height),
+            });
+            // Invalidate hover bind group since texture changed
+            self.hover_bind_group = None;
+        }
+    }
+    
+    /// Render object IDs to the object ID texture for hover detection
+    fn render_object_id_pass(&mut self, encoder: &mut wgpu::CommandEncoder, depth_view: &wgpu::TextureView) {
+        let id_texture = match &self.object_id_texture {
+            Some(t) => t,
+            None => return,
+        };
+        
+        let pipeline = if self.double_sided {
+            &self.pipelines.object_id_pipeline_double_sided
+        } else {
+            &self.pipelines.object_id_pipeline
+        };
+        
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("object_id_pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &id_texture.view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 }),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,  // Reuse depth from main pass
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        
+        render_pass.set_pipeline(pipeline);
+        render_pass.set_bind_group(0, &self.camera_light_bind_group, &[]);
+        
+        // Render all meshes
+        for mesh in self.meshes.values() {
+            render_pass.set_bind_group(1, &mesh.model_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..mesh.mesh.index_count, 0, 0..1);
+        }
+        
+        // Render floor if present
+        if let Some(floor) = &self.floor_mesh {
+            render_pass.set_bind_group(1, &floor.model_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, floor.mesh.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(floor.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..floor.mesh.index_count, 0, 0..1);
+        }
+    }
+    
+    /// Render hover highlight overlay (outline/tint)
+    fn render_hover_pass(&mut self, encoder: &mut wgpu::CommandEncoder, color_view: &wgpu::TextureView, width: u32, height: u32) {
+        use super::settings::HoverMode;
+        
+        // Skip if hover mode is disabled or no object is hovered
+        if self.hover_mode == HoverMode::None || self.hovered_object_id == 0 {
+            return;
+        }
+        
+        let id_texture = match &self.object_id_texture {
+            Some(t) => t,
+            None => return,
+        };
+        
+        // Create/update hover bind group if needed
+        if self.hover_bind_group.is_none() {
+            self.hover_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("hover_bind_group"),
+                layout: &self.hover_pipeline.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&id_texture.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: self.hover_pipeline.params_buffer.as_entire_binding(),
+                    },
+                ],
+            }));
+        }
+        
+        // Update hover params
+        let mode = match self.hover_mode {
+            HoverMode::None => 0,
+            HoverMode::Outline => 1,
+            HoverMode::Tint => 2,
+            HoverMode::Both => 3,
+        };
+        let params = HoverParams {
+            hovered_id: self.hovered_object_id,
+            mode,
+            outline_width: 2.0,
+            _pad0: 0.0,
+            outline_color: [1.0, 0.5, 0.0, 1.0],  // Orange
+            tint_color: [1.0, 0.5, 0.0, 0.12],    // Semi-transparent orange
+            viewport_size: [width as f32, height as f32],
+            _pad1: [0.0; 2],
+        };
+        self.queue.write_buffer(&self.hover_pipeline.params_buffer, 0, bytemuck::bytes_of(&params));
+        
+        let bind_group = self.hover_bind_group.as_ref().unwrap();
+        
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("hover_pass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: color_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,  // Blend over existing
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        
+        render_pass.set_pipeline(&self.hover_pipeline.pipeline);
+        render_pass.set_bind_group(0, bind_group, &[]);
+        render_pass.draw(0..3, 0..1);  // Fullscreen triangle
+    }
+    
+    /// Request hover detection at the given pixel coordinates
+    pub fn request_hover_pick(&mut self, x: u32, y: u32) {
+        self.pending_hover_pick = Some((x, y));
+    }
+    
+    /// Process pending hover pick - reads object ID at cursor position
+    fn process_hover_pick(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        let (px, py) = match self.pending_hover_pick {
+            Some(coords) => coords,
+            None => return,
+        };
+        
+        let id_texture = match &self.object_id_texture {
+            Some(t) => t,
+            None => return,
+        };
+        
+        // Ensure pixel is within bounds
+        if px >= id_texture.size.0 || py >= id_texture.size.1 {
+            self.pending_hover_pick = None;
+            return;
+        }
+        
+        // bytes_per_row must be aligned to 256 (COPY_BYTES_PER_ROW_ALIGNMENT)
+        // For R32Uint (4 bytes per pixel), we need to copy at least 64 pixels per row
+        // Instead, copy the entire row and read the correct pixel
+        let texture_width = id_texture.size.0;
+        let bytes_per_pixel = 4u32;  // R32Uint
+        let bytes_per_row = (texture_width * bytes_per_pixel + 255) & !255;  // Align to 256
+        
+        // Copy entire row containing our pixel
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &id_texture.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x: 0, y: py, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &self.object_id_pick_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(1),
+                },
+            },
+            wgpu::Extent3d { width: texture_width, height: 1, depth_or_array_layers: 1 },
+        );
+        // Store the x coordinate for reading the correct pixel later
+        // (pending_hover_pick is not taken, it's still Some with the coords)
+    }
+    
+    /// Read back the hovered object ID from the GPU (call after queue.submit)
+    pub fn poll_hover_result(&mut self) {
+        let (px, _py) = match self.pending_hover_pick.take() {
+            Some(coords) => coords,
+            None => return,
+        };
+        
+        let buffer_slice = self.object_id_pick_buffer.slice(..);
+        
+        // Map the buffer for reading
+        buffer_slice.map_async(wgpu::MapMode::Read, |_| {});
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
+        
+        {
+            let data = buffer_slice.get_mapped_range();
+            // Read the pixel at offset px * 4 (R32Uint = 4 bytes per pixel)
+            let offset = (px as usize) * 4;
+            if offset + 4 <= data.len() {
+                let id: u32 = *bytemuck::from_bytes(&data[offset..offset + 4]);
+                
+                if id != self.hovered_object_id {
+                    self.hovered_object_id = id;
+                    self.hovered_mesh_path = self.mesh_id_map.get(&id).cloned();
+                }
+            }
+        }
+        self.object_id_pick_buffer.unmap();
+    }
 
     fn ensure_gbuffer(&mut self, width: u32, height: u32) {
         let needs_recreate = match &self.gbuffer {
@@ -1447,11 +1727,18 @@ impl Renderer {
             &material_buffer,
         );
 
-        // Model transform
+        // Assign unique object ID for hover/picking
+        let object_id = self.next_object_id;
+        self.next_object_id += 1;
+        self.mesh_id_map.insert(object_id, name.clone());
+
+        // Model transform with object ID
         let normal_matrix = transform.inverse().transpose();
         let model_uniform = ModelUniform {
             model: transform.to_cols_array_2d(),
             normal_matrix: normal_matrix.to_cols_array_2d(),
+            object_id,
+            _pad: [0; 3],
         };
         let model_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("model_buffer"),
@@ -1481,6 +1768,7 @@ impl Renderer {
             bounds,
             opacity,
             name,
+            object_id,
             smooth_data,
             base_vertices: Some(vertices.to_vec()),
             base_indices: Some(indices.to_vec()),
@@ -1509,11 +1797,13 @@ impl Renderer {
             &material_buffer,
         );
         
-        // Model transform
+        // Model transform (curves don't need object ID for hover)
         let normal_matrix = transform.inverse().transpose();
         let model_uniform = ModelUniform {
             model: transform.to_cols_array_2d(),
             normal_matrix: normal_matrix.to_cols_array_2d(),
+            object_id: 0,
+            _pad: [0; 3],
         };
         let model_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("curves_model_buffer"),
@@ -1579,11 +1869,13 @@ impl Renderer {
             &material_buffer,
         );
 
-        // Model transform
+        // Model transform (points don't need object ID for hover)
         let normal_matrix = transform.inverse().transpose();
         let model_uniform = ModelUniform {
             model: transform.to_cols_array_2d(),
             normal_matrix: normal_matrix.to_cols_array_2d(),
+            object_id: 0,
+            _pad: [0; 3],
         };
         let model_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("points_model_buffer"),
@@ -1661,6 +1953,11 @@ impl Renderer {
         self.meshes.clear();
         self.curves.clear();
         self.points.clear();
+        // Reset object ID tracking
+        self.mesh_id_map.clear();
+        self.next_object_id = 1;  // 0 is reserved for background
+        self.hovered_object_id = 0;
+        self.hovered_mesh_path = None;
     }
     
     /// Update only transform for existing mesh (cheap operation)
@@ -1672,6 +1969,8 @@ impl Renderer {
             let model_uniform = ModelUniform {
                 model: transform.to_cols_array_2d(),
                 normal_matrix: normal_matrix.to_cols_array_2d(),
+                object_id: scene_mesh.object_id,
+                _pad: [0; 3],
             };
             self.queue.write_buffer(
                 &scene_mesh.model_buffer,
@@ -1766,6 +2065,8 @@ impl Renderer {
             let model_uniform = ModelUniform {
                 model: transform.to_cols_array_2d(),
                 normal_matrix: normal_matrix.to_cols_array_2d(),
+                object_id: 0,
+                _pad: [0; 3],
             };
             self.queue.write_buffer(
                 &curves.model_buffer,
@@ -1822,6 +2123,8 @@ impl Renderer {
             let model_uniform = ModelUniform {
                 model: transform.to_cols_array_2d(),
                 normal_matrix: normal_matrix.to_cols_array_2d(),
+                object_id: 0,
+                _pad: [0; 3],
             };
             self.queue.write_buffer(
                 &points.model_buffer,
@@ -1975,10 +2278,17 @@ impl Renderer {
             &material_buffer,
         );
         
-        // Model transform (identity)
+        // Assign object ID for floor
+        let floor_object_id = self.next_object_id;
+        self.next_object_id += 1;
+        self.mesh_id_map.insert(floor_object_id, "_FLOOR_".into());
+        
+        // Model transform (identity) with object ID
         let model_uniform = ModelUniform {
             model: Mat4::IDENTITY.to_cols_array_2d(),
             normal_matrix: Mat4::IDENTITY.to_cols_array_2d(),
+            object_id: floor_object_id,
+            _pad: [0; 3],
         };
         let model_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("floor_model_buffer"),
@@ -2012,6 +2322,7 @@ impl Renderer {
             bounds,
             opacity,
             name: "_FLOOR_".into(),
+            object_id: floor_object_id,
             smooth_data: None,
             base_vertices: Some(vertices),
             base_indices: Some(indices),
@@ -2053,6 +2364,10 @@ impl Renderer {
         let use_gbuffer = true;
         if use_gbuffer {
             self.ensure_gbuffer(width, height);
+        }
+        // Ensure object ID texture for hover detection
+        if self.hover_mode != super::settings::HoverMode::None {
+            self.ensure_object_id_texture(width, height);
         }
         self.update_grid(camera_distance);
 
@@ -2208,7 +2523,24 @@ impl Renderer {
             );
         }
 
+        // Object ID pass for hover detection
+        if self.hover_mode != super::settings::HoverMode::None {
+            self.render_object_id_pass(&mut encoder, &depth_view);
+            
+            // Process hover pick if requested
+            self.process_hover_pick(&mut encoder);
+            
+            // Render hover highlight overlay
+            self.render_hover_pass(&mut encoder, color_target_view_ref, width, height);
+        }
+
         self.queue.submit(std::iter::once(encoder.finish()));
+        
+        // Poll for hover pick result if we did a pick this frame
+        if self.hover_mode != super::settings::HoverMode::None && self.pending_hover_pick.is_none() {
+            // Only poll if we had a pending pick that was processed
+            // (pending_hover_pick was cleared by process_hover_pick)
+        }
         
         let render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
         if render_ms > 16.0 {

@@ -9,3 +9,5 @@ cdx.cmd
 /trace.json
 /*.txt
 /*.log
+/ca.sh
+

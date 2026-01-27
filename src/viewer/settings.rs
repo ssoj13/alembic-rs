@@ -3,6 +3,34 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Hover highlight mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum HoverMode {
+    #[default]
+    None,
+    Outline,
+    Tint,
+    Both,
+}
+
+impl HoverMode {
+    pub const ALL: [HoverMode; 4] = [
+        HoverMode::None,
+        HoverMode::Outline,
+        HoverMode::Tint,
+        HoverMode::Both,
+    ];
+    
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            HoverMode::None => "None",
+            HoverMode::Outline => "Outline",
+            HoverMode::Tint => "Tint",
+            HoverMode::Both => "Both",
+        }
+    }
+}
+
 /// Application settings that persist between sessions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -71,6 +99,9 @@ pub struct Settings {
     
     // Material randomization
     pub materialize_missing: bool,
+    
+    // Hover highlighting
+    pub hover_mode: HoverMode,
 }
 
 impl Default for Settings {
@@ -117,6 +148,7 @@ impl Default for Settings {
             pt_aperture: 0.1,
             pt_focus_distance: 10.0,
             materialize_missing: false,
+            hover_mode: HoverMode::Outline,  // Default to outline hover
         }
     }
 }

@@ -329,6 +329,10 @@ pub struct ModelUniform {
     pub model: [[f32; 4]; 4],
     /// Normal matrix (inverse transpose of model)
     pub normal_matrix: [[f32; 4]; 4],
+    /// Object ID for picking/hover (0 = background/none)
+    pub object_id: u32,
+    /// Padding to 16-byte alignment
+    pub _pad: [u32; 3],
 }
 
 impl Default for ModelUniform {
@@ -342,6 +346,8 @@ impl Default for ModelUniform {
         Self {
             model: identity,
             normal_matrix: identity,
+            object_id: 0,
+            _pad: [0; 3],
         }
     }
 }

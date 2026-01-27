@@ -25,8 +25,10 @@ pub struct Viewport {
     pub scene_camera: Option<SceneCameraOverride>,
     /// Pending Ctrl+Click focus pick (normalized 0-1 coords)
     pending_focus_pick: Option<(f32, f32)>,
-    /// Pending Ctrl+RightClick object pick (normalized 0-1 coords)
+    /// Pending Shift+LMB object pick (normalized 0-1 coords)
     pending_object_pick: Option<(f32, f32)>,
+    /// Current mouse hover position (normalized 0-1 coords)
+    pub hover_position: Option<(f32, f32)>,
 }
 
 struct RenderTexture {
@@ -47,6 +49,7 @@ impl Viewport {
             scene_camera: None,
             pending_focus_pick: None,
             pending_object_pick: None,
+            hover_position: None,
         }
     }
 
@@ -114,6 +117,11 @@ impl Viewport {
                 // Render scene
                 if let (Some(renderer), Some(rt)) = (&mut self.renderer, &self.render_texture) {
                     renderer.render(&rt.view, width, height, self.camera.distance(), self.camera.near, self.camera.far);
+                    
+                    // Poll for hover pick result (must be after render submits GPU commands)
+                    if renderer.hover_mode != super::settings::HoverMode::None {
+                        renderer.poll_hover_result();
+                    }
                 }
 
                 // Draw the rendered texture
@@ -258,6 +266,24 @@ impl Viewport {
                     self.pending_object_pick = Some((rel_x, rel_y));
                 }
             }
+        }
+        
+        // Track hover position for highlighting
+        if response.hovered() {
+            if let Some(pos) = input.pointer.hover_pos() {
+                let rect = response.rect;
+                if rect.contains(pos) {
+                    let rel_x = (pos.x - rect.left()) / rect.width();
+                    let rel_y = (pos.y - rect.top()) / rect.height();
+                    self.hover_position = Some((rel_x, rel_y));
+                } else {
+                    self.hover_position = None;
+                }
+            } else {
+                self.hover_position = None;
+            }
+        } else {
+            self.hover_position = None;
         }
     }
     

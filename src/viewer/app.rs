@@ -88,6 +88,9 @@ pub struct ViewerApp {
 
     // Scene lights (for potential lighting override)
     scene_lights: Vec<mesh_converter::SceneLight>,
+    
+    // Hover detection throttling
+    last_hover_pos: Option<(f32, f32)>,
 
     // Async loading
     worker: Option<super::worker::WorkerHandle>,
@@ -465,6 +468,7 @@ impl ViewerApp {
             scene_cameras: Vec::new(),
             active_camera: None,
             scene_lights: Vec::new(),
+            last_hover_pos: None,
             worker: None,
             pending_frame: None,
             epoch: 0,
@@ -1280,6 +1284,27 @@ impl ViewerApp {
                         self.needs_scene_reload = true;
                     }
                     
+                    // Hover highlighting mode
+                    ui.horizontal(|ui| {
+                        ui.label("Hover:");
+                        egui::ComboBox::from_id_salt("hover_mode")
+                            .selected_text(self.settings.hover_mode.as_str())
+                            .show_ui(ui, |ui| {
+                                for mode in super::settings::HoverMode::ALL {
+                                    if ui.selectable_label(
+                                        self.settings.hover_mode == mode,
+                                        mode.as_str()
+                                    ).clicked() {
+                                        self.settings.hover_mode = mode;
+                                        if let Some(renderer) = &mut self.viewport.renderer {
+                                            renderer.hover_mode = mode;
+                                        }
+                                        self.settings.save();
+                                    }
+                                }
+                            });
+                    });
+                    
                     // Camera info
                     let pos = self.viewport.camera.position();
                     ui.label(format!("Camera: ({:.1}, {:.1}, {:.1})", pos.x, pos.y, pos.z));
@@ -2017,6 +2042,9 @@ impl ViewerApp {
         let bounds = mesh_converter::compute_scene_bounds(&scene.meshes, &scene.points, &scene.curves);
         self.scene_bounds = if bounds.is_valid() { Some(bounds) } else { None };
         
+        // Sync hover mode from settings
+        renderer.hover_mode = self.settings.hover_mode;
+        
         // Update shadow bounds
         if let Some(ref b) = self.scene_bounds {
             renderer.set_scene_bounds(b.center(), b.radius());
@@ -2622,12 +2650,63 @@ impl eframe::App for ViewerApp {
                 if let Some(pick) = result {
                     eprintln!("OBJECT PICK: \"{}\" at ({:.1}, {:.1}, {:.1}), z_depth={:.2}",
                         pick.mesh_name, pick.point.x, pick.point.y, pick.point.z, pick.t);
-                    // TODO: Select object in outliner
                     self.selected_object = Some(pick.mesh_name.clone());
                 } else {
                     eprintln!("OBJECT PICK: <miss>");
                     self.selected_object = None;
                 }
+            }
+        }
+        
+        // GPU-based hover detection for highlighting
+        use super::settings::HoverMode;
+        if self.settings.hover_mode != HoverMode::None {
+            if let Some((rel_x, rel_y)) = self.viewport.hover_position {
+                // Only request pick if mouse moved significantly
+                let should_pick = match self.last_hover_pos {
+                    Some((lx, ly)) => {
+                        let dx = (rel_x - lx).abs();
+                        let dy = (rel_y - ly).abs();
+                        dx > 0.002 || dy > 0.002  // ~1-2 pixels
+                    }
+                    None => true,
+                };
+                
+                if should_pick {
+                    self.last_hover_pos = Some((rel_x, rel_y));
+                    let size = self.viewport.render_texture_size();
+                    if let (Some(renderer), Some((w, h))) = (&mut self.viewport.renderer, size) {
+                        // Convert normalized coords to pixel coords
+                        let px = (rel_x * w as f32) as u32;
+                        let py = (rel_y * h as f32) as u32;
+                        renderer.request_hover_pick(px, py);
+                        // Request repaint to process the pick
+                        ctx.request_repaint();
+                    }
+                }
+            } else {
+                // Mouse not over viewport - clear hover
+                self.last_hover_pos = None;
+                if let Some(renderer) = &mut self.viewport.renderer {
+                    if renderer.hovered_object_id != 0 {
+                        renderer.hovered_object_id = 0;
+                        renderer.hovered_mesh_path = None;
+                        ctx.request_repaint();
+                    }
+                }
+            }
+            
+            // Poll for hover result (after render has submitted commands)
+            if let Some(renderer) = &mut self.viewport.renderer {
+                // Note: poll_hover_result is called in the render loop after queue.submit
+                // The result will be available next frame
+            }
+        } else {
+            // Hover mode disabled, clear state
+            self.last_hover_pos = None;
+            if let Some(renderer) = &mut self.viewport.renderer {
+                renderer.hovered_object_id = 0;
+                renderer.hovered_mesh_path = None;
             }
         }
 

@@ -30,6 +30,14 @@ pub struct SsaoTargets {
     pub size: (u32, u32),
 }
 
+/// Object ID texture for hover picking
+#[derive(Debug)]
+pub struct ObjectIdTexture {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub size: (u32, u32),
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SsaoParams {
