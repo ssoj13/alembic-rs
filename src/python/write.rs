@@ -646,11 +646,9 @@ impl PyOCurves {
             .collect();
         
         let ct = match curve_type.to_lowercase().as_str() {
-            "cubic" => CurveType::Cubic,
-            "bezier" => CurveType::Cubic,
-            "bspline" => CurveType::Cubic,
-            "catmullrom" => CurveType::Cubic,
-            "hermite" => CurveType::Cubic,
+            "cubic" | "bezier" | "bspline" | "catmullrom" | "hermite" => CurveType::Cubic,
+            "linear" => CurveType::Linear,
+            "variableorder" => CurveType::VariableOrder,
             _ => CurveType::Linear,
         };
         

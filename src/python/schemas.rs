@@ -21,6 +21,7 @@ use super::geom::{
     PyCameraSample, PyXformSample, PyLightSample, PyNuPatchSample, PyFaceSetSample,
 };
 use super::object::PyIObject;
+use super::time_sampling::PyISampleSelector;
 
 // ============================================================================
 // IPolyMesh
@@ -124,10 +125,11 @@ impl PyIPolyMeshSchema {
         self.getNumSamples() <= 1
     }
     
-    /// Get sample at index (default 0).
-    #[pyo3(signature = (index=0))]
-    fn getValue(&self, index: usize) -> PyResult<PyPolyMeshSample> {
-        self.with_mesh(|m| m.getSample(index).ok().map(|s| s.into()))
+    /// Get sample at index or using ISampleSelector.
+    #[pyo3(signature = (index=0, selector=None))]
+    fn getValue(&self, index: usize, selector: Option<&PyISampleSelector>) -> PyResult<PyPolyMeshSample> {
+        let idx = selector.map(|s| s.getRequestedIndex()).unwrap_or(index);
+        self.with_mesh(|m| m.getSample(idx).ok().map(|s| s.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
@@ -326,9 +328,10 @@ impl PyIXformSchema {
         self.getNumSamples() <= 1
     }
     
-    #[pyo3(signature = (index=0))]
-    fn getValue(&self, index: usize) -> PyResult<PyXformSample> {
-        self.with_xform(|x| x.getSample(index).ok().map(|s| s.into()))
+    #[pyo3(signature = (index=0, selector=None))]
+    fn getValue(&self, index: usize, selector: Option<&PyISampleSelector>) -> PyResult<PyXformSample> {
+        let idx = selector.map(|s| s.getRequestedIndex()).unwrap_or(index);
+        self.with_xform(|x| x.getSample(idx).ok().map(|s| s.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
@@ -426,9 +429,10 @@ impl PyISubDSchema {
     fn getNumSamples(&self) -> usize { self.with_subd(|s| Some(s.getNumSamples())).unwrap_or(0) }
     fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
     
-    #[pyo3(signature = (index=0))]
-    fn getValue(&self, index: usize) -> PyResult<PySubDSample> {
-        self.with_subd(|s| s.getSample(index).ok().map(|v| v.into()))
+    #[pyo3(signature = (index=0, selector=None))]
+    fn getValue(&self, index: usize, selector: Option<&PyISampleSelector>) -> PyResult<PySubDSample> {
+        let idx = selector.map(|s| s.getRequestedIndex()).unwrap_or(index);
+        self.with_subd(|s| s.getSample(idx).ok().map(|v| v.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
@@ -539,15 +543,16 @@ impl PyICurvesSchema {
     fn getNumSamples(&self) -> usize { self.with_curves(|c| Some(c.getNumSamples())).unwrap_or(0) }
     fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
     
-    #[pyo3(signature = (index=0))]
-    fn getValue(&self, index: usize) -> PyResult<PyCurvesSample> {
-        self.with_curves(|c| c.getSample(index).ok().map(|v| v.into()))
+    #[pyo3(signature = (index=0, selector=None))]
+    fn getValue(&self, index: usize, selector: Option<&PyISampleSelector>) -> PyResult<PyCurvesSample> {
+        let idx = selector.map(|s| s.getRequestedIndex()).unwrap_or(index);
+        self.with_curves(|c| c.getSample(idx).ok().map(|v| v.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
     fn getTimeSamplingIndex(&self) -> u32 { self.with_curves(|c| Some(c.getTimeSamplingIndex())).unwrap_or(0) }
     
-    /// Get curve type (kCubic=0, kLinear=1, kBezier=2, kBspline=3, kCatmullRom=4, kHermite=5).
+    /// Get curve type (kCubic=0, kLinear=1, kVariableOrder=2).
     fn getCurveType(&self) -> u8 {
         self.with_curves(|c| {
             c.getSample(0).ok().map(|sample| sample.curve_type.to_u8())
@@ -639,9 +644,10 @@ impl PyIPointsSchema {
     fn getNumSamples(&self) -> usize { self.with_points(|p| Some(p.getNumSamples())).unwrap_or(0) }
     fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
     
-    #[pyo3(signature = (index=0))]
-    fn getValue(&self, index: usize) -> PyResult<PyPointsSample> {
-        self.with_points(|p| p.getSample(index).ok().map(|v| v.into()))
+    #[pyo3(signature = (index=0, selector=None))]
+    fn getValue(&self, index: usize, selector: Option<&PyISampleSelector>) -> PyResult<PyPointsSample> {
+        let idx = selector.map(|s| s.getRequestedIndex()).unwrap_or(index);
+        self.with_points(|p| p.getSample(idx).ok().map(|v| v.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
@@ -717,9 +723,10 @@ impl PyICameraSchema {
     fn getNumSamples(&self) -> usize { self.with_camera(|c| Some(c.getNumSamples())).unwrap_or(0) }
     fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
     
-    #[pyo3(signature = (index=0))]
-    fn getValue(&self, index: usize) -> PyResult<PyCameraSample> {
-        self.with_camera(|c| c.getSample(index).ok().map(|v| v.into()))
+    #[pyo3(signature = (index=0, selector=None))]
+    fn getValue(&self, index: usize, selector: Option<&PyISampleSelector>) -> PyResult<PyCameraSample> {
+        let idx = selector.map(|s| s.getRequestedIndex()).unwrap_or(index);
+        self.with_camera(|c| c.getSample(idx).ok().map(|v| v.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
@@ -795,9 +802,10 @@ impl PyILightSchema {
     fn getNumSamples(&self) -> usize { self.with_light(|l| Some(l.getNumSamples())).unwrap_or(0) }
     fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
     
-    #[pyo3(signature = (index=0))]
-    fn getValue(&self, index: usize) -> PyResult<PyLightSample> {
-        self.with_light(|l| l.getSample(index).ok().map(|v| v.into()))
+    #[pyo3(signature = (index=0, selector=None))]
+    fn getValue(&self, index: usize, selector: Option<&PyISampleSelector>) -> PyResult<PyLightSample> {
+        let idx = selector.map(|s| s.getRequestedIndex()).unwrap_or(index);
+        self.with_light(|l| l.getSample(idx).ok().map(|v| v.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
@@ -873,9 +881,10 @@ impl PyINuPatchSchema {
     fn getNumSamples(&self) -> usize { self.with_nupatch(|n| Some(n.getNumSamples())).unwrap_or(0) }
     fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
     
-    #[pyo3(signature = (index=0))]
-    fn getValue(&self, index: usize) -> PyResult<PyNuPatchSample> {
-        self.with_nupatch(|n| n.getSample(index).ok().map(|v| v.into()))
+    #[pyo3(signature = (index=0, selector=None))]
+    fn getValue(&self, index: usize, selector: Option<&PyISampleSelector>) -> PyResult<PyNuPatchSample> {
+        let idx = selector.map(|s| s.getRequestedIndex()).unwrap_or(index);
+        self.with_nupatch(|n| n.getSample(idx).ok().map(|v| v.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     
@@ -910,9 +919,10 @@ impl PyIFaceSetSchema {
     fn getNumSamples(&self) -> usize { self.with_faceset(|f| Some(f.getNumSamples())).unwrap_or(0) }
     fn isConstant(&self) -> bool { self.getNumSamples() <= 1 }
     
-    #[pyo3(signature = (index=0))]
-    fn getValue(&self, index: usize) -> PyResult<PyFaceSetSample> {
-        self.with_faceset(|f| f.getSample(index).ok().map(|v| v.into()))
+    #[pyo3(signature = (index=0, selector=None))]
+    fn getValue(&self, index: usize, selector: Option<&PyISampleSelector>) -> PyResult<PyFaceSetSample> {
+        let idx = selector.map(|s| s.getRequestedIndex()).unwrap_or(index);
+        self.with_faceset(|f| f.getSample(idx).ok().map(|v| v.into()))
             .ok_or_else(|| PyValueError::new_err("Failed to get sample"))
     }
     

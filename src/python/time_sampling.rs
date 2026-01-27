@@ -146,3 +146,109 @@ impl From<&TimeSampling> for PyTimeSampling {
         Self { inner: ts.clone() }
     }
 }
+
+// ============================================================================
+// ISampleSelector — Python wrapper for SampleSelector
+// ============================================================================
+
+use crate::core::SampleSelector;
+
+/// Python wrapper for ISampleSelector.
+///
+/// Provides time-based or index-based sample selection for reading property
+/// values at specific times. Matches the original Alembic ISampleSelector API.
+///
+/// # Example
+/// ```python
+/// sel = ISampleSelector(5)          # by index
+/// sel = ISampleSelector(1.5)        # nearest time
+/// sel = ISampleSelector.floor(1.5)  # floor time
+/// sel = ISampleSelector.ceil(1.5)   # ceil time
+/// ```
+#[pyclass(name = "ISampleSelector")]
+#[derive(Clone)]
+pub struct PyISampleSelector {
+    pub(crate) inner: SampleSelector,
+}
+
+#[pymethods]
+impl PyISampleSelector {
+    /// Create selector from index (int) or time (float).
+    ///
+    /// If given an int, selects by sample index.
+    /// If given a float, selects by nearest time.
+    #[new]
+    #[pyo3(signature = (value=None))]
+    fn new(value: Option<&Bound<'_, pyo3::types::PyAny>>) -> PyResult<Self> {
+        match value {
+            None => Ok(Self { inner: SampleSelector::first() }),
+            Some(v) => {
+                if let Ok(idx) = v.extract::<usize>() {
+                    Ok(Self { inner: SampleSelector::index(idx) })
+                } else if let Ok(t) = v.extract::<f64>() {
+                    Ok(Self { inner: SampleSelector::time_near(t) })
+                } else {
+                    Err(pyo3::exceptions::PyTypeError::new_err(
+                        "ISampleSelector expects int (index) or float (time)",
+                    ))
+                }
+            }
+        }
+    }
+
+    /// Select by floor time (largest index <= time).
+    #[staticmethod]
+    fn floor(time: f64) -> Self {
+        Self { inner: SampleSelector::time_floor(time) }
+    }
+
+    /// Select by ceil time (smallest index >= time).
+    #[staticmethod]
+    fn ceil(time: f64) -> Self {
+        Self { inner: SampleSelector::time_ceil(time) }
+    }
+
+    /// Select by nearest time.
+    #[staticmethod]
+    fn near(time: f64) -> Self {
+        Self { inner: SampleSelector::time_near(time) }
+    }
+
+    /// Select by exact index.
+    #[staticmethod]
+    fn index(idx: usize) -> Self {
+        Self { inner: SampleSelector::index(idx) }
+    }
+
+    /// Resolve to actual sample index given time sampling and num samples.
+    fn getIndex(&self, ts: &PyTimeSampling, num_samples: usize) -> usize {
+        self.inner.resolve(&ts.inner, num_samples)
+    }
+
+    /// Get the requested index (for Index selectors).
+    fn getRequestedIndex(&self) -> usize {
+        match self.inner {
+            SampleSelector::Index(i) => i,
+            _ => 0,
+        }
+    }
+
+    /// Get the requested time (for time-based selectors).
+    fn getRequestedTime(&self) -> f64 {
+        match self.inner {
+            SampleSelector::TimeFloor(t)
+            | SampleSelector::TimeCeil(t)
+            | SampleSelector::TimeNear(t) => t,
+            SampleSelector::Index(_) => 0.0,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        match self.inner {
+            SampleSelector::Index(i) => format!("<ISampleSelector index={}>", i),
+            SampleSelector::TimeFloor(t) => format!("<ISampleSelector floor={:.4}>", t),
+            SampleSelector::TimeCeil(t) => format!("<ISampleSelector ceil={:.4}>", t),
+            SampleSelector::TimeNear(t) => format!("<ISampleSelector near={:.4}>", t),
+        }
+    }
+}

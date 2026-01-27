@@ -159,7 +159,7 @@ impl<'a> IFaceSet<'a> {
     /// Get number of samples.
     pub fn getNumSamples(&self) -> usize {
         let props = self.object.as_ref().getProperties();
-        let Some(geom_prop) = props.getPropertyByName(".geom") else { return 1 };
+        let Some(geom_prop) = props.getPropertyByName(".faceset") else { return 1 };
         let Some(geom) = geom_prop.asCompound() else { return 1 };
         let Some(faces_prop) = geom.getPropertyByName(".faces") else { return 1 };
         let Some(array_reader) = faces_prop.asArray() else { return 1 };
@@ -174,7 +174,7 @@ impl<'a> IFaceSet<'a> {
     /// Get time sampling index from faces property.
     pub fn getTimeSamplingIndex(&self) -> u32 {
         let props = self.object.as_ref().getProperties();
-        let Some(geom_prop) = props.getPropertyByName(".geom") else { return 0 };
+        let Some(geom_prop) = props.getPropertyByName(".faceset") else { return 0 };
         let Some(geom) = geom_prop.asCompound() else { return 0 };
         let Some(faces_prop) = geom.getPropertyByName(".faces") else { return 0 };
         faces_prop.getHeader().time_sampling_index
@@ -183,7 +183,7 @@ impl<'a> IFaceSet<'a> {
     /// Get the time sampling index for child bounds property.
     pub fn child_bounds_time_sampling_index(&self) -> u32 {
         let props = self.object.as_ref().getProperties();
-        let Some(geom_prop) = props.getPropertyByName(".geom") else { return 0 };
+        let Some(geom_prop) = props.getPropertyByName(".faceset") else { return 0 };
         let Some(geom) = geom_prop.asCompound() else { return 0 };
         let Some(bnds_prop) = geom.getPropertyByName(".childBnds") else { return 0 };
         bnds_prop.getHeader().time_sampling_index
@@ -194,7 +194,7 @@ impl<'a> IFaceSet<'a> {
         let mut sample = FaceSetSample::new();
         
         let props = self.object.as_ref().getProperties();
-        let geom_prop = props.getPropertyByName(".geom")
+        let geom_prop = props.getPropertyByName(".faceset")
             .ok_or_else(|| Error::invalid("No .geom property"))?;
         let geom = geom_prop.asCompound()
             .ok_or_else(|| Error::invalid(".geom is not compound"))?;

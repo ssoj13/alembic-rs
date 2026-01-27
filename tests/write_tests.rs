@@ -5,6 +5,7 @@ use alembic::geom::{
     IXform, IPolyMesh, ICurves, IPoints, ISubD, ICamera, ILight, INuPatch, IFaceSet,
     XFORM_SCHEMA, POLYMESH_SCHEMA, CURVES_SCHEMA, POINTS_SCHEMA, SUBD_SCHEMA,
     CAMERA_SCHEMA, LIGHT_SCHEMA, NUPATCH_SCHEMA, FACESET_SCHEMA,
+    CurveType, CurvePeriodicity, BasisType, CameraSample,
 };
 use alembic::ogawa::writer::{
     OArchive, OObject, OPolyMesh, OPolyMeshSample, OXform, OXformSample,
@@ -1770,4 +1771,894 @@ fn test_binary_diff_analysis() {
     println!("    - File positions (different layout = different offsets)");
     println!("    - Hash values (computed from positions, so they differ)");
     println!("    - Object ordering (we may write in different order)");
+}
+
+// ============================================================================
+// Additional geometry schema roundtrip tests
+// ============================================================================
+
+#[test]
+fn test_roundtrip_curves() {
+    let tmp = NamedTempFile::new().unwrap();
+    let path = tmp.path();
+
+    // Write curves
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut root = OObject::new("");
+        let mut curves_obj = OCurves::new("test_curves");
+        let sample = OCurvesSample::new(
+            vec![
+                glam::Vec3::new(0.0, 0.0, 0.0), glam::Vec3::new(1.0, 1.0, 0.0), glam::Vec3::new(2.0, 0.0, 0.0),
+                glam::Vec3::new(3.0, 0.0, 0.0), glam::Vec3::new(4.0, 1.0, 0.0), glam::Vec3::new(5.0, 0.0, 0.0),
+            ],
+            vec![3, 3], // Two curves with 3 verts each
+        ).with_curve_type(CurveType::Linear)
+         .with_wrap(CurvePeriodicity::NonPeriodic)
+         .with_basis(BasisType::NoBasis);
+        curves_obj.add_sample(&sample);
+        root.add_child(curves_obj.build());
+        archive.write_archive(&root).unwrap();
+    }
+
+    // Read back and verify
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        assert_eq!(root.getNumChildren(), 1);
+        let child = root.getChild(0).unwrap();
+        assert_eq!(child.getName(), "test_curves");
+        let curves = ICurves::new(&child).expect("Should be ICurves");
+        assert_eq!(curves.getNumSamples(), 1);
+        let sample = curves.getSample(0).unwrap();
+        assert_eq!(sample.positions.len(), 6);
+        assert_eq!(sample.num_curves(), 2);
+        assert_eq!(sample.num_vertices, &[3, 3]);
+        assert_eq!(sample.curve_type, CurveType::Linear);
+        assert_eq!(sample.wrap, CurvePeriodicity::NonPeriodic);
+        assert_eq!(sample.basis, BasisType::NoBasis);
+    }
+}
+
+#[test]
+fn test_roundtrip_points() {
+    let tmp = NamedTempFile::new().unwrap();
+    let path = tmp.path();
+
+    // Write points
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut root = OObject::new("");
+        let mut points_obj = OPoints::new("test_points");
+        let sample = OPointsSample::new(
+            vec![glam::Vec3::new(1.0, 2.0, 3.0), glam::Vec3::new(4.0, 5.0, 6.0), glam::Vec3::new(7.0, 8.0, 9.0)],
+            vec![0i64, 1, 2],
+        );
+        points_obj.add_sample(&sample);
+        root.add_child(points_obj.build());
+        archive.write_archive(&root).unwrap();
+    }
+
+    // Read back and verify
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        let child = root.getChild(0).unwrap();
+        assert_eq!(child.getName(), "test_points");
+        let points = IPoints::new(&child).expect("Should be IPoints");
+        assert_eq!(points.getNumSamples(), 1);
+        let sample = points.getSample(0).unwrap();
+        assert_eq!(sample.positions.len(), 3);
+        assert_eq!(sample.ids.len(), 3);
+        assert_eq!(sample.ids, &[0u64, 1, 2]);
+    }
+}
+
+#[test]
+fn test_roundtrip_subd() {
+    let tmp = NamedTempFile::new().unwrap();
+    let path = tmp.path();
+
+    // Write SubD mesh (simple quad)
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut root = OObject::new("");
+        let mut subd = OSubD::new("test_subd");
+        let sample = OSubDSample::new(
+            vec![
+                glam::Vec3::new(-1.0, -1.0, 0.0), glam::Vec3::new(1.0, -1.0, 0.0),
+                glam::Vec3::new(1.0, 1.0, 0.0), glam::Vec3::new(-1.0, 1.0, 0.0),
+            ],
+            vec![4],
+            vec![0, 1, 2, 3],
+        ).with_scheme("catmull-clark");
+        subd.add_sample(&sample);
+        root.add_child(subd.build());
+        archive.write_archive(&root).unwrap();
+    }
+
+    // Read back and verify
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        let child = root.getChild(0).unwrap();
+        assert_eq!(child.getName(), "test_subd");
+        let subd = ISubD::new(&child).expect("Should be ISubD");
+        assert_eq!(subd.getNumSamples(), 1);
+        let sample = subd.getSample(0).unwrap();
+        assert_eq!(sample.positions.len(), 4);
+        assert_eq!(sample.face_counts, &[4]);
+        assert_eq!(sample.face_indices, &[0, 1, 2, 3]);
+    }
+}
+
+#[test]
+fn test_roundtrip_camera() {
+    let tmp = NamedTempFile::new().unwrap();
+    let path = tmp.path();
+
+    // Write camera
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut root = OObject::new("");
+        let mut camera = OCamera::new("test_camera");
+        camera.add_sample(CameraSample::default());
+        root.add_child(camera.build());
+        archive.write_archive(&root).unwrap();
+    }
+
+    // Read back and verify
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        let child = root.getChild(0).unwrap();
+        assert_eq!(child.getName(), "test_camera");
+        let camera = ICamera::new(&child).expect("Should be ICamera");
+        assert_eq!(camera.getNumSamples(), 1);
+        let sample = camera.getSample(0).unwrap();
+        // Default CameraSample has focal_length=35.0
+        assert!((sample.focal_length - 35.0).abs() < 1e-10);
+    }
+}
+
+#[test]
+fn test_roundtrip_camera_custom() {
+    let tmp = NamedTempFile::new().unwrap();
+    let path = tmp.path();
+
+    // Write camera with custom properties
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut root = OObject::new("");
+        let mut camera = OCamera::new("persp");
+        let mut sample = CameraSample::default();
+        sample.focal_length = 85.0;
+        sample.horizontal_aperture = 36.0;
+        sample.near_clipping_plane = 0.01;
+        sample.far_clipping_plane = 100000.0;
+        camera.add_sample(sample);
+        root.add_child(camera.build());
+        archive.write_archive(&root).unwrap();
+    }
+
+    // Verify custom values
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        let child = root.getChild(0).unwrap();
+        let camera = ICamera::new(&child).expect("Should be ICamera");
+        let sample = camera.getSample(0).unwrap();
+        assert!((sample.focal_length - 85.0).abs() < 1e-10);
+        assert!((sample.horizontal_aperture - 36.0).abs() < 1e-10);
+        assert!((sample.near_clipping_plane - 0.01).abs() < 1e-10);
+        assert!((sample.far_clipping_plane - 100000.0).abs() < 1e-10);
+    }
+}
+
+#[test]
+fn test_roundtrip_mixed_scene() {
+    // Test a scene with multiple geometry types under an xform hierarchy
+    let tmp = NamedTempFile::new().unwrap();
+    let path = tmp.path();
+
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut root = OObject::new("");
+
+        // Camera at top level
+        let mut camera = OCamera::new("camera1");
+        camera.add_sample(CameraSample::default());
+        root.add_child(camera.build());
+
+        // Xform > PolyMesh
+        let mut xform = OXform::new("group1");
+        let xsample = OXformSample::from_matrix(
+            glam::Mat4::from_translation(glam::Vec3::new(1.0, 2.0, 3.0)),
+            true,
+        );
+        xform.add_sample(xsample);
+
+        let mut mesh = OPolyMesh::new("mesh1");
+        let msample = OPolyMeshSample::new(
+            vec![glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::Y],
+            vec![3],
+            vec![0, 1, 2],
+        );
+        mesh.add_sample(&msample);
+        xform.add_child(mesh.build());
+        root.add_child(xform.build());
+
+        // Curves at top level
+        let mut curves = OCurves::new("curves1");
+        let csample = OCurvesSample::new(
+            vec![glam::Vec3::ZERO, glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z],
+            vec![4],
+        );
+        curves.add_sample(&csample);
+        root.add_child(curves.build());
+
+        archive.write_archive(&root).unwrap();
+    }
+
+    // Verify scene structure
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        assert_eq!(root.getNumChildren(), 3);
+
+        // Camera
+        let cam = root.getChild(0).unwrap();
+        assert!(ICamera::new(&cam).is_some());
+
+        // Xform > PolyMesh
+        let grp = root.getChild(1).unwrap();
+        assert!(IXform::new(&grp).is_some());
+        assert_eq!(grp.getNumChildren(), 1);
+        let msh = grp.getChild(0).unwrap();
+        assert!(IPolyMesh::new(&msh).is_some());
+
+        // Curves
+        let crv = root.getChild(2).unwrap();
+        assert!(ICurves::new(&crv).is_some());
+        let sample = ICurves::new(&crv).unwrap().getSample(0).unwrap();
+        assert_eq!(sample.positions.len(), 4);
+        assert_eq!(sample.num_vertices, &[4]);
+    }
+}
+
+// ============================================================================
+// Edge-case tests
+// ============================================================================
+
+#[test]
+fn test_roundtrip_nupatch() {
+    let temp = NamedTempFile::new().expect("temp file");
+    let path = temp.path();
+
+    // 3x3 bilinear NuPatch (order 2)
+    let positions: Vec<glam::Vec3> = (0..9)
+        .map(|i| {
+            let u = (i % 3) as f32;
+            let v = (i / 3) as f32;
+            glam::Vec3::new(u, v, 0.0)
+        })
+        .collect();
+    let u_knot = vec![0.0, 0.0, 1.0, 1.0];
+    let v_knot = vec![0.0, 0.0, 1.0, 1.0];
+
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut np = ONuPatch::new("patch");
+        np.add_sample(&ONuPatchSample::new(
+            positions.clone(), 3, 3, 2, 2,
+            u_knot.clone(), v_knot.clone(),
+        ));
+        let mut root = OObject::new("");
+        root.add_child(np.build());
+        archive.write_archive(&root).unwrap();
+    }
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        let obj = root.getChildByName("patch").unwrap();
+        let np = INuPatch::new(&obj).expect("should be INuPatch");
+        let s = np.getSample(0).unwrap();
+        assert_eq!(s.positions.len(), 9);
+        assert_eq!(s.num_u, 3);
+        assert_eq!(s.num_v, 3);
+        assert_eq!(s.u_order, 2);
+        assert_eq!(s.v_order, 2);
+        assert_eq!(s.u_knots.len(), 4);
+        assert_eq!(s.v_knots.len(), 4);
+    }
+}
+
+#[test]
+fn test_roundtrip_all_basis_types() {
+    // Verify all 6 BasisType values roundtrip correctly
+    let bases = [
+        (BasisType::NoBasis, 0u8),
+        (BasisType::Bezier, 1),
+        (BasisType::Bspline, 2),
+        (BasisType::CatmullRom, 3),
+        (BasisType::Hermite, 4),
+        (BasisType::Power, 5),
+    ];
+    for (basis, expected_u8) in &bases {
+        assert_eq!(basis.to_u8(), *expected_u8, "BasisType {:?} to_u8", basis);
+        assert_eq!(BasisType::from_u8(*expected_u8), *basis, "BasisType from_u8({})", expected_u8);
+    }
+
+    // Write cubic/bezier curves and read back
+    let temp = NamedTempFile::new().unwrap();
+    let path = temp.path();
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut curves = OCurves::new("bezier_curves");
+        curves.add_sample(&OCurvesSample {
+            positions: vec![
+                glam::Vec3::new(0.0, 0.0, 0.0),
+                glam::Vec3::new(1.0, 2.0, 0.0),
+                glam::Vec3::new(2.0, 0.0, 0.0),
+                glam::Vec3::new(3.0, 1.0, 0.0),
+            ],
+            num_vertices: vec![4],
+            curve_type: CurveType::Cubic,
+            wrap: CurvePeriodicity::NonPeriodic,
+            basis: BasisType::Bezier,
+            velocities: None, widths: None, uvs: None,
+            normals: None, orders: None, knots: None,
+        });
+        let mut root = OObject::new("");
+        root.add_child(curves.build());
+        archive.write_archive(&root).unwrap();
+    }
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        let obj = root.getChildByName("bezier_curves").unwrap();
+        let s = ICurves::new(&obj).unwrap().getSample(0).unwrap();
+        assert_eq!(s.curve_type, CurveType::Cubic);
+        assert_eq!(s.basis, BasisType::Bezier);
+        assert_eq!(s.wrap, CurvePeriodicity::NonPeriodic);
+    }
+}
+
+#[test]
+fn test_roundtrip_empty_polymesh() {
+    // Edge case: mesh with 0 vertices
+    let temp = NamedTempFile::new().unwrap();
+    let path = temp.path();
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut mesh = OPolyMesh::new("empty");
+        mesh.add_sample(&OPolyMeshSample::new(vec![], vec![], vec![]));
+        let mut root = OObject::new("");
+        root.add_child(mesh.build());
+        archive.write_archive(&root).unwrap();
+    }
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        let obj = root.getChildByName("empty").unwrap();
+        let mesh = IPolyMesh::new(&obj).expect("should be polymesh");
+        let s = mesh.getSample(0).unwrap();
+        assert_eq!(s.num_vertices(), 0);
+        assert_eq!(s.num_faces(), 0);
+    }
+}
+
+#[test]
+fn test_roundtrip_multi_sample_curves() {
+    // 3 frames of animated curves
+    let temp = NamedTempFile::new().unwrap();
+    let path = temp.path();
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut curves = OCurves::new("anim_curves");
+        for frame in 0..3 {
+            let y = frame as f32;
+            curves.add_sample(&OCurvesSample {
+                positions: vec![
+                    glam::Vec3::new(0.0, y, 0.0),
+                    glam::Vec3::new(1.0, y + 1.0, 0.0),
+                ],
+                num_vertices: vec![2],
+                curve_type: CurveType::Linear,
+                wrap: CurvePeriodicity::NonPeriodic,
+                basis: BasisType::NoBasis,
+                velocities: None, widths: None, uvs: None,
+                normals: None, orders: None, knots: None,
+            });
+        }
+        let mut root = OObject::new("");
+        root.add_child(curves.build());
+        archive.write_archive(&root).unwrap();
+    }
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        let obj = root.getChildByName("anim_curves").unwrap();
+        let crv = ICurves::new(&obj).unwrap();
+        let ns = crv.getNumSamples();
+        assert!(ns >= 3, "expected >= 3 samples, got {}", ns);
+        // Frame 0: first point at y=0
+        let s0 = crv.getSample(0).unwrap();
+        assert!((s0.positions[0].y - 0.0).abs() < 0.001);
+        // Frame 2: first point at y=2
+        let s2 = crv.getSample(2).unwrap();
+        assert!((s2.positions[0].y - 2.0).abs() < 0.001);
+    }
+}
+
+#[test]
+fn test_roundtrip_light() {
+    let temp = NamedTempFile::new().unwrap();
+    let path = temp.path();
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let light = OLight::new("my_light");
+        let mut root = OObject::new("");
+        root.add_child(light.build());
+        archive.write_archive(&root).unwrap();
+    }
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        let obj = root.getChildByName("my_light").unwrap();
+        assert!(ILight::new(&obj).is_some(), "should be ILight");
+    }
+}
+
+#[test]
+fn test_roundtrip_faceset() {
+    let temp = NamedTempFile::new().unwrap();
+    let path = temp.path();
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut fs = OFaceSet::new("face_group");
+        fs.add_sample(&OFaceSetSample { faces: vec![0, 2, 4] });
+        let mut root = OObject::new("");
+        root.add_child(fs.build());
+        archive.write_archive(&root).unwrap();
+    }
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        let obj = root.getChildByName("face_group").unwrap();
+        let fset = IFaceSet::new(&obj).expect("should be IFaceSet");
+        let s = fset.getSample(0).unwrap();
+        assert_eq!(s.faces, vec![0, 2, 4]);
+    }
+}
+
+#[test]
+fn test_roundtrip_subd_creases_corners() {
+    let temp = NamedTempFile::new().unwrap();
+    let path = temp.path();
+    // Cube SubD with edge creases and corner sharpnesses
+    let positions = vec![
+        glam::Vec3::new(-1.0, -1.0,  1.0),
+        glam::Vec3::new( 1.0, -1.0,  1.0),
+        glam::Vec3::new( 1.0,  1.0,  1.0),
+        glam::Vec3::new(-1.0,  1.0,  1.0),
+        glam::Vec3::new(-1.0, -1.0, -1.0),
+        glam::Vec3::new( 1.0, -1.0, -1.0),
+        glam::Vec3::new( 1.0,  1.0, -1.0),
+        glam::Vec3::new(-1.0,  1.0, -1.0),
+    ];
+    let face_counts = vec![4i32; 6];
+    let face_indices = vec![
+        0,1,2,3, 4,7,6,5, 0,3,7,4, 1,5,6,2, 3,2,6,7, 0,4,5,1,
+    ];
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut subd = OSubD::new("crease_cube");
+        let mut sample = OSubDSample::new(positions.clone(), face_counts.clone(), face_indices.clone());
+        // 2 crease edges: edge 0-1 (sharp=5.0), edge 2-3 (sharp=3.0)
+        sample.crease_indices = Some(vec![0, 1, 2, 3]);
+        sample.crease_lengths = Some(vec![2, 2]);
+        sample.crease_sharpnesses = Some(vec![5.0, 3.0]);
+        // 2 sharp corners: vertex 0 (sharp=10.0), vertex 6 (sharp=7.0)
+        sample.corner_indices = Some(vec![0, 6]);
+        sample.corner_sharpnesses = Some(vec![10.0, 7.0]);
+        // 1 hole face (face index 5)
+        sample.holes = Some(vec![5]);
+        subd.add_sample(&sample);
+        let mut root = OObject::new("");
+        root.add_child(subd.build());
+        archive.write_archive(&root).unwrap();
+    }
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        let obj = root.getChildByName("crease_cube").unwrap();
+        let s = ISubD::new(&obj).unwrap().getSample(0).unwrap();
+        assert_eq!(s.positions.len(), 8);
+        assert_eq!(s.face_counts.len(), 6);
+        // Creases
+        assert_eq!(s.crease_indices, vec![0, 1, 2, 3]);
+        assert_eq!(s.crease_lengths, vec![2, 2]);
+        assert_eq!(s.crease_sharpnesses, vec![5.0, 3.0]);
+        // Corners
+        assert_eq!(s.corner_indices, vec![0, 6]);
+        assert_eq!(s.corner_sharpnesses, vec![10.0, 7.0]);
+        // Holes
+        assert_eq!(s.holes, vec![5]);
+    }
+}
+
+#[test]
+fn test_roundtrip_curves_nurbs_knots() {
+    let temp = NamedTempFile::new().unwrap();
+    let path = temp.path();
+    // NURBS curve with knots and orders
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut curves = OCurves::new("nurbs_curve");
+        curves.add_sample(&OCurvesSample {
+            positions: vec![
+                glam::Vec3::new(0.0, 0.0, 0.0),
+                glam::Vec3::new(1.0, 1.0, 0.0),
+                glam::Vec3::new(2.0, 0.0, 0.0),
+                glam::Vec3::new(3.0, 1.0, 0.0),
+            ],
+            num_vertices: vec![4],
+            curve_type: CurveType::Cubic,
+            wrap: CurvePeriodicity::NonPeriodic,
+            basis: BasisType::Bspline,
+            velocities: None,
+            widths: Some(vec![0.1, 0.2, 0.15, 0.05]),
+            uvs: None,
+            normals: None,
+            orders: Some(vec![4]),
+            knots: Some(vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]),
+        });
+        let mut root = OObject::new("");
+        root.add_child(curves.build());
+        archive.write_archive(&root).unwrap();
+    }
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        let obj = root.getChildByName("nurbs_curve").unwrap();
+        let s = ICurves::new(&obj).unwrap().getSample(0).unwrap();
+        assert_eq!(s.positions.len(), 4);
+        assert_eq!(s.curve_type, CurveType::Cubic);
+        assert_eq!(s.basis, BasisType::Bspline);
+        assert_eq!(s.orders.len(), 1);
+        assert_eq!(s.orders[0], 4);
+        assert_eq!(s.knots.len(), 8);
+        assert!((s.knots[4] - 1.0).abs() < 0.001);
+        assert_eq!(s.widths.len(), 4);
+        assert!((s.widths[0] - 0.1).abs() < 0.001);
+    }
+}
+
+#[test]
+fn test_roundtrip_points_varying_widths() {
+    // Points with per-point widths and velocities across 2 time samples
+    let temp = NamedTempFile::new().unwrap();
+    let path = temp.path();
+
+    // Frame 0: 5 points with widths and velocities
+    let positions_0 = vec![
+        glam::Vec3::new(0.0, 0.0, 0.0),
+        glam::Vec3::new(1.0, 0.0, 0.0),
+        glam::Vec3::new(2.0, 0.0, 0.0),
+        glam::Vec3::new(3.0, 0.0, 0.0),
+        glam::Vec3::new(4.0, 0.0, 0.0),
+    ];
+    let widths_0 = vec![0.1, 0.2, 0.3, 0.4, 0.5];
+    let velocities_0 = vec![
+        glam::Vec3::new(0.0, 1.0, 0.0),
+        glam::Vec3::new(0.0, 1.0, 0.0),
+        glam::Vec3::new(0.0, 1.0, 0.0),
+        glam::Vec3::new(0.0, 1.0, 0.0),
+        glam::Vec3::new(0.0, 1.0, 0.0),
+    ];
+
+    // Frame 1: same points moved up by velocity
+    let positions_1 = vec![
+        glam::Vec3::new(0.0, 1.0, 0.0),
+        glam::Vec3::new(1.0, 1.0, 0.0),
+        glam::Vec3::new(2.0, 1.0, 0.0),
+        glam::Vec3::new(3.0, 1.0, 0.0),
+        glam::Vec3::new(4.0, 1.0, 0.0),
+    ];
+    let widths_1 = vec![0.15, 0.25, 0.35, 0.45, 0.55];
+    let velocities_1 = vec![
+        glam::Vec3::new(0.0, 1.0, 0.0),
+        glam::Vec3::new(0.0, 1.0, 0.0),
+        glam::Vec3::new(0.0, 1.0, 0.0),
+        glam::Vec3::new(0.0, 1.0, 0.0),
+        glam::Vec3::new(0.0, 1.0, 0.0),
+    ];
+
+    // Write
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut points = OPoints::new("anim_points");
+        
+        // Add frame 0
+        points.add_sample(&OPointsSample {
+            positions: positions_0.clone(),
+            ids: vec![0, 1, 2, 3, 4],
+            velocities: Some(velocities_0.clone()),
+            widths: Some(widths_0.clone()),
+        });
+        
+        // Add frame 1
+        points.add_sample(&OPointsSample {
+            positions: positions_1.clone(),
+            ids: vec![0, 1, 2, 3, 4],
+            velocities: Some(velocities_1.clone()),
+            widths: Some(widths_1.clone()),
+        });
+        
+        let mut root = OObject::new("");
+        root.add_child(points.build());
+        archive.write_archive(&root).unwrap();
+    }
+
+    // Read back and verify
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        let obj = root.getChildByName("anim_points").unwrap();
+        let points = IPoints::new(&obj).expect("should be IPoints");
+        
+        let num_samples = points.getNumSamples();
+        assert!(num_samples >= 2, "expected >= 2 samples, got {}", num_samples);
+        
+        // Verify frame 0
+        let s0 = points.getSample(0).unwrap();
+        assert_eq!(s0.positions.len(), 5);
+        assert_eq!(s0.widths.len(), 5);
+        assert_eq!(s0.velocities.len(), 5);
+        
+        // Check positions at frame 0
+        for i in 0..5 {
+            let diff = (s0.positions[i] - positions_0[i]).length();
+            assert!(diff < 0.001, "position[{}] mismatch at frame 0", i);
+        }
+        
+        // Check widths at frame 0
+        for i in 0..5 {
+            assert!((s0.widths[i] - widths_0[i]).abs() < 0.001, "width[{}] mismatch at frame 0", i);
+        }
+        
+        // Verify frame 1
+        let s1 = points.getSample(1).unwrap();
+        assert_eq!(s1.positions.len(), 5);
+        assert_eq!(s1.widths.len(), 5);
+        assert_eq!(s1.velocities.len(), 5);
+        
+        // Check positions at frame 1
+        for i in 0..5 {
+            let diff = (s1.positions[i] - positions_1[i]).length();
+            assert!(diff < 0.001, "position[{}] mismatch at frame 1", i);
+        }
+        
+        // Check widths at frame 1
+        for i in 0..5 {
+            assert!((s1.widths[i] - widths_1[i]).abs() < 0.001, "width[{}] mismatch at frame 1", i);
+        }
+    }
+}
+
+#[test]
+fn test_roundtrip_all_pod_types() {
+    // Tests writing and reading scalar/array properties of all POD types
+    use alembic::util::{Bool, DataType};
+    use bytemuck;
+    
+    let temp = NamedTempFile::new().unwrap();
+    let path = temp.path();
+
+    // Write all POD types as properties
+    {
+        let mut archive = OArchive::create(path).unwrap();
+        let mut obj = OObject::new("pod_test");
+        
+        // Create a compound property to hold all test properties
+        let mut test_props = OProperty::compound(".test_props");
+        
+        // Boolean (stored as u8)
+        let mut bool_prop = OProperty::scalar("bool_val", DataType::BOOL);
+        bool_prop.add_scalar_pod(&[Bool::new(true)]);
+        test_props.add_child(bool_prop);
+        
+        // Int8
+        let mut int8_prop = OProperty::scalar("int8_val", DataType::INT8);
+        int8_prop.add_scalar_pod(&[-42i8]);
+        test_props.add_child(int8_prop);
+        
+        // Uint8
+        let mut uint8_prop = OProperty::scalar("uint8_val", DataType::UINT8);
+        uint8_prop.add_scalar_pod(&[200u8]);
+        test_props.add_child(uint8_prop);
+        
+        // Int16
+        let mut int16_prop = OProperty::scalar("int16_val", DataType::INT16);
+        int16_prop.add_scalar_pod(&[-1000i16]);
+        test_props.add_child(int16_prop);
+        
+        // Uint16
+        let mut uint16_prop = OProperty::scalar("uint16_val", DataType::UINT16);
+        uint16_prop.add_scalar_pod(&[60000u16]);
+        test_props.add_child(uint16_prop);
+        
+        // Int32
+        let mut int32_prop = OProperty::scalar("int32_val", DataType::INT32);
+        int32_prop.add_scalar_pod(&[-100000i32]);
+        test_props.add_child(int32_prop);
+        
+        // Uint32
+        let mut uint32_prop = OProperty::scalar("uint32_val", DataType::UINT32);
+        uint32_prop.add_scalar_pod(&[3000000000u32]);
+        test_props.add_child(uint32_prop);
+        
+        // Int64
+        let mut int64_prop = OProperty::scalar("int64_val", DataType::INT64);
+        int64_prop.add_scalar_pod(&[-9000000000000i64]);
+        test_props.add_child(int64_prop);
+        
+        // Uint64
+        let mut uint64_prop = OProperty::scalar("uint64_val", DataType::UINT64);
+        uint64_prop.add_scalar_pod(&[18000000000000u64]);
+        test_props.add_child(uint64_prop);
+        
+        // Float32
+        let mut float32_prop = OProperty::scalar("float32_val", DataType::FLOAT32);
+        float32_prop.add_scalar_pod(&[3.14f32]);
+        test_props.add_child(float32_prop);
+        
+        // Float64
+        let mut float64_prop = OProperty::scalar("float64_val", DataType::FLOAT64);
+        float64_prop.add_scalar_pod(&[2.718281828f64]);
+        test_props.add_child(float64_prop);
+        
+        // String
+        let mut string_prop = OProperty::scalar("string_val", DataType::STRING);
+        string_prop.add_scalar_string("hello alembic");
+        test_props.add_child(string_prop);
+        
+        obj.properties.push(test_props);
+        
+        let mut root = OObject::new("");
+        root.add_child(obj);
+        archive.write_archive(&root).unwrap();
+    }
+
+    // Read back and verify all values
+    {
+        let archive = IArchive::open(path).unwrap();
+        let root = archive.getTop();
+        let obj = root.getChildByName("pod_test").unwrap();
+        
+        let props = obj.getProperties();
+        let test_compound = props.getPropertyByName(".test_props").unwrap();
+        let compound = test_compound.asCompound().unwrap();
+        
+        // Boolean
+        {
+            let prop = compound.getPropertyByName("bool_val").unwrap();
+            let scalar = prop.asScalar().unwrap();
+            let mut buf = vec![0u8; 1];
+            scalar.getSample(0, &mut buf).unwrap();
+            let val: &[Bool] = bytemuck::cast_slice(&buf);
+            assert_eq!(val[0].get(), true, "bool_val mismatch");
+        }
+        
+        // Int8
+        {
+            let prop = compound.getPropertyByName("int8_val").unwrap();
+            let scalar = prop.asScalar().unwrap();
+            let mut buf = vec![0u8; 1];
+            scalar.getSample(0, &mut buf).unwrap();
+            let val: &[i8] = bytemuck::cast_slice(&buf);
+            assert_eq!(val[0], -42, "int8_val mismatch");
+        }
+        
+        // Uint8
+        {
+            let prop = compound.getPropertyByName("uint8_val").unwrap();
+            let scalar = prop.asScalar().unwrap();
+            let mut buf = vec![0u8; 1];
+            scalar.getSample(0, &mut buf).unwrap();
+            assert_eq!(buf[0], 200, "uint8_val mismatch");
+        }
+        
+        // Int16
+        {
+            let prop = compound.getPropertyByName("int16_val").unwrap();
+            let scalar = prop.asScalar().unwrap();
+            let mut buf = vec![0u8; 2];
+            scalar.getSample(0, &mut buf).unwrap();
+            let val: &[i16] = bytemuck::cast_slice(&buf);
+            assert_eq!(val[0], -1000, "int16_val mismatch");
+        }
+        
+        // Uint16
+        {
+            let prop = compound.getPropertyByName("uint16_val").unwrap();
+            let scalar = prop.asScalar().unwrap();
+            let mut buf = vec![0u8; 2];
+            scalar.getSample(0, &mut buf).unwrap();
+            let val: &[u16] = bytemuck::cast_slice(&buf);
+            assert_eq!(val[0], 60000, "uint16_val mismatch");
+        }
+        
+        // Int32
+        {
+            let prop = compound.getPropertyByName("int32_val").unwrap();
+            let scalar = prop.asScalar().unwrap();
+            let mut buf = vec![0u8; 4];
+            scalar.getSample(0, &mut buf).unwrap();
+            let val: &[i32] = bytemuck::cast_slice(&buf);
+            assert_eq!(val[0], -100000, "int32_val mismatch");
+        }
+        
+        // Uint32
+        {
+            let prop = compound.getPropertyByName("uint32_val").unwrap();
+            let scalar = prop.asScalar().unwrap();
+            let mut buf = vec![0u8; 4];
+            scalar.getSample(0, &mut buf).unwrap();
+            let val: &[u32] = bytemuck::cast_slice(&buf);
+            assert_eq!(val[0], 3000000000, "uint32_val mismatch");
+        }
+        
+        // Int64
+        {
+            let prop = compound.getPropertyByName("int64_val").unwrap();
+            let scalar = prop.asScalar().unwrap();
+            let mut buf = vec![0u8; 8];
+            scalar.getSample(0, &mut buf).unwrap();
+            let val: &[i64] = bytemuck::cast_slice(&buf);
+            assert_eq!(val[0], -9000000000000, "int64_val mismatch");
+        }
+        
+        // Uint64
+        {
+            let prop = compound.getPropertyByName("uint64_val").unwrap();
+            let scalar = prop.asScalar().unwrap();
+            let mut buf = vec![0u8; 8];
+            scalar.getSample(0, &mut buf).unwrap();
+            let val: &[u64] = bytemuck::cast_slice(&buf);
+            assert_eq!(val[0], 18000000000000, "uint64_val mismatch");
+        }
+        
+        // Float32
+        {
+            let prop = compound.getPropertyByName("float32_val").unwrap();
+            let scalar = prop.asScalar().unwrap();
+            let mut buf = vec![0u8; 4];
+            scalar.getSample(0, &mut buf).unwrap();
+            let val: &[f32] = bytemuck::cast_slice(&buf);
+            assert!((val[0] - 3.14).abs() < 0.001, "float32_val mismatch");
+        }
+        
+        // Float64
+        {
+            let prop = compound.getPropertyByName("float64_val").unwrap();
+            let scalar = prop.asScalar().unwrap();
+            let mut buf = vec![0u8; 8];
+            scalar.getSample(0, &mut buf).unwrap();
+            let val: &[f64] = bytemuck::cast_slice(&buf);
+            assert!((val[0] - 2.718281828).abs() < 0.000001, "float64_val mismatch");
+        }
+        
+        // String
+        {
+            let prop = compound.getPropertyByName("string_val").unwrap();
+            let scalar = prop.asScalar().unwrap();
+            let buf = scalar.getSampleVec(0).unwrap();
+            let string_val = String::from_utf8(buf).unwrap();
+            // String in Alembic is null-terminated
+            let trimmed = string_val.trim_end_matches('\0');
+            assert_eq!(trimmed, "hello alembic", "string_val mismatch");
+        }
+    }
 }

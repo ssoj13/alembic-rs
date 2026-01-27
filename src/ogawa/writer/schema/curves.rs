@@ -117,32 +117,27 @@ impl OCurves {
         p_prop.add_array_pod(&sample.positions);
 
         let nverts = self.geom_compound.get_or_create_array_child(
-            ".nVertices",
+            "nVertices",
             DataType::new(PlainOldDataType::Int32, 1),
         );
         nverts.data_write_order = 1;
         nverts.add_array_pod(&sample.num_vertices);
 
-        let ctype = self.geom_compound.get_or_create_scalar_child(
-            ".curveType",
-            DataType::new(PlainOldDataType::String, 1),
+        // curveBasisAndType: 4 x uint8 scalar [type, wrap, basis, basis]
+        // C++ ref: OCurves.cpp:582 calcBasisAndType — byte[3] duplicates byte[2]
+        let cbt = self.geom_compound.get_or_create_scalar_child(
+            "curveBasisAndType",
+            DataType::new(PlainOldDataType::Uint8, 4),
         );
-        ctype.data_write_order = 2;
-        ctype.add_scalar_string(&sample.curve_type.to_string());
-
-        let wrap = self.geom_compound.get_or_create_scalar_child(
-            ".wrap",
-            DataType::new(PlainOldDataType::String, 1),
-        );
-        wrap.data_write_order = 3;
-        wrap.add_scalar_string(&sample.wrap.to_string());
-
-        let basis = self.geom_compound.get_or_create_scalar_child(
-            ".basis",
-            DataType::new(PlainOldDataType::String, 1),
-        );
-        basis.data_write_order = 4;
-        basis.add_scalar_string(&sample.basis.to_string());
+        cbt.data_write_order = 2;
+        let basis_u8 = sample.basis.to_u8();
+        let basisandtype: [u8; 4] = [
+            sample.curve_type.to_u8(),
+            sample.wrap.to_u8(),
+            basis_u8,
+            basis_u8, // duplicated per C++ convention
+        ];
+        cbt.add_scalar_pod(&basisandtype);
 
         if let Some(ref vels) = sample.velocities {
             let prop = self.geom_compound.get_or_create_array_child(
@@ -153,9 +148,10 @@ impl OCurves {
             prop.add_array_pod(vels);
         }
 
+        // C++ ref: OCurves.cpp:511 uses "width" (GeomParam, no dot, singular)
         if let Some(ref widths) = sample.widths {
             let prop = self.geom_compound.get_or_create_array_child(
-                ".widths",
+                "width",
                 DataType::new(PlainOldDataType::Float32, 1),
             );
             prop.data_write_order = 9;

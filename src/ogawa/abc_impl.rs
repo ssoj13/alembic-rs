@@ -244,7 +244,7 @@ impl ArchiveReader for OgawaArchiveReader {
                 ).ok()?);
                 
                 return Some(Box::new(OgawaObjectReader {
-                    header: current_header.unwrap(),
+                    header: current_header?,
                     data: child_data,
                 }));
             }

@@ -312,11 +312,11 @@ impl<'a> IGeomParam<'a> {
     pub fn get_expanded_sample(&self, sel: impl Into<SampleSelector>) -> Result<GeomParamSample> {
         let mut sample = self.getSample(sel)?;
         
-        if sample.is_indexed && sample.indices.is_some() {
-            // Expand the values
+        if sample.is_indexed {
+            // Expand indexed values to per-element
             let element_size = self.data_type.num_bytes();
             if element_size > 0 {
-                let indices = sample.indices.take().unwrap();
+                let Some(indices) = sample.indices.take() else { return Ok(sample) };
                 let old_values = std::mem::take(&mut sample.values);
                 
                 let mut new_values = Vec::with_capacity(indices.len() * element_size);

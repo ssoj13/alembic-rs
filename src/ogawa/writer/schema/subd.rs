@@ -41,7 +41,8 @@ impl OSubDSample {
             positions,
             face_counts,
             face_indices,
-            subdivision_scheme: "catmullClark".to_string(),
+            // C++ ref: OSubD.h:105 uses "catmull-clark" (hyphenated)
+            subdivision_scheme: "catmull-clark".to_string(),
             velocities: None,
             uvs: None,
             uv_indices: None,
@@ -76,13 +77,13 @@ impl OSubD {
     pub fn new(name: &str) -> Self {
         let mut object = OObject::new(name);
         let mut meta = MetaData::new();
-        meta.set("schema", "AbcGeom_SubD_v2");
+        meta.set("schema", "AbcGeom_SubD_v1");
         meta.set("schemaBaseType", "AbcGeom_GeomBase_v1");
-        meta.set("schemaObjTitle", "AbcGeom_SubD_v2:.geom");
+        meta.set("schemaObjTitle", "AbcGeom_SubD_v1:.geom");
         object.meta_data = meta;
 
         let mut geom_meta = MetaData::new();
-        geom_meta.set("schema", "AbcGeom_SubD_v2");
+        geom_meta.set("schema", "AbcGeom_SubD_v1");
         geom_meta.set("schemaBaseType", "AbcGeom_GeomBase_v1");
         let mut geom = OProperty::compound(".geom");
         geom.meta_data = geom_meta;

@@ -18,26 +18,18 @@ pub enum CurveType {
     Cubic,
     /// Linear curves (polylines)
     Linear,
-    /// Bezier curves with explicit order
-    Bezier,
-    /// B-spline curves
-    Bspline,
-    /// Catmull-Rom splines
-    CatmullRom,
-    /// Hermite curves
-    Hermite,
+    /// Variable-order curves (C++ ref: CurveType.h:54 kVariableOrder=2)
+    VariableOrder,
 }
 
 impl CurveType {
     /// Parse from Alembic u8 value.
+    /// C++ ref: CurveType.h — kCubic=0, kLinear=1, kVariableOrder=2
     pub fn from_u8(val: u8) -> Self {
         match val {
             0 => CurveType::Cubic,
             1 => CurveType::Linear,
-            2 => CurveType::Bezier,
-            3 => CurveType::Bspline,
-            4 => CurveType::CatmullRom,
-            5 => CurveType::Hermite,
+            2 => CurveType::VariableOrder,
             _ => CurveType::Cubic,
         }
     }
@@ -47,10 +39,7 @@ impl CurveType {
         match self {
             CurveType::Cubic => 0,
             CurveType::Linear => 1,
-            CurveType::Bezier => 2,
-            CurveType::Bspline => 3,
-            CurveType::CatmullRom => 4,
-            CurveType::Hermite => 5,
+            CurveType::VariableOrder => 2,
         }
     }
 }
@@ -405,10 +394,10 @@ impl<'a> ICurves<'a> {
         }
         
         // NURBS data
-        if let Some(k) = geom_util::read_f32_array(g, "knots", index) {
+        if let Some(k) = geom_util::read_f32_array(g, ".knots", index) {
             sample.knots = k;
         }
-        if let Some(o) = geom_util::read_i32_array(g, "orders", index) {
+        if let Some(o) = geom_util::read_i32_array(g, ".orders", index) {
             sample.orders = o;
         }
         sample.self_bounds = geom_util::read_self_bounds(g, index);

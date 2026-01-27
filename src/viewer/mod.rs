@@ -10,6 +10,7 @@ mod settings;
 mod smooth_normals;
 mod viewport;
 mod worker;
+pub mod pathtracer;
 
 pub use settings::Settings;
 

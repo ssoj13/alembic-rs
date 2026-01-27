@@ -64,6 +64,7 @@ fn alembic_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     abc.add_class::<archive::PyIArchive>()?;
     abc.add_class::<object::PyIObject>()?;
     abc.add_class::<time_sampling::PyTimeSampling>()?;
+    abc.add_class::<time_sampling::PyISampleSelector>()?;
     m.add_submodule(&abc)?;
     
     // Register AbcGeom submodule (geometry schemas)
@@ -82,12 +83,10 @@ fn alembic_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // ========================================================================
     // CurveType constants
     // ========================================================================
+    // C++ ref: CurveType.h — kCubic=0, kLinear=1, kVariableOrder=2
     abc_geom.add("kCubic", 0u8)?;
     abc_geom.add("kLinear", 1u8)?;
-    abc_geom.add("kBezier", 2u8)?;
-    abc_geom.add("kBspline", 3u8)?;
-    abc_geom.add("kCatmullRom", 4u8)?;
-    abc_geom.add("kHermite", 5u8)?;
+    abc_geom.add("kVariableOrder", 2u8)?;
     
     // ========================================================================
     // CurvePeriodicity constants
@@ -201,6 +200,7 @@ fn alembic_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<archive::PyIArchive>()?;
     m.add_class::<object::PyIObject>()?;
     m.add_class::<time_sampling::PyTimeSampling>()?;
+    m.add_class::<time_sampling::PyISampleSelector>()?;
     m.add_class::<write::PyOArchive>()?;
     m.add_class::<write::PyOPolyMesh>()?;
     m.add_class::<write::PyOXform>()?;

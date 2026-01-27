@@ -24,10 +24,11 @@ pub enum SubDScheme {
 }
 
 impl SubDScheme {
-    /// Parse from string.
+    /// Parse subdivision scheme from string.
+    /// Accepts both C++ canonical form ("catmull-clark") and legacy ("catmullClark").
     pub fn parse(s: &str) -> Self {
         match s {
-            "catmullClark" => SubDScheme::CatmullClark,
+            "catmull-clark" | "catmullClark" => SubDScheme::CatmullClark,
             "loop" => SubDScheme::Loop,
             "bilinear" => SubDScheme::Bilinear,
             _ => SubDScheme::CatmullClark,
@@ -493,6 +494,7 @@ mod tests {
     
     #[test]
     fn test_subd_scheme() {
+        assert_eq!(SubDScheme::parse("catmull-clark"), SubDScheme::CatmullClark);
         assert_eq!(SubDScheme::parse("catmullClark"), SubDScheme::CatmullClark);
         assert_eq!(SubDScheme::parse("loop"), SubDScheme::Loop);
         assert_eq!(SubDScheme::parse("bilinear"), SubDScheme::Bilinear);

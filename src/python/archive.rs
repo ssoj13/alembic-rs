@@ -15,6 +15,13 @@ pub struct PyIArchive {
     pub(crate) inner: Arc<IArchive>,
 }
 
+impl PyIArchive {
+    /// Create from existing archive (internal use).
+    pub(crate) fn from_archive(inner: Arc<IArchive>) -> Self {
+        Self { inner }
+    }
+}
+
 #[pymethods]
 impl PyIArchive {
     /// Open an Alembic archive for reading.

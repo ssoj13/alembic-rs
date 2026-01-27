@@ -543,6 +543,16 @@ impl PyIObject {
     // ========================================================================
     
     /// Get compound property for this object.
+    /// Get the archive this object belongs to.
+    fn getArchive(&self) -> super::archive::PyIArchive {
+        super::archive::PyIArchive::from_archive(self.archive.clone())
+    }
+    
+    /// Get object metadata as dict.
+    fn getMetaData(&self) -> std::collections::HashMap<String, String> {
+        self.with_object(|obj| Some(obj.getHeader().meta_data.get_all())).unwrap_or_default()
+    }
+    
     fn getProperties(&self) -> PyICompoundProperty {
         PyICompoundProperty {
             archive: self.archive.clone(),

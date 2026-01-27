@@ -112,10 +112,11 @@ impl Renderer {
     }
 
     /// SSAO pass that writes occlusion into the G-Buffer mask channel.
+    /// Uses cached bind groups (rebuilt only on texture resize).
     pub fn render_ssao_pass(
-        &mut self,
+        &self,
         encoder: &mut wgpu::CommandEncoder,
-        depth_view: &wgpu::TextureView,
+        _depth_view: &wgpu::TextureView,
         use_ssao: bool,
     ) {
         let gbuffer = match &self.gbuffer {
@@ -143,40 +144,11 @@ impl Renderer {
             return;
         }
 
-        if self.ssao_targets.is_none() {
-            return;
-        }
-
+        // Update SSAO params via uniform buffer (cheap write, no alloc)
         let ssao_params = super::resources::SsaoParams {
             strength: [self.ssao_strength, self.ssao_radius, 0.0, 0.0],
         };
         self.queue.write_buffer(&self.ssao_params_buffer, 0, bytemuck::bytes_of(&ssao_params));
-        self.ssao_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ssao_bind_group"),
-            layout: &self.postfx.ssao_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&gbuffer.normals_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(depth_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.postfx.ssao_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.ssao_params_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: self.camera_buffer.as_entire_binding(),
-                },
-            ],
-        }));
 
         let mut ssao_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ssao_pass"),
@@ -368,33 +340,14 @@ impl Renderer {
         }
     }
 
-    /// SSAO blur pass that smooths the occlusion mask before lighting.
+    /// SSAO blur pass (horizontal or vertical).
+    /// Uses pre-cached bind group to avoid per-frame GPU allocations.
     pub fn render_ssao_blur_pass(
-        &mut self,
+        &self,
         encoder: &mut wgpu::CommandEncoder,
-        input_view: &wgpu::TextureView,
+        bind_group: &wgpu::BindGroup,
         output_view: &wgpu::TextureView,
     ) {
-
-        self.ssao_blur_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ssao_blur_bind_group"),
-            layout: &self.postfx.ssao_blur_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(input_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.postfx.ssao_blur_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.ssao_blur_params_buffer.as_entire_binding(),
-                },
-            ],
-        }));
-
         let mut blur_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ssao_blur_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -411,77 +364,18 @@ impl Renderer {
             occlusion_query_set: None,
         });
 
-        if let Some(blur_group) = &self.ssao_blur_bind_group {
-            blur_pass.set_pipeline(&self.postfx.ssao_blur_pipeline);
-            blur_pass.set_bind_group(0, blur_group, &[]);
-            blur_pass.draw(0..3, 0..1);
-        }
+        blur_pass.set_pipeline(&self.postfx.ssao_blur_pipeline);
+        blur_pass.set_bind_group(0, bind_group, &[]);
+        blur_pass.draw(0..3, 0..1);
     }
 
     /// Lighting pass that shades from the G-Buffer into the final color target.
+    /// Uses pre-cached lighting bind group (rebuilt only on texture resize/env change).
     pub fn render_lighting_pass(
-        &mut self,
+        &self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
-        occlusion_view: &wgpu::TextureView,
-        depth_view: &wgpu::TextureView,
     ) {
-        let gbuffer = match &self.gbuffer {
-            Some(gbuffer) => gbuffer,
-            None => return,
-        };
-
-        self.lighting_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("lighting_bind_group"),
-            layout: &self.postfx.lighting_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&gbuffer.albedo_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&gbuffer.normals_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(occlusion_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&self.postfx.lighting_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: self.light_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: self.lighting_params_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::TextureView(&self.env_map.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 7,
-                    resource: wgpu::BindingResource::Sampler(&self.env_map.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 8,
-                    resource: self.env_map.uniform_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 9,
-                    resource: self.camera_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 10,
-                    resource: wgpu::BindingResource::TextureView(depth_view),
-                },
-            ],
-        }));
-
         let mut lighting_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("lighting_pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

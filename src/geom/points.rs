@@ -183,13 +183,13 @@ impl<'a> IPoints<'a> {
             sample.ids = ids;
         }
         
-        // Read velocity (try both "velocity" and ".velocities")
-        sample.velocities = geom_util::read_vec3_array(g, "velocity", index)
-            .or_else(|| geom_util::read_vec3_array(g, ".velocities", index))
+        // C++ ref: IPoints.cpp:62 uses ".velocities"
+        sample.velocities = geom_util::read_vec3_array(g, ".velocities", index)
             .unwrap_or_default();
         
         // Read width and bounds
-        if let Some(w) = geom_util::read_f32_array(g, "width", index) {
+        // C++ ref: IPoints.cpp:70 uses ".widths" (GeomParam)
+        if let Some(w) = geom_util::read_f32_array(g, ".widths", index) {
             sample.widths = w;
         }
         sample.self_bounds = geom_util::read_self_bounds(g, index);

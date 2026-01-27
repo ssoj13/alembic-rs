@@ -1157,20 +1157,32 @@ impl<'a> IArrayProperty<'a> {
         true
     }
     
-    /// Read sample as f32 array.
+    /// Read sample as f32 array (zero-copy when alignment allows).
     pub fn getAsFloat32Array(&self, index: usize) -> Result<Vec<f32>> {
         let data = self.reader.getSampleVec(index)?;
-        let slice: &[f32] = bytemuck::try_cast_slice(&data)
-            .map_err(|_| crate::util::Error::invalid("cannot cast to f32"))?;
-        Ok(slice.to_vec())
+        // Try zero-copy reinterpret; fallback to copy if alignment is wrong
+        match bytemuck::try_cast_vec::<u8, f32>(data) {
+            Ok(v) => Ok(v),
+            Err((_, data)) => {
+                let slice: &[f32] = bytemuck::try_cast_slice(&data)
+                    .map_err(|_| crate::util::Error::invalid("cannot cast to f32"))?;
+                Ok(slice.to_vec())
+            }
+        }
     }
     
-    /// Read sample as i32 array.
+    /// Read sample as i32 array (zero-copy when alignment allows).
     pub fn getAsInt32Array(&self, index: usize) -> Result<Vec<i32>> {
         let data = self.reader.getSampleVec(index)?;
-        let slice: &[i32] = bytemuck::try_cast_slice(&data)
-            .map_err(|_| crate::util::Error::invalid("cannot cast to i32"))?;
-        Ok(slice.to_vec())
+        // Try zero-copy reinterpret; fallback to copy if alignment is wrong
+        match bytemuck::try_cast_vec::<u8, i32>(data) {
+            Ok(v) => Ok(v),
+            Err((_, data)) => {
+                let slice: &[i32] = bytemuck::try_cast_slice(&data)
+                    .map_err(|_| crate::util::Error::invalid("cannot cast to i32"))?;
+                Ok(slice.to_vec())
+            }
+        }
     }
     
     /// Read sample as string array.
@@ -1184,8 +1196,9 @@ impl<'a> IArrayProperty<'a> {
         for (i, &byte) in data.iter().enumerate() {
             if byte == 0 {
                 if i > start {
-                    if let Ok(s) = String::from_utf8(data[start..i].to_vec()) {
-                        strings.push(s);
+                    // Avoid intermediate Vec: try UTF-8 on slice directly
+                    if let Ok(s) = std::str::from_utf8(&data[start..i]) {
+                        strings.push(s.to_owned());
                     }
                 }
                 start = i + 1;
@@ -1194,8 +1207,8 @@ impl<'a> IArrayProperty<'a> {
         
         // Handle last string if no trailing null
         if start < data.len() {
-            if let Ok(s) = String::from_utf8(data[start..].to_vec()) {
-                strings.push(s);
+            if let Ok(s) = std::str::from_utf8(&data[start..]) {
+                strings.push(s.to_owned());
             }
         }
         

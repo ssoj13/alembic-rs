@@ -36,11 +36,15 @@ pub struct Renderer {
     pipelines: Pipelines,
     postfx: PostFxPipelines,
     ssao_bind_group: Option<wgpu::BindGroup>,
-    ssao_blur_bind_group: Option<wgpu::BindGroup>,
+    ssao_blur_h_bind_group: Option<wgpu::BindGroup>,
+    ssao_blur_v_bind_group: Option<wgpu::BindGroup>,
     lighting_bind_group: Option<wgpu::BindGroup>,
     ssao_params_buffer: wgpu::Buffer,
-    ssao_blur_params_buffer: wgpu::Buffer,
+    ssao_blur_h_params_buffer: wgpu::Buffer,
+    ssao_blur_v_params_buffer: wgpu::Buffer,
     lighting_params_buffer: wgpu::Buffer,
+    /// Tracks whether cached post-fx bind groups need rebuild (set on texture resize/env change)
+    postfx_bind_groups_dirty: bool,
     skybox_pipeline: wgpu::RenderPipeline,
     layouts: BindGroupLayouts,
     
@@ -117,6 +121,14 @@ pub struct Renderer {
     scene_center: Vec3,
     scene_radius: f32,
     camera_position: Vec3,
+
+    // Path tracer (compute-based, optional)
+    pub path_tracer: Option<super::pathtracer::PathTraceCompute>,
+    /// When true, render using path tracer instead of rasterizer.
+    pub use_path_tracing: bool,
+    /// Surface format needed for path tracer blit pipeline creation.
+    #[allow(dead_code)]
+    surface_format: wgpu::TextureFormat,
 }
 
 /// GPU mesh data
@@ -277,14 +289,23 @@ impl Renderer {
             contents: bytemuck::bytes_of(&ssao_params),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-        let ssao_blur_params = SsaoBlurParams {
+        let ssao_blur_h_params = SsaoBlurParams {
             direction: [1.0, 0.0],
             _pad: [0.0, 0.0],
         };
-        let ssao_blur_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("ssao_blur_params_buffer"),
-            contents: bytemuck::bytes_of(&ssao_blur_params),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        let ssao_blur_h_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("ssao_blur_h_params_buffer"),
+            contents: bytemuck::bytes_of(&ssao_blur_h_params),
+            usage: wgpu::BufferUsages::UNIFORM,
+        });
+        let ssao_blur_v_params = SsaoBlurParams {
+            direction: [0.0, 1.0],
+            _pad: [0.0, 0.0],
+        };
+        let ssao_blur_v_params_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("ssao_blur_v_params_buffer"),
+            contents: bytemuck::bytes_of(&ssao_blur_v_params),
+            usage: wgpu::BufferUsages::UNIFORM,
         });
         let lighting_params = LightingParams {
             background: self::DEFAULT_BACKGROUND_COLOR,
@@ -481,11 +502,14 @@ impl Renderer {
             pipelines,
             postfx,
             ssao_bind_group: None,
-            ssao_blur_bind_group: None,
+            ssao_blur_h_bind_group: None,
+            ssao_blur_v_bind_group: None,
             lighting_bind_group: None,
             ssao_params_buffer,
-            ssao_blur_params_buffer,
+            ssao_blur_h_params_buffer,
+            ssao_blur_v_params_buffer,
             lighting_params_buffer,
+            postfx_bind_groups_dirty: true,
             skybox_pipeline,
             layouts,
             skybox_camera_layout,
@@ -531,6 +555,9 @@ impl Renderer {
             scene_center: Vec3::ZERO,
             scene_radius: 10.0,
             camera_position: Vec3::ZERO,
+            path_tracer: None,
+            use_path_tracing: false,
+            surface_format: format,
         }
     }
 
@@ -550,8 +577,75 @@ impl Renderer {
         };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
         self.camera_position = position;
+
+        // Update path tracer camera if active
+        if let Some(pt) = &mut self.path_tracer {
+            let inv_view = view.inverse();
+            let proj = view_proj * view.inverse();  // extract proj from view_proj = proj * view
+            let inv_proj = proj.inverse();
+            let cam = super::pathtracer::PtCameraUniform {
+                inv_view: inv_view.to_cols_array_2d(),
+                inv_proj: inv_proj.to_cols_array_2d(),
+                position: position.to_array(),
+                frame_count: pt.frame_count,
+            };
+            pt.update_camera(&self.queue, &cam);
+            pt.reset_accumulation(); // camera moved → restart progressive rendering
+        }
     }
-    
+
+    /// Initialize the path tracer compute pipeline (lazy, on first toggle).
+    /// Called from the UI when the user enables path tracing mode.
+    #[allow(dead_code)]
+    pub fn init_path_tracer(&mut self, width: u32, height: u32) {
+        if self.path_tracer.is_some() {
+            return;
+        }
+        self.path_tracer = Some(super::pathtracer::PathTraceCompute::new(
+            &self.device, width, height, self.surface_format,
+        ));
+    }
+
+    /// Build BVH from current scene meshes and upload to path tracer.
+    /// Called when scene changes or path tracing is enabled.
+    #[allow(dead_code)]
+    pub fn upload_scene_to_path_tracer(&mut self) {
+        use super::pathtracer::{build, gpu_data, scene_convert};
+
+        let pt = match &mut self.path_tracer {
+            Some(pt) => pt,
+            None => return,
+        };
+
+        // Collect all triangles from scene meshes
+        let mut all_tris = Vec::new();
+        for mesh in self.meshes.values() {
+            // We need vertex data; if base_vertices exist use those, otherwise skip
+            if let Some(verts) = &mesh.base_vertices {
+                // Extract index data from GPU would be complex, so we use triangle fan from vertices
+                // For now, use the vertex buffer directly as triangle list (every 3 vertices = 1 tri)
+                let tris = scene_convert::extract_triangles(
+                    verts,
+                    &(0..verts.len() as u32).collect::<Vec<_>>(),
+                    &mesh.transform,
+                    0, // default material
+                );
+                all_tris.extend(tris);
+            }
+        }
+
+        if all_tris.is_empty() {
+            return;
+        }
+
+        // Build BVH
+        let bvh = build::build_bvh(&all_tris);
+        let materials = vec![scene_convert::default_material()];
+        let gpu_data = gpu_data::build_gpu_data(&bvh, &all_tris, &materials);
+
+        pt.upload_scene(&self.device, &self.queue, &gpu_data);
+    }
+
     /// Reset to default 3-point lighting
     pub fn set_default_lights(&self) {
         let rig = LightRig::three_point();
@@ -735,6 +829,7 @@ impl Renderer {
                 occlusion_view,
                 size: (width, height),
             });
+            self.postfx_bind_groups_dirty = true;
         }
     }
 
@@ -766,7 +861,146 @@ impl Renderer {
                 color_view,
                 size: (width, height),
             });
+            self.postfx_bind_groups_dirty = true;
         }
+    }
+
+    /// Rebuild cached post-fx bind groups (SSAO, blur, lighting).
+    /// Called once per resize instead of every frame.
+    fn rebuild_postfx_bind_groups(&mut self) {
+        if !self.postfx_bind_groups_dirty {
+            return;
+        }
+        let (gbuffer, ssao_targets) = match (&self.gbuffer, &self.ssao_targets) {
+            (Some(gb), Some(st)) => (gb, st),
+            _ => return,
+        };
+        let depth_view = match &self.depth_texture {
+            Some(dt) => &dt.view,
+            None => return,
+        };
+
+        // SSAO bind group
+        self.ssao_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ssao_bind_group"),
+            layout: &self.postfx.ssao_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&gbuffer.normals_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.postfx.ssao_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.ssao_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.camera_buffer.as_entire_binding(),
+                },
+            ],
+        }));
+
+        // SSAO blur H: input=gbuffer.occlusion, output=ssao_targets.color
+        self.ssao_blur_h_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ssao_blur_h_bind_group"),
+            layout: &self.postfx.ssao_blur_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&gbuffer.occlusion_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.postfx.ssao_blur_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.ssao_blur_h_params_buffer.as_entire_binding(),
+                },
+            ],
+        }));
+
+        // SSAO blur V: input=ssao_targets.color, output=gbuffer.occlusion
+        self.ssao_blur_v_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ssao_blur_v_bind_group"),
+            layout: &self.postfx.ssao_blur_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&ssao_targets.color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.postfx.ssao_blur_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.ssao_blur_v_params_buffer.as_entire_binding(),
+                },
+            ],
+        }));
+
+        // Lighting bind group
+        self.lighting_bind_group = Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("lighting_bind_group"),
+            layout: &self.postfx.lighting_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&gbuffer.albedo_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&gbuffer.normals_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&gbuffer.occlusion_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(&self.postfx.lighting_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: self.light_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: self.lighting_params_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&self.env_map.view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(&self.env_map.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: self.env_map.uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: self.camera_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: wgpu::BindingResource::TextureView(depth_view),
+                },
+            ],
+        }));
+
+        self.postfx_bind_groups_dirty = false;
     }
 
     /// Update grid mesh based on camera distance (Lightwave-style adaptive grid)
@@ -1305,6 +1539,7 @@ impl Renderer {
             &self.layouts.environment,
             path,
         )?;
+        self.postfx_bind_groups_dirty = true;
         Ok(())
     }
 
@@ -1315,6 +1550,7 @@ impl Renderer {
             &self.queue,
             &self.layouts.environment,
         );
+        self.postfx_bind_groups_dirty = true;
     }
 
     /// Check if environment map is loaded
@@ -1428,6 +1664,20 @@ impl Renderer {
 
     /// Render the scene
     pub fn render(&mut self, view: &wgpu::TextureView, width: u32, height: u32, camera_distance: f32) {
+        // Path tracing mode: dispatch compute shader and blit to screen
+        if self.use_path_tracing {
+            if let Some(pt) = &mut self.path_tracer {
+                pt.resize(&self.device, width, height);
+                let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("pt_encoder"),
+                });
+                pt.dispatch(&mut encoder);
+                pt.blit(&mut encoder, view);
+                self.queue.submit(std::iter::once(encoder.finish()));
+            }
+            return;
+        }
+
         self.ensure_depth_texture(width, height);
         let use_gbuffer = true;
         if use_gbuffer {
@@ -1517,39 +1767,28 @@ impl Renderer {
 
         if use_gbuffer {
             self.ensure_ssao_targets(width, height);
+            self.rebuild_postfx_bind_groups();
             self.render_ssao_pass(&mut encoder, &depth_view, self.use_ssao);
             if self.use_ssao {
-                let (gbuffer_occlusion_view, ssao_temp_view) = match (&self.gbuffer, &self.ssao_targets) {
-                    (Some(gbuffer), Some(targets)) => (
-                        gbuffer.occlusion_view.clone(),
+                let (ssao_temp_view, gbuffer_occlusion_view) = match (&self.ssao_targets, &self.gbuffer) {
+                    (Some(targets), Some(gbuffer)) => (
                         targets.color_view.clone(),
+                        gbuffer.occlusion_view.clone(),
                     ),
                     _ => return,
                 };
 
-                let blur_params = SsaoBlurParams {
-                    direction: [1.0, 0.0],
-                    _pad: [0.0, 0.0],
-                };
-                self.queue.write_buffer(
-                    &self.ssao_blur_params_buffer,
-                    0,
-                    bytemuck::bytes_of(&blur_params),
-                );
-                self.render_ssao_blur_pass(&mut encoder, &gbuffer_occlusion_view, &ssao_temp_view);
-
-                let blur_params = SsaoBlurParams {
-                    direction: [0.0, 1.0],
-                    _pad: [0.0, 0.0],
-                };
-                self.queue.write_buffer(
-                    &self.ssao_blur_params_buffer,
-                    0,
-                    bytemuck::bytes_of(&blur_params),
-                );
-                self.render_ssao_blur_pass(&mut encoder, &ssao_temp_view, &gbuffer_occlusion_view);
+                // H-blur: gbuffer.occlusion -> ssao_temp (cached bind group, no alloc)
+                if let Some(h_bg) = &self.ssao_blur_h_bind_group {
+                    self.render_ssao_blur_pass(&mut encoder, h_bg, &ssao_temp_view);
+                }
+                // V-blur: ssao_temp -> gbuffer.occlusion (cached bind group, no alloc)
+                if let Some(v_bg) = &self.ssao_blur_v_bind_group {
+                    self.render_ssao_blur_pass(&mut encoder, v_bg, &gbuffer_occlusion_view);
+                }
             }
 
+            // Update lighting params (cheap uniform write)
             let lighting_params = LightingParams {
                 background: self.background_color,
                 hdr_visible: if self.hdr_visible { 1.0 } else { 0.0 },
@@ -1561,11 +1800,7 @@ impl Renderer {
                 0,
                 bytemuck::bytes_of(&lighting_params),
             );
-            let occlusion_view = match &self.gbuffer {
-                Some(gbuffer) => gbuffer.occlusion_view.clone(),
-                None => return,
-            };
-            self.render_lighting_pass(&mut encoder, color_target_view_ref, &occlusion_view, &depth_view);
+            self.render_lighting_pass(&mut encoder, color_target_view_ref);
         }
 
         if !transparent_meshes.is_empty()

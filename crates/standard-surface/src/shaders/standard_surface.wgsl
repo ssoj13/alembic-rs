@@ -423,16 +423,20 @@ fn fs_main(in: VertexOutput, @builtin(front_facing) is_front: bool) -> @location
 
     // Ambient / IBL
     if env.enabled > 0.5 {
-        // Diffuse IBL - heavily blurred (approximates irradiance)
-        // Sample 6 axis directions to get average environment color
-        var env_diffuse = sample_env(vec3<f32>(1.0, 0.0, 0.0));
-        env_diffuse += sample_env(vec3<f32>(-1.0, 0.0, 0.0));
-        env_diffuse += sample_env(vec3<f32>(0.0, 1.0, 0.0));
-        env_diffuse += sample_env(vec3<f32>(0.0, -1.0, 0.0));
-        env_diffuse += sample_env(vec3<f32>(0.0, 0.0, 1.0));
-        env_diffuse += sample_env(vec3<f32>(0.0, 0.0, -1.0));
-        env_diffuse = env_diffuse / 6.0; // average color of entire environment
-        diffuse_accum += env_diffuse * effective_base * (1.0 - metalness) * 0.4;
+        // Diffuse IBL - sample hemisphere around normal for better irradiance estimate
+        // Normal-aligned samples + axis-aligned average for soft ambient fill
+        let env_normal = sample_env(N);  // Primary direction along surface normal
+        // Cross-axis samples for hemisphere approximation
+        let T = normalize(cross(N, select(vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), abs(N.y) > 0.9)));
+        let B = cross(N, T);
+        let env_t1 = sample_env(normalize(N + T * 0.7));
+        let env_t2 = sample_env(normalize(N - T * 0.7));
+        let env_b1 = sample_env(normalize(N + B * 0.7));
+        let env_b2 = sample_env(normalize(N - B * 0.7));
+        let env_up = sample_env(vec3<f32>(0.0, 1.0, 0.0));  // Ground plane fill
+        // Weighted: normal direction strongest, cross-directions softer, sky fill subtle
+        let env_diffuse = env_normal * 0.35 + (env_t1 + env_t2 + env_b1 + env_b2) * 0.125 + env_up * 0.15;
+        diffuse_accum += env_diffuse * effective_base * (1.0 - metalness) * 0.5;
         
         // Specular IBL - sample along reflection
         let R = reflect(-V, N);

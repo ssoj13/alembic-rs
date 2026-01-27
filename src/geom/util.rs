@@ -11,6 +11,7 @@ use crate::util::BBox3d;
 // ============================================================================
 
 /// Get number of samples from an array property in .geom.
+#[inline]
 pub fn num_samples_from_property(object: &IObject<'_>, prop_name: &str) -> usize {
     let props = object.getProperties();
     let Some(geom_prop) = props.getPropertyByName(".geom") else { return 1 };
@@ -388,6 +389,7 @@ pub fn read_indexed_vec2(
 // ============================================================================
 
 /// Compute bounding box from a slice of Vec3 positions.
+#[inline]
 pub fn compute_bounds_vec3(positions: &[glam::Vec3]) -> (glam::Vec3, glam::Vec3) {
     if positions.is_empty() {
         return (glam::Vec3::ZERO, glam::Vec3::ZERO);
