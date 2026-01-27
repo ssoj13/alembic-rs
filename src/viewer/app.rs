@@ -137,6 +137,138 @@ fn guess_material_from_path(path: &str) -> (Vec3, f32, f32, f32, f32) {
 }
 
 impl ViewerApp {
+    /// Calculate focus distance by tracing a ray from screen position through scene geometry
+    fn calculate_focus_distance(&self, rel_x: f32, rel_y: f32, bounds: &mesh_converter::Bounds) -> f32 {
+        // Convert to NDC (-1 to 1)
+        let ndc_x = rel_x * 2.0 - 1.0;
+        let ndc_y = 1.0 - rel_y * 2.0; // flip Y
+        
+        // Get camera matrices
+        let aspect = 16.0 / 9.0; // approximate
+        let proj = glam::Mat4::perspective_rh(
+            self.viewport.camera.fov,
+            aspect,
+            self.viewport.camera.near,
+            self.viewport.camera.far,
+        );
+        let view = self.viewport.camera.view_matrix();
+        
+        let inv_proj = proj.inverse();
+        let inv_view = view.inverse();
+        
+        // Unproject to get ray direction
+        let near_clip = inv_proj * glam::Vec4::new(ndc_x, ndc_y, -1.0, 1.0);
+        let near_point = near_clip.truncate() / near_clip.w;
+        let far_clip = inv_proj * glam::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+        let far_point = far_clip.truncate() / far_clip.w;
+        
+        let ray_origin = (inv_view * glam::Vec4::new(near_point.x, near_point.y, near_point.z, 1.0)).truncate();
+        let ray_end = (inv_view * glam::Vec4::new(far_point.x, far_point.y, far_point.z, 1.0)).truncate();
+        let ray_dir = (ray_end - ray_origin).normalize();
+        
+        // Try to intersect with actual geometry first
+        if let Some(renderer) = &self.viewport.renderer {
+            if let Some(t) = Self::ray_scene_intersect(renderer, ray_origin, ray_dir) {
+                return t;
+            }
+        }
+        
+        // Fallback: intersect with scene bounding sphere
+        let center = bounds.center();
+        let radius = bounds.radius();
+        
+        let oc = ray_origin - center;
+        let a = ray_dir.dot(ray_dir);
+        let b = 2.0 * oc.dot(ray_dir);
+        let c = oc.dot(oc) - radius * radius;
+        let discriminant = b * b - 4.0 * a * c;
+        
+        if discriminant >= 0.0 {
+            let t = (-b - discriminant.sqrt()) / (2.0 * a);
+            if t > 0.0 {
+                return t;
+            }
+            let t2 = (-b + discriminant.sqrt()) / (2.0 * a);
+            if t2 > 0.0 {
+                return t2;
+            }
+        }
+        
+        // Last fallback: distance to center
+        (ray_origin - center).length()
+    }
+    
+    /// Ray-triangle intersection (Moller-Trumbore)
+    fn ray_triangle_intersect(
+        ray_origin: Vec3,
+        ray_dir: Vec3,
+        v0: Vec3, v1: Vec3, v2: Vec3,
+    ) -> Option<f32> {
+        const EPSILON: f32 = 1e-6;
+        
+        let edge1 = v1 - v0;
+        let edge2 = v2 - v0;
+        let h = ray_dir.cross(edge2);
+        let a = edge1.dot(h);
+        
+        if a.abs() < EPSILON {
+            return None; // Ray parallel to triangle
+        }
+        
+        let f = 1.0 / a;
+        let s = ray_origin - v0;
+        let u = f * s.dot(h);
+        
+        if u < 0.0 || u > 1.0 {
+            return None;
+        }
+        
+        let q = s.cross(edge1);
+        let v = f * ray_dir.dot(q);
+        
+        if v < 0.0 || u + v > 1.0 {
+            return None;
+        }
+        
+        let t = f * edge2.dot(q);
+        
+        if t > EPSILON {
+            Some(t)
+        } else {
+            None
+        }
+    }
+    
+    /// Trace ray against all scene meshes, return closest hit distance
+    fn ray_scene_intersect(
+        renderer: &super::renderer::Renderer,
+        ray_origin: Vec3,
+        ray_dir: Vec3,
+    ) -> Option<f32> {
+        let mut closest_t: Option<f32> = None;
+        
+        for mesh in renderer.meshes.values() {
+            if let (Some(vertices), Some(indices)) = (&mesh.base_vertices, &mesh.base_indices) {
+                let transform = mesh.transform;
+                
+                // Check triangles
+                for tri in indices.chunks(3) {
+                    if tri.len() < 3 { continue; }
+                    
+                    let v0 = transform.transform_point3(Vec3::from(vertices[tri[0] as usize].position));
+                    let v1 = transform.transform_point3(Vec3::from(vertices[tri[1] as usize].position));
+                    let v2 = transform.transform_point3(Vec3::from(vertices[tri[2] as usize].position));
+                    
+                    if let Some(t) = Self::ray_triangle_intersect(ray_origin, ray_dir, v0, v1, v2) {
+                        closest_t = Some(closest_t.map_or(t, |prev| prev.min(t)));
+                    }
+                }
+            }
+        }
+        
+        closest_t
+    }
+    
     fn hash_scene_object(path: &str, transform: Mat4, data_hash: u64) -> u64 {
         let mut hasher = spooky_hash::SpookyHash::new(0, 0);
         hasher.update(path.as_bytes());
@@ -596,19 +728,44 @@ impl ViewerApp {
                 .show(ui, |ui| {
                     if let Some(renderer) = &mut self.viewport.renderer {
                         ui.horizontal(|ui| {
-                            if ui.selectable_label(!self.settings.path_tracing, "Rasterizer").clicked() {
+                            // Rasterizer mode (shaded)
+                            let is_rasterizer = !self.settings.path_tracing && !self.settings.show_wireframe;
+                            if ui.selectable_label(is_rasterizer, "Shaded").clicked() {
                                 self.settings.path_tracing = false;
+                                self.settings.show_wireframe = false;
                                 renderer.use_path_tracing = false;
+                                renderer.show_wireframe = false;
                                 self.settings.save();
                             }
+                            
+                            // Wireframe mode
+                            let is_wireframe = !self.settings.path_tracing && self.settings.show_wireframe;
+                            if ui.selectable_label(is_wireframe, "Wireframe").clicked() {
+                                self.settings.path_tracing = false;
+                                self.settings.show_wireframe = true;
+                                renderer.use_path_tracing = false;
+                                renderer.show_wireframe = true;
+                                self.settings.save();
+                            }
+                            
+                            // Path Tracer mode
                             if ui.selectable_label(self.settings.path_tracing, "Path Tracer").clicked() {
                                 self.settings.path_tracing = true;
+                                self.settings.show_wireframe = false;
                                 renderer.use_path_tracing = true;
+                                renderer.show_wireframe = false;
                                 renderer.pt_max_samples = self.settings.pt_max_samples;
                                 renderer.pt_max_bounces = self.settings.pt_max_bounces;
                                 renderer.pt_samples_per_update = self.settings.pt_samples_per_update;
+                                renderer.pt_max_transmission_depth = self.settings.pt_max_transmission_depth;
+                                renderer.pt_dof_enabled = self.settings.pt_dof_enabled;
+                                renderer.pt_aperture = self.settings.pt_aperture;
+                                renderer.pt_focus_distance = self.settings.pt_focus_distance;
                                 renderer.init_path_tracer(1280, 720);
-                                renderer.upload_scene_to_path_tracer();
+                                renderer.upload_scene_to_path_tracer_with_normals(
+                                    self.settings.smooth_normals,
+                                    self.settings.smooth_angle,
+                                );
                                 self.settings.save();
                             }
                         });
@@ -616,51 +773,70 @@ impl ViewerApp {
                 });
 
             // ============================================================
-            // Rasterizer Settings (only when not path tracing)
+            // Scene Settings (common to all render modes)
             // ============================================================
-            if !self.settings.path_tracing {
+            egui::CollapsingHeader::new("Scene")
+                .default_open(true)
+                .show(ui, |ui| {
+                    if let Some(renderer) = &mut self.viewport.renderer {
+                        let mut changed = false;
+                        
+                        if ui.checkbox(&mut self.settings.flat_shading, "Flat Shading").changed() {
+                            renderer.flat_shading = self.settings.flat_shading;
+                            changed = true;
+                        }
+                        if ui.checkbox(&mut self.settings.double_sided, "Double Sided").changed() {
+                            renderer.double_sided = self.settings.double_sided;
+                            changed = true;
+                        }
+                        if ui.checkbox(&mut self.settings.auto_normals, "Auto Normals").changed() {
+                            renderer.auto_normals = self.settings.auto_normals;
+                            changed = true;
+                        }
+                        
+                        // Smooth normals
+                        ui.horizontal(|ui| {
+                            let checkbox_changed = ui.checkbox(&mut self.settings.smooth_normals, "Smooth").changed();
+                            let slider_changed = ui.add(egui::Slider::new(&mut self.settings.smooth_angle, 0.0..=180.0)
+                                .suffix("\u{00b0}")
+                                .fixed_decimals(0)).changed();
+                            if checkbox_changed || slider_changed {
+                                renderer.recalculate_smooth_normals(
+                                    self.settings.smooth_angle,
+                                    self.settings.smooth_normals,
+                                    true,
+                                );
+                                // Rebuild PT scene if path tracing (normals changed)
+                                if self.settings.path_tracing {
+                                    renderer.upload_scene_to_path_tracer_with_normals(
+                                        self.settings.smooth_normals,
+                                        self.settings.smooth_angle,
+                                    );
+                                }
+                                changed = true;
+                            }
+                        });
+                        
+                        if changed {
+                            self.settings.save();
+                        }
+                    }
+                });
+
+            // ============================================================
+            // Rasterizer Settings (only when in shaded mode)
+            // ============================================================
+            if !self.settings.path_tracing && !self.settings.show_wireframe {
                 egui::CollapsingHeader::new("Rasterizer")
                     .default_open(true)
                     .show(ui, |ui| {
                         if let Some(renderer) = &mut self.viewport.renderer {
                             let mut changed = false;
                             
-                            if ui.checkbox(&mut self.settings.show_wireframe, "Wireframe").changed() {
-                                renderer.show_wireframe = self.settings.show_wireframe;
-                                changed = true;
-                            }
-                            if ui.checkbox(&mut self.settings.flat_shading, "Flat Shading").changed() {
-                                renderer.flat_shading = self.settings.flat_shading;
-                                changed = true;
-                            }
                             if ui.checkbox(&mut self.settings.show_shadows, "Shadows").changed() {
                                 renderer.show_shadows = self.settings.show_shadows;
                                 changed = true;
                             }
-                            if ui.checkbox(&mut self.settings.double_sided, "Double Sided").changed() {
-                                renderer.double_sided = self.settings.double_sided;
-                                changed = true;
-                            }
-                            if ui.checkbox(&mut self.settings.auto_normals, "Auto Normals").changed() {
-                                renderer.auto_normals = self.settings.auto_normals;
-                                changed = true;
-                            }
-                            
-                            // Smooth normals
-                            ui.horizontal(|ui| {
-                                let checkbox_changed = ui.checkbox(&mut self.settings.smooth_normals, "Smooth").changed();
-                                let slider_changed = ui.add(egui::Slider::new(&mut self.settings.smooth_angle, 0.0..=180.0)
-                                    .suffix("\u{00b0}")
-                                    .fixed_decimals(0)).changed();
-                                if checkbox_changed || slider_changed {
-                                    renderer.recalculate_smooth_normals(
-                                        self.settings.smooth_angle,
-                                        self.settings.smooth_normals,
-                                        true,
-                                    );
-                                    changed = true;
-                                }
-                            });
                             
                             ui.horizontal(|ui| {
                                 ui.label("Opacity:");
@@ -749,6 +925,44 @@ impl ViewerApp {
                                     changed = true;
                                 }
                             });
+                            
+                            ui.separator();
+                            
+                            // Depth of Field
+                            if ui.checkbox(&mut self.settings.pt_dof_enabled, "Depth of Field").changed() {
+                                renderer.pt_dof_enabled = self.settings.pt_dof_enabled;
+                                if let Some(pt) = &mut renderer.path_tracer {
+                                    pt.reset_accumulation();
+                                }
+                                changed = true;
+                            }
+                            
+                            if self.settings.pt_dof_enabled {
+                                ui.horizontal(|ui| {
+                                    ui.label("Aperture:");
+                                    if ui.add(egui::Slider::new(&mut self.settings.pt_aperture, 0.01..=2.0)
+                                        .logarithmic(true)).changed() 
+                                    {
+                                        renderer.pt_aperture = self.settings.pt_aperture;
+                                        if let Some(pt) = &mut renderer.path_tracer {
+                                            pt.reset_accumulation();
+                                        }
+                                        changed = true;
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Focus:");
+                                    if ui.add(egui::Slider::new(&mut self.settings.pt_focus_distance, 0.1..=100.0)
+                                        .logarithmic(true)).changed() 
+                                    {
+                                        renderer.pt_focus_distance = self.settings.pt_focus_distance;
+                                        if let Some(pt) = &mut renderer.path_tracer {
+                                            pt.reset_accumulation();
+                                        }
+                                        changed = true;
+                                    }
+                                });
+                            }
                             
                             // Progress bar
                             if let Some(pt) = &renderer.path_tracer {
@@ -1828,15 +2042,24 @@ impl ViewerApp {
                 false,
             );
         }
-
+        
         // Init/update path tracer if enabled
         if self.settings.path_tracing {
             renderer.use_path_tracing = true;
+            // Sync all PT settings from saved settings
             renderer.pt_max_samples = self.settings.pt_max_samples;
+            renderer.pt_max_bounces = self.settings.pt_max_bounces;
+            renderer.pt_max_transmission_depth = self.settings.pt_max_transmission_depth;
+            renderer.pt_dof_enabled = self.settings.pt_dof_enabled;
+            renderer.pt_aperture = self.settings.pt_aperture;
+            renderer.pt_focus_distance = self.settings.pt_focus_distance;
             if renderer.path_tracer.is_none() {
                 renderer.init_path_tracer(1280, 720);
             }
-            renderer.upload_scene_to_path_tracer();
+            renderer.upload_scene_to_path_tracer_with_normals(
+                self.settings.smooth_normals,
+                self.settings.smooth_angle,
+            );
         }
 
         // Update stats
@@ -2213,6 +2436,23 @@ impl eframe::App for ViewerApp {
             self.viewport.show(ui, render_state);
         });
 
+        // Handle Ctrl+Click focus pick for DoF
+        if let Some((rel_x, rel_y)) = self.viewport.take_focus_pick() {
+            if self.settings.path_tracing && self.settings.pt_dof_enabled {
+                // Calculate focus distance from click position
+                if let Some(bounds) = &self.scene_bounds {
+                    let focus_dist = self.calculate_focus_distance(rel_x, rel_y, bounds);
+                    self.settings.pt_focus_distance = focus_dist;
+                    if let Some(renderer) = &mut self.viewport.renderer {
+                        renderer.pt_focus_distance = focus_dist;
+                        if let Some(pt) = &mut renderer.path_tracer {
+                            pt.reset_accumulation();
+                        }
+                    }
+                    self.settings.save();
+                }
+            }
+        }
 
         checkpoint!("viewport_render");
         // Track window size and position for saving on exit

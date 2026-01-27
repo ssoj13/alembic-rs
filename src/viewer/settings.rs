@@ -65,6 +65,9 @@ pub struct Settings {
     pub pt_max_samples: u32,
     pub pt_samples_per_update: u32,
     pub pt_max_transmission_depth: u32,
+    pub pt_dof_enabled: bool,
+    pub pt_aperture: f32,       // Aperture radius in world units
+    pub pt_focus_distance: f32, // Focus distance in world units
     
     // Material randomization
     pub materialize_missing: bool,
@@ -110,6 +113,9 @@ impl Default for Settings {
             pt_max_samples: 512,
             pt_samples_per_update: 1,
             pt_max_transmission_depth: 8,
+            pt_dof_enabled: false,
+            pt_aperture: 0.1,
+            pt_focus_distance: 10.0,
             materialize_missing: false,
         }
     }

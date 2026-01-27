@@ -23,6 +23,8 @@ pub struct Viewport {
     last_size: Vec2,
     /// Optional scene camera override
     pub scene_camera: Option<SceneCameraOverride>,
+    /// Pending Ctrl+Click focus pick (normalized 0-1 coords)
+    pending_focus_pick: Option<(f32, f32)>,
 }
 
 struct RenderTexture {
@@ -41,6 +43,7 @@ impl Viewport {
             render_texture: None,
             last_size: Vec2::ZERO,
             scene_camera: None,
+            pending_focus_pick: None,
         }
     }
 
@@ -226,6 +229,22 @@ impl Viewport {
             // TODO: Calculate scene bounds
             self.camera.focus(glam::Vec3::ZERO, 5.0);
         }
+        
+        // Ctrl+Click to set DoF focus point
+        if response.clicked() && input.modifiers.ctrl {
+            if let Some(pos) = response.interact_pointer_pos() {
+                // Store the click position relative to the viewport
+                let rect = response.rect;
+                let rel_x = (pos.x - rect.left()) / rect.width();
+                let rel_y = (pos.y - rect.top()) / rect.height();
+                self.pending_focus_pick = Some((rel_x, rel_y));
+            }
+        }
+    }
+    
+    /// Take pending focus pick request (normalized 0-1 coordinates)
+    pub fn take_focus_pick(&mut self) -> Option<(f32, f32)> {
+        self.pending_focus_pick.take()
     }
 }
 

@@ -132,6 +132,12 @@ pub struct Renderer {
     pub pt_samples_per_update: u32,
     /// Max transmission/glass bounces (separate from diffuse/specular bounces)
     pub pt_max_transmission_depth: u32,
+    /// Depth of field enabled
+    pub pt_dof_enabled: bool,
+    /// Aperture radius for DoF
+    pub pt_aperture: f32,
+    /// Focus distance for DoF
+    pub pt_focus_distance: f32,
     /// Surface format needed for path tracer blit pipeline creation.
     #[allow(dead_code)]
     surface_format: wgpu::TextureFormat,
@@ -569,6 +575,9 @@ impl Renderer {
             pt_max_bounces: 4,
             pt_samples_per_update: 1,
             pt_max_transmission_depth: 8,
+            pt_dof_enabled: false,
+            pt_aperture: 0.1,
+            pt_focus_distance: 10.0,
             surface_format: format,
         }
     }
@@ -618,7 +627,10 @@ impl Renderer {
                 frame_count: pt.frame_count,
                 max_bounces: self.pt_max_bounces,
                 max_transmission_depth: self.pt_max_transmission_depth,
-                _pad1: 0,
+                dof_enabled: if self.pt_dof_enabled { 1 } else { 0 },
+                aperture: self.pt_aperture,
+                focus_distance: self.pt_focus_distance,
+                _pad1: [0; 2],
                 _pad2: [0; 4],
             };
             pt.update_camera(&self.queue, &cam);
@@ -660,6 +672,15 @@ impl Renderer {
     #[allow(dead_code)]
     #[tracing::instrument(skip_all)]
     pub fn upload_scene_to_path_tracer(&mut self) {
+        self.upload_scene_to_path_tracer_impl(false, 0.0);
+    }
+    
+    /// Upload scene to path tracer with optional smooth normals
+    pub fn upload_scene_to_path_tracer_with_normals(&mut self, smooth_enabled: bool, smooth_angle: f32) {
+        self.upload_scene_to_path_tracer_impl(smooth_enabled, smooth_angle);
+    }
+    
+    fn upload_scene_to_path_tracer_impl(&mut self, smooth_enabled: bool, smooth_angle: f32) {
         use super::pathtracer::{build, gpu_data, scene_convert};
 
         let pt = match &mut self.path_tracer {
@@ -672,9 +693,35 @@ impl Renderer {
         let mut materials = Vec::new();
 
         // Helper: extract from a SceneMesh if it has CPU-side data
-        let all_meshes = self.meshes.values()
-            .chain(self.floor_mesh.iter());
-        for mesh in all_meshes {
+        for mesh in self.meshes.values() {
+            if let (Some(base_verts), Some(indices)) = (&mesh.base_vertices, &mesh.base_indices) {
+                // Apply smooth normals if enabled
+                let verts = if smooth_enabled {
+                    if let Some(smooth_data) = &mesh.smooth_data {
+                        let mut new_verts = base_verts.clone();
+                        let smooth_normals = smooth_data.calculate(smooth_angle);
+                        for (vert, normal) in new_verts.iter_mut().zip(smooth_normals.iter()) {
+                            vert.normal = (*normal).into();
+                        }
+                        new_verts
+                    } else {
+                        base_verts.clone()
+                    }
+                } else {
+                    base_verts.clone()
+                };
+                
+                let mat_id = materials.len() as u32;
+                materials.push(scene_convert::material_from_params(&mesh.material_params));
+                let tris = scene_convert::extract_triangles(
+                    &verts, indices, &mesh.transform, mat_id,
+                );
+                all_tris.extend(tris);
+            }
+        }
+        
+        // Floor mesh (no smooth normals needed)
+        for mesh in self.floor_mesh.iter() {
             if let (Some(verts), Some(indices)) = (&mesh.base_vertices, &mesh.base_indices) {
                 let mat_id = materials.len() as u32;
                 materials.push(scene_convert::material_from_params(&mesh.material_params));

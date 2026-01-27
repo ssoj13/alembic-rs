@@ -53,9 +53,12 @@ struct Camera {
     frame_count: u32,           // offset 144, 4 bytes
     max_bounces: u32,           // offset 148, 4 bytes
     max_transmission_depth: u32, // offset 152, 4 bytes
-    _pad1: u32,                 // offset 156, 4 bytes
-    _pad2: vec4<u32>,           // offset 160, 16 bytes
-    // Total: 176 bytes
+    dof_enabled: u32,           // offset 156, 4 bytes
+    aperture: f32,              // offset 160, 4 bytes
+    focus_distance: f32,        // offset 164, 4 bytes
+    _pad1: vec2<u32>,           // offset 168, 8 bytes
+    _pad2: vec4<u32>,           // offset 176, 16 bytes
+    // Total: 192 bytes
 };
 
 struct Ray {
@@ -326,7 +329,14 @@ fn onb_from_normal(n: vec3<f32>) -> mat3x3<f32> {
 // ---- Camera ----
 
 // Generate camera ray with sub-pixel jitter for anti-aliasing.
-fn gen_ray(x: f32, y: f32, dims: vec2<f32>, jx: f32, jy: f32) -> Ray {
+// Sample point on unit disk (for DoF lens sampling)
+fn sample_disk(r1: f32, r2: f32) -> vec2<f32> {
+    let theta = 2.0 * PI * r1;
+    let r = sqrt(r2);
+    return vec2<f32>(r * cos(theta), r * sin(theta));
+}
+
+fn gen_ray(x: f32, y: f32, dims: vec2<f32>, jx: f32, jy: f32, rng: ptr<function, u32>) -> Ray {
     let ndc = vec2<f32>(
         (x + jx) / dims.x * 2.0 - 1.0,
         1.0 - (y + jy) / dims.y * 2.0,
@@ -337,12 +347,33 @@ fn gen_ray(x: f32, y: f32, dims: vec2<f32>, jx: f32, jy: f32) -> Ray {
     let near3 = near.xyz / near.w;
     let far3  = far.xyz / far.w;
 
-    let origin = (camera.inv_view * vec4<f32>(near3, 1.0)).xyz;
-    let dest = (camera.inv_view * vec4<f32>(far3, 1.0)).xyz;
-
+    let origin_view = near3;
+    let dir_view = normalize(far3 - near3);
+    
     var ray: Ray;
-    ray.origin = origin;
-    ray.dir = normalize(dest - origin);
+    
+    if camera.dof_enabled != 0u && camera.aperture > 0.0 {
+        // Thin lens DoF model
+        // Find point on focal plane along the ray
+        let t_focus = camera.focus_distance / max(abs(dir_view.z), 0.001);
+        let focus_point_view = origin_view + dir_view * t_focus;
+        
+        // Sample point on lens (aperture disk)
+        let lens_sample = sample_disk(rand(rng), rand(rng)) * camera.aperture;
+        let lens_origin_view = origin_view + vec3<f32>(lens_sample, 0.0);
+        
+        // New ray from lens point through focus point
+        let new_dir_view = normalize(focus_point_view - lens_origin_view);
+        
+        // Transform to world space
+        ray.origin = (camera.inv_view * vec4<f32>(lens_origin_view, 1.0)).xyz;
+        ray.dir = normalize((camera.inv_view * vec4<f32>(new_dir_view, 0.0)).xyz);
+    } else {
+        // Pinhole camera (no DoF)
+        ray.origin = (camera.inv_view * vec4<f32>(origin_view, 1.0)).xyz;
+        ray.dir = normalize((camera.inv_view * vec4<f32>(dir_view, 0.0)).xyz);
+    }
+    
     return ray;
 }
 
@@ -422,7 +453,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Sub-pixel jitter for AA
     let jx = rand(&rng);
     let jy = rand(&rng);
-    var ray = gen_ray(f32(px.x), f32(px.y), vec2<f32>(f32(w), f32(h)), jx, jy);
+    var ray = gen_ray(f32(px.x), f32(px.y), vec2<f32>(f32(w), f32(h)), jx, jy, &rng);
 
     // Path trace with multiple bounces
     var throughput = vec3<f32>(1.0);

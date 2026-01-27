@@ -23,7 +23,7 @@ const BLIT_WGSL: &str = include_str!("blit.wgsl");
 
 /// Camera uniform matching the WGSL Camera struct.
 /// WGSL alignment: vec3<f32> aligns to 16 bytes, so position needs padding.
-/// Total size must be 176 bytes to match WGSL struct.
+/// Total size must be 192 bytes to match WGSL struct.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct PtCameraUniform {
@@ -41,11 +41,17 @@ pub struct PtCameraUniform {
     pub max_bounces: u32,
     /// Maximum transmission/glass depth. Offset 152, 4 bytes.
     pub max_transmission_depth: u32,
-    /// Padding. Offset 156, 4 bytes.
-    pub _pad1: u32,
-    /// Final padding (vec3<u32> in WGSL = 16 bytes). Offset 160, 16 bytes.
+    /// DoF enabled (0 or 1). Offset 156, 4 bytes.
+    pub dof_enabled: u32,
+    /// Aperture radius for DoF. Offset 160, 4 bytes.
+    pub aperture: f32,
+    /// Focus distance for DoF. Offset 164, 4 bytes.
+    pub focus_distance: f32,
+    /// Padding. Offset 168, 8 bytes.
+    pub _pad1: [u32; 2],
+    /// Final padding. Offset 176, 16 bytes.
     pub _pad2: [u32; 4],
-    // Total: 176 bytes
+    // Total: 192 bytes
 }
 
 /// Workgroup size (must match @workgroup_size in WGSL).
