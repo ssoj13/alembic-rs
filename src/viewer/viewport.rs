@@ -25,6 +25,8 @@ pub struct Viewport {
     pub scene_camera: Option<SceneCameraOverride>,
     /// Pending Ctrl+Click focus pick (normalized 0-1 coords)
     pending_focus_pick: Option<(f32, f32)>,
+    /// Pending Ctrl+RightClick object pick (normalized 0-1 coords)
+    pending_object_pick: Option<(f32, f32)>,
 }
 
 struct RenderTexture {
@@ -44,6 +46,7 @@ impl Viewport {
             last_size: Vec2::ZERO,
             scene_camera: None,
             pending_focus_pick: None,
+            pending_object_pick: None,
         }
     }
 
@@ -110,7 +113,7 @@ impl Viewport {
 
                 // Render scene
                 if let (Some(renderer), Some(rt)) = (&mut self.renderer, &self.render_texture) {
-                    renderer.render(&rt.view, width, height, self.camera.distance());
+                    renderer.render(&rt.view, width, height, self.camera.distance(), self.camera.near, self.camera.far);
                 }
 
                 // Draw the rendered texture
@@ -193,8 +196,11 @@ impl Viewport {
     fn handle_input(&mut self, ui: &Ui, response: &Response) {
         let input = ui.input(|i| i.clone());
 
-        // Orbit with left mouse drag
-        if response.dragged_by(egui::PointerButton::Primary) && !input.modifiers.shift {
+        // Ctrl+LMB drag = continuous focus sampling (disable orbit)
+        let ctrl_held = input.modifiers.ctrl;
+        
+        // Orbit with left mouse drag (only when Ctrl not held)
+        if response.dragged_by(egui::PointerButton::Primary) && !input.modifiers.shift && !ctrl_held {
             let delta = response.drag_delta();
             self.camera.orbit(delta.x, delta.y);
         }
@@ -230,14 +236,27 @@ impl Viewport {
             self.camera.focus(glam::Vec3::ZERO, 5.0);
         }
         
-        // Ctrl+Click to set DoF focus point
-        if response.clicked() && input.modifiers.ctrl {
-            if let Some(pos) = response.interact_pointer_pos() {
-                // Store the click position relative to the viewport
+        // Ctrl+LMB = continuous focus sampling (click or drag)
+        if ctrl_held && (response.clicked() || response.dragged_by(egui::PointerButton::Primary)) {
+            if let Some(pos) = input.pointer.hover_pos() {
                 let rect = response.rect;
-                let rel_x = (pos.x - rect.left()) / rect.width();
-                let rel_y = (pos.y - rect.top()) / rect.height();
-                self.pending_focus_pick = Some((rel_x, rel_y));
+                if rect.contains(pos) {
+                    let rel_x = (pos.x - rect.left()) / rect.width();
+                    let rel_y = (pos.y - rect.top()) / rect.height();
+                    self.pending_focus_pick = Some((rel_x, rel_y));
+                }
+            }
+        }
+        
+        // Shift+LMB = object picking (selection)
+        if input.modifiers.shift && response.clicked_by(egui::PointerButton::Primary) {
+            if let Some(pos) = input.pointer.hover_pos() {
+                let rect = response.rect;
+                if rect.contains(pos) {
+                    let rel_x = (pos.x - rect.left()) / rect.width();
+                    let rel_y = (pos.y - rect.top()) / rect.height();
+                    self.pending_object_pick = Some((rel_x, rel_y));
+                }
             }
         }
     }
@@ -245,6 +264,11 @@ impl Viewport {
     /// Take pending focus pick request (normalized 0-1 coordinates)
     pub fn take_focus_pick(&mut self) -> Option<(f32, f32)> {
         self.pending_focus_pick.take()
+    }
+    
+    /// Take pending object pick request (normalized 0-1 coordinates)
+    pub fn take_object_pick(&mut self) -> Option<(f32, f32)> {
+        self.pending_object_pick.take()
     }
     
     /// Get current render texture size (width, height)

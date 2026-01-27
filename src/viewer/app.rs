@@ -190,6 +190,11 @@ impl ViewerApp {
         let ray_end = (inv_view * glam::Vec4::new(far_point.x, far_point.y, far_point.z, 1.0)).truncate();
         let ray_dir = (ray_end - ray_origin).normalize();
         
+        // Debug: print camera and ray info
+        eprintln!("DEBUG: click=({:.2},{:.2}) ndc=({:.2},{:.2})", rel_x, rel_y, ndc_x, ndc_y);
+        eprintln!("DEBUG: ray_origin=({:.1},{:.1},{:.1}) ray_dir=({:.3},{:.3},{:.3})",
+            ray_origin.x, ray_origin.y, ray_origin.z, ray_dir.x, ray_dir.y, ray_dir.z);
+        
         // Try to intersect with actual geometry first
         if let Some(renderer) = &self.viewport.renderer {
             if let Some(hit) = Self::ray_scene_intersect(renderer, ray_origin, ray_dir) {
@@ -200,11 +205,14 @@ impl ViewerApp {
                 
                 // Extract short name from path (last component)
                 let short_name = hit.mesh_name.rsplit('/').next().unwrap_or(&hit.mesh_name);
-                println!("PICK: \"{}\" at ({:.1}, {:.1}, {:.1}), z_depth={:.2}",
+                eprintln!("PICK: \"{}\" at ({:.1}, {:.1}, {:.1}), z_depth={:.2}",
                     short_name, hit.point.x, hit.point.y, hit.point.z, z_depth);
                 return z_depth;
             } else {
-                println!("PICK: MISS");
+                // No geometry hit - focus at infinity (environment/sky)
+                let infinity_focus = 1000.0; // Large distance for "infinity" focus
+                eprintln!("PICK: <sky/environment>, z_depth=infinity ({})", infinity_focus);
+                return infinity_focus;
             }
         }
         
@@ -239,15 +247,19 @@ impl ViewerApp {
         ray_dir: Vec3,
         v0: Vec3, v1: Vec3, v2: Vec3,
     ) -> Option<f32> {
-        const EPSILON: f32 = 1e-6;
-        
+        // Use a relative epsilon based on triangle size for better precision at distance
         let edge1 = v1 - v0;
         let edge2 = v2 - v0;
+        
+        // Estimate triangle scale for adaptive epsilon
+        let tri_scale = edge1.length().max(edge2.length()).max(1e-6);
+        let epsilon = 1e-6 * tri_scale;
+        
         let h = ray_dir.cross(edge2);
         let a = edge1.dot(h);
         
         // Double-sided: accept both front and back faces
-        if a.abs() < EPSILON {
+        if a.abs() < epsilon {
             return None; // Ray parallel to triangle
         }
         
@@ -255,20 +267,21 @@ impl ViewerApp {
         let s = ray_origin - v0;
         let u = f * s.dot(h);
         
-        if u < 0.0 || u > 1.0 {
+        // Slightly relaxed bounds for numerical stability
+        if u < -1e-5 || u > 1.0 + 1e-5 {
             return None;
         }
         
         let q = s.cross(edge1);
         let v = f * ray_dir.dot(q);
         
-        if v < 0.0 || u + v > 1.0 {
+        if v < -1e-5 || u + v > 1.0 + 1e-5 {
             return None;
         }
         
         let t = f * edge2.dot(q);
         
-        if t > EPSILON {
+        if t > 1e-6 {
             Some(t)
         } else {
             None
@@ -284,9 +297,10 @@ impl ViewerApp {
         let mut closest: Option<PickResult> = None;
         let mut mesh_count = 0;
         let mut tri_count = 0;
+        let mut skipped_meshes: Vec<String> = Vec::new();
         
-        // Helper to test a mesh
-        let mut test_mesh = |name: &str, mesh: &super::renderer::SceneMesh| {
+        // Test scene meshes
+        for (path, mesh) in renderer.meshes.iter() {
             if let (Some(vertices), Some(indices)) = (&mesh.base_vertices, &mesh.base_indices) {
                 mesh_count += 1;
                 let transform = mesh.transform;
@@ -305,29 +319,87 @@ impl ViewerApp {
                             closest = Some(PickResult {
                                 t,
                                 point: ray_origin + ray_dir * t,
-                                mesh_name: name.to_string(),
+                                mesh_name: path.to_string(),
+                            });
+                        }
+                    }
+                }
+            } else {
+                skipped_meshes.push(path.clone());
+            }
+        }
+        
+        // Test floor mesh
+        if let Some(floor) = &renderer.floor_mesh {
+            if let (Some(vertices), Some(indices)) = (&floor.base_vertices, &floor.base_indices) {
+                mesh_count += 1;
+                let transform = floor.transform;
+                
+                for tri in indices.chunks(3) {
+                    if tri.len() < 3 { continue; }
+                    tri_count += 1;
+                    
+                    let v0 = transform.transform_point3(Vec3::from(vertices[tri[0] as usize].position));
+                    let v1 = transform.transform_point3(Vec3::from(vertices[tri[1] as usize].position));
+                    let v2 = transform.transform_point3(Vec3::from(vertices[tri[2] as usize].position));
+                    
+                    if let Some(t) = Self::ray_triangle_intersect(ray_origin, ray_dir, v0, v1, v2) {
+                        let dominated = closest.as_ref().map_or(false, |c| c.t <= t);
+                        if !dominated {
+                            closest = Some(PickResult {
+                                t,
+                                point: ray_origin + ray_dir * t,
+                                mesh_name: "_FLOOR_".to_string(),
                             });
                         }
                     }
                 }
             }
-        };
-        
-        // Test scene meshes
-        for (path, mesh) in renderer.meshes.iter() {
-            test_mesh(path, mesh);
         }
         
-        // Test floor mesh
-        if let Some(floor) = &renderer.floor_mesh {
-            test_mesh("_FLOOR_", floor);
-        }
-        
-        if closest.is_none() && mesh_count > 0 {
-            println!("  (tested {} meshes, {} tris)", mesh_count, tri_count);
-        }
+        // Debug output disabled for performance
+        // eprintln!("  Pick stats: {} meshes ({} tris), {} skipped", 
+        //     mesh_count, tri_count, skipped_meshes.len());
         
         closest
+    }
+    
+    /// Calculate object pick from screen coordinates using CPU ray-triangle intersection
+    fn calculate_object_pick(
+        renderer: &super::renderer::Renderer,
+        orbit_camera: &super::camera::OrbitCamera,
+        scene_camera: Option<&super::viewport::SceneCameraOverride>,
+        rel_x: f32,
+        rel_y: f32,
+        aspect: f32,
+    ) -> Option<PickResult> {
+        // Get camera matrices
+        let (view, proj): (Mat4, Mat4) = if let Some(sc) = scene_camera {
+            let proj = Mat4::perspective_rh(sc.fov_y, aspect, sc.near, sc.far);
+            (sc.view, proj)
+        } else {
+            (orbit_camera.view_matrix(), orbit_camera.projection_matrix(aspect))
+        };
+        
+        let inv_view_proj = (proj * view).inverse();
+        
+        // Convert screen coords to NDC
+        let ndc_x = rel_x * 2.0 - 1.0;
+        let ndc_y = 1.0 - rel_y * 2.0;
+        
+        // Unproject near and far points using combined inverse view-proj
+        let near_ndc = glam::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
+        let far_ndc = glam::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+        
+        let near_world4 = inv_view_proj * near_ndc;
+        let near_world = near_world4.truncate() / near_world4.w;
+        let far_world4 = inv_view_proj * far_ndc;
+        let far_world = far_world4.truncate() / far_world4.w;
+        
+        let ray_origin = near_world;
+        let ray_dir = (far_world - near_world).normalize();
+        
+        Self::ray_scene_intersect(renderer, ray_origin, ray_dir)
     }
     
     fn hash_scene_object(path: &str, transform: Mat4, data_hash: u64) -> u64 {
@@ -2497,12 +2569,30 @@ impl eframe::App for ViewerApp {
             self.viewport.show(ui, render_state);
         });
 
-        // Handle Ctrl+Click focus pick for DoF
+        // Handle Ctrl+Click focus pick for DoF - use CPU ray-triangle intersection
         if let Some((rel_x, rel_y)) = self.viewport.take_focus_pick() {
-            if self.settings.path_tracing && self.settings.pt_dof_enabled {
-                // Calculate focus distance from click position
-                if let Some(bounds) = &self.scene_bounds {
-                    let focus_dist = self.calculate_focus_distance(rel_x, rel_y, bounds);
+            if self.settings.pt_dof_enabled {
+                let size = self.viewport.render_texture_size();
+                if let (Some(renderer), Some((w, h))) = (&self.viewport.renderer, size) {
+                    let aspect = w as f32 / h.max(1) as f32;
+                    // Use CPU ray-triangle intersection for focus picking
+                    let result = Self::calculate_object_pick(
+                        renderer,
+                        &self.viewport.camera,
+                        self.viewport.scene_camera.as_ref(),
+                        rel_x,
+                        rel_y,
+                        aspect,
+                    );
+                    let focus_dist = if let Some(pick) = result {
+                        eprintln!("FOCUS PICK: \"{}\" at ({:.1}, {:.1}, {:.1}), z_depth={:.2}",
+                            pick.mesh_name, pick.point.x, pick.point.y, pick.point.z, pick.t);
+                        pick.t  // Use ray distance as focus distance
+                    } else {
+                        eprintln!("FOCUS PICK: <sky>, setting infinity");
+                        1000.0  // Infinity focus for background
+                    };
+                    
                     self.settings.pt_focus_distance = focus_dist;
                     if let Some(renderer) = &mut self.viewport.renderer {
                         renderer.pt_focus_distance = focus_dist;
@@ -2511,6 +2601,32 @@ impl eframe::App for ViewerApp {
                         }
                     }
                     self.settings.save();
+                }
+            }
+        }
+        
+        // Handle Ctrl+RightClick object pick
+        if let Some((rel_x, rel_y)) = self.viewport.take_object_pick() {
+            let size = self.viewport.render_texture_size();
+            if let (Some(renderer), Some((w, h))) = (&self.viewport.renderer, size) {
+                let aspect = w as f32 / h.max(1) as f32;
+                // Use CPU ray-triangle intersection to find object
+                let result = Self::calculate_object_pick(
+                    renderer,
+                    &self.viewport.camera,
+                    self.viewport.scene_camera.as_ref(),
+                    rel_x,
+                    rel_y,
+                    aspect,
+                );
+                if let Some(pick) = result {
+                    eprintln!("OBJECT PICK: \"{}\" at ({:.1}, {:.1}, {:.1}), z_depth={:.2}",
+                        pick.mesh_name, pick.point.x, pick.point.y, pick.point.z, pick.t);
+                    // TODO: Select object in outliner
+                    self.selected_object = Some(pick.mesh_name.clone());
+                } else {
+                    eprintln!("OBJECT PICK: <miss>");
+                    self.selected_object = None;
                 }
             }
         }
