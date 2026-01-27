@@ -74,6 +74,8 @@ pub struct ConvertedMesh {
     pub base_color: Option<Vec3>,
     pub metallic: Option<f32>,
     pub roughness: Option<f32>,
+    pub transmission: Option<f32>,
+    pub specular_ior: Option<f32>,
     // Data for dynamic smooth normal recalculation
     pub smooth_data: Option<SmoothNormalData>,
 }
@@ -175,6 +177,10 @@ pub struct SceneMaterial {
     pub metallic: Option<f32>,
     /// Roughness (0.0 = mirror, 1.0 = diffuse)
     pub roughness: Option<f32>,
+    /// Transmission weight (0.0 = opaque, 1.0 = fully transmissive)
+    pub transmission: Option<f32>,
+    /// Specular IOR (index of refraction, e.g., 1.5 for glass)
+    pub specular_ior: Option<f32>,
     /// Path to parent material (for inheritance)
     pub inherits_path: Option<String>,
     /// Targets (e.g., "arnold", "renderman")

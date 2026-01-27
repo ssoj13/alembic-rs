@@ -7,8 +7,9 @@ use alembic::ogawa::writer::{
     OArchive, OObject, OPolyMesh, OPolyMeshSample, OXform, OXformSample,
     OSubD, OSubDSample, OCurves, OCurvesSample, OPoints, OPointsSample,
     OCamera, ONuPatch, ONuPatchSample, OLight, OFaceSet, OFaceSetSample,
-    OProperty, OPropertyData,
+    OProperty, OPropertyData, OMaterial, OMaterialSample,
 };
+use alembic::material::{ShaderParam, ShaderParamValue};
 use alembic::util::PlainOldDataType;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -184,6 +185,17 @@ fn main() {
             cmd_copy2(filtered_args[1], filtered_args[2]);
         }
         
+        // Materialize command - add materials to meshes missing them
+        "materialize" | "mat" => {
+            if filtered_args.len() < 2 {
+                eprintln!("Error: missing input file");
+                eprintln!("Usage: alembic materialize <input.abc>");
+                eprintln!("       Output will be <input>_mat.abc");
+                std::process::exit(1);
+            }
+            cmd_materialize(filtered_args[1]);
+        }
+        
         // Help
         "help" | "h" | "-h" | "--help" => print_help(),
         
@@ -216,6 +228,7 @@ fn print_help() {
     println!("    m, meta   <file> [pattern]    Show object/property metadata");
     println!("    c, copy   <in> <out>          Copy archive (Xform + PolyMesh only)");
     println!("    c2, copy2 <in> <out>          Full re-write using our writer (ALL types)");
+    println!("    mat, materialize <file>       Add materials to meshes (outputs <file>_mat.abc)");
     println!("    h, help                       Show this help");
     println!();
     println!("OPTIONS:");
@@ -1615,4 +1628,453 @@ fn copy2_faceset(
         }
     }
     Some(out_obj)
+}
+
+// ============================================================================
+// materialize - Add materials to meshes that don't have them
+// ============================================================================
+
+/// Material type for assignment
+#[derive(Clone, Copy, Debug)]
+enum MaterialType {
+    Glass,
+    Metal,
+    Plastic,
+    Leather,
+    Rubber,
+}
+
+impl MaterialType {
+    fn name(&self) -> &'static str {
+        match self {
+            MaterialType::Glass => "glass",
+            MaterialType::Metal => "metal",
+            MaterialType::Plastic => "plastic",
+            MaterialType::Leather => "leather",
+            MaterialType::Rubber => "rubber",
+        }
+    }
+    
+    fn all() -> &'static [MaterialType] {
+        &[
+            MaterialType::Glass,
+            MaterialType::Metal,
+            MaterialType::Plastic,
+            MaterialType::Leather,
+            MaterialType::Rubber,
+        ]
+    }
+}
+
+/// Determine material type from object path using heuristics
+fn guess_material_from_path(path: &str) -> MaterialType {
+    let lower = path.to_lowercase();
+    
+    // Glass indicators
+    if lower.contains("glass") || lower.contains("windshield") || lower.contains("window") {
+        return MaterialType::Glass;
+    }
+    
+    // Metal indicators  
+    if lower.contains("chrome") || lower.contains("metal") || lower.contains("rim") 
+        || lower.contains("nuts") || lower.contains("bolt") || lower.contains("steel")
+        || lower.contains("aluminum") || lower.contains("iron") || lower.contains("brake_disc")
+        || lower.contains("baraban") {
+        return MaterialType::Metal;
+    }
+    
+    // Rubber indicators
+    if lower.contains("tire") || lower.contains("tyre") || lower.contains("rubber") {
+        return MaterialType::Rubber;
+    }
+    
+    // Leather indicators
+    if lower.contains("leather") || lower.contains("seat") || lower.contains("interior") {
+        return MaterialType::Leather;
+    }
+    
+    // Plastic indicators
+    if lower.contains("plastic") || lower.contains("grill") || lower.contains("bumper") {
+        return MaterialType::Plastic;
+    }
+    
+    // Paint/body -> metal with color
+    if lower.contains("paint") || lower.contains("body") {
+        return MaterialType::Metal;
+    }
+    
+    // Default: random based on path hash
+    let hash: u32 = path.bytes().fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+    let types = MaterialType::all();
+    types[(hash as usize) % types.len()]
+}
+
+/// Create material presets
+fn create_material_preset(mat_type: MaterialType) -> OMaterial {
+    let mut mat = OMaterial::new(mat_type.name());
+    let mut sample = OMaterialSample::new();
+    
+    // Use "arnold" target with "surface" shader type (standard_surface)
+    sample.add_shader("arnold", "surface", "standard_surface");
+    
+    match mat_type {
+        MaterialType::Glass => {
+            // Transparent glass
+            sample.add_param("arnold", "surface", ShaderParam::new("base_color", 
+                ShaderParamValue::Color3(glam::vec3(0.9, 0.95, 1.0))));
+            sample.add_param("arnold", "surface", ShaderParam::new("base", 
+                ShaderParamValue::Float(0.0)));
+            sample.add_param("arnold", "surface", ShaderParam::new("specular", 
+                ShaderParamValue::Float(1.0)));
+            sample.add_param("arnold", "surface", ShaderParam::new("specular_roughness", 
+                ShaderParamValue::Float(0.0)));
+            sample.add_param("arnold", "surface", ShaderParam::new("transmission", 
+                ShaderParamValue::Float(0.95)));
+            sample.add_param("arnold", "surface", ShaderParam::new("transmission_color", 
+                ShaderParamValue::Color3(glam::vec3(0.9, 0.95, 1.0))));
+            sample.add_param("arnold", "surface", ShaderParam::new("specular_IOR", 
+                ShaderParamValue::Float(1.5)));
+        }
+        MaterialType::Metal => {
+            // Shiny metal
+            sample.add_param("arnold", "surface", ShaderParam::new("base_color", 
+                ShaderParamValue::Color3(glam::vec3(0.8, 0.8, 0.85))));
+            sample.add_param("arnold", "surface", ShaderParam::new("base", 
+                ShaderParamValue::Float(1.0)));
+            sample.add_param("arnold", "surface", ShaderParam::new("metalness", 
+                ShaderParamValue::Float(1.0)));
+            sample.add_param("arnold", "surface", ShaderParam::new("specular", 
+                ShaderParamValue::Float(1.0)));
+            sample.add_param("arnold", "surface", ShaderParam::new("specular_roughness", 
+                ShaderParamValue::Float(0.3)));
+        }
+        MaterialType::Plastic => {
+            // Dark plastic
+            sample.add_param("arnold", "surface", ShaderParam::new("base_color", 
+                ShaderParamValue::Color3(glam::vec3(0.2, 0.2, 0.22))));
+            sample.add_param("arnold", "surface", ShaderParam::new("base", 
+                ShaderParamValue::Float(1.0)));
+            sample.add_param("arnold", "surface", ShaderParam::new("metalness", 
+                ShaderParamValue::Float(0.0)));
+            sample.add_param("arnold", "surface", ShaderParam::new("specular", 
+                ShaderParamValue::Float(0.5)));
+            sample.add_param("arnold", "surface", ShaderParam::new("specular_roughness", 
+                ShaderParamValue::Float(0.4)));
+            sample.add_param("arnold", "surface", ShaderParam::new("specular_IOR", 
+                ShaderParamValue::Float(1.5)));
+        }
+        MaterialType::Leather => {
+            // Brown leather
+            sample.add_param("arnold", "surface", ShaderParam::new("base_color", 
+                ShaderParamValue::Color3(glam::vec3(0.15, 0.08, 0.05))));
+            sample.add_param("arnold", "surface", ShaderParam::new("base", 
+                ShaderParamValue::Float(1.0)));
+            sample.add_param("arnold", "surface", ShaderParam::new("metalness", 
+                ShaderParamValue::Float(0.0)));
+            sample.add_param("arnold", "surface", ShaderParam::new("specular", 
+                ShaderParamValue::Float(0.3)));
+            sample.add_param("arnold", "surface", ShaderParam::new("specular_roughness", 
+                ShaderParamValue::Float(0.7)));
+            sample.add_param("arnold", "surface", ShaderParam::new("specular_IOR", 
+                ShaderParamValue::Float(1.4)));
+        }
+        MaterialType::Rubber => {
+            // Black rubber
+            sample.add_param("arnold", "surface", ShaderParam::new("base_color", 
+                ShaderParamValue::Color3(glam::vec3(0.05, 0.05, 0.05))));
+            sample.add_param("arnold", "surface", ShaderParam::new("base", 
+                ShaderParamValue::Float(1.0)));
+            sample.add_param("arnold", "surface", ShaderParam::new("metalness", 
+                ShaderParamValue::Float(0.0)));
+            sample.add_param("arnold", "surface", ShaderParam::new("specular", 
+                ShaderParamValue::Float(0.1)));
+            sample.add_param("arnold", "surface", ShaderParam::new("specular_roughness", 
+                ShaderParamValue::Float(0.9)));
+            sample.add_param("arnold", "surface", ShaderParam::new("specular_IOR", 
+                ShaderParamValue::Float(1.5)));
+        }
+    }
+    
+    mat.set_sample(sample);
+    mat
+}
+
+/// Collect all mesh paths that need materials
+fn collect_meshes_needing_materials(obj: &IObject, meshes: &mut Vec<String>) {
+    let schema = obj.getMetaData().get("schema").unwrap_or_default();
+    
+    if schema.contains("PolyMesh") || schema.contains("SubD") {
+        // Check if already has material assignment
+        let has_mat = alembic::material::has_material_assignment(obj);
+        if !has_mat {
+            meshes.push(obj.getFullName().to_string());
+        }
+    }
+    
+    // Recurse into children
+    for child in obj.getChildren() {
+        collect_meshes_needing_materials(&child, meshes);
+    }
+}
+
+/// Copy object tree, adding material assignments to meshes
+fn materialize_object(
+    obj: &IObject,
+    archive: &AbcIArchive,
+    ts_map: &std::collections::HashMap<u32, u32>,
+    mesh_materials: &std::collections::HashMap<String, MaterialType>,
+    stats: &mut CopyStats,
+) -> Option<OObject> {
+    let name = obj.getName();
+    let schema = obj.getMetaData().get("schema").unwrap_or_default();
+    let full_name = obj.getFullName();
+    
+    // Handle PolyMesh with material assignment
+    if schema.contains("PolyMesh") {
+        if let Some(mesh) = IPolyMesh::new(obj) {
+            stats.polymesh += 1;
+            let mut out_mesh = OPolyMesh::new(name);
+            
+            let ts_idx = mesh.getTimeSamplingIndex();
+            out_mesh.set_time_sampling(map_ts(ts_map, ts_idx));
+            
+            for i in 0..mesh.getNumSamples() {
+                if let Ok(sample) = mesh.getSample(i) {
+                    let mut out_sample = OPolyMeshSample::new(
+                        sample.positions.clone(),
+                        sample.face_counts.clone(),
+                        sample.face_indices.clone(),
+                    );
+                    out_sample.velocities = sample.velocities.clone();
+                    out_sample.normals = sample.normals.clone();
+                    out_sample.normals_is_simple_array = sample.normals_is_simple_array;
+                    out_sample.uvs = sample.uvs.clone();
+                    out_sample.self_bounds = sample.self_bounds;
+                    out_mesh.add_sample(&out_sample);
+                }
+            }
+            
+            let mut out_obj = out_mesh.build();
+            let props = obj.getProperties();
+            copy_properties_from(&props, &mut out_obj.properties, ts_map);
+            
+            // Add material assignment if this mesh needs one
+            if let Some(mat_type) = mesh_materials.get(full_name) {
+                let mat_path = format!("/materials/{}", mat_type.name());
+                add_material_assignment(&mut out_obj, &mat_path);
+            }
+            
+            for child in obj.getChildren() {
+                if let Some(out_child) = materialize_object(&child, archive, ts_map, mesh_materials, stats) {
+                    out_obj.add_child(out_child);
+                }
+            }
+            return Some(out_obj);
+        }
+    }
+    
+    // Handle SubD with material assignment
+    if schema.contains("SubD") {
+        if let Some(sd) = ISubD::new(obj) {
+            stats.subd += 1;
+            let mut out_sd = OSubD::new(name);
+            
+            let ts_idx = sd.getTimeSamplingIndex();
+            out_sd.set_time_sampling(map_ts(ts_map, ts_idx));
+            
+            for i in 0..sd.getNumSamples() {
+                if let Ok(sample) = sd.getSample(i) {
+                    let mut out_sample = OSubDSample::new(
+                        sample.positions.clone(),
+                        sample.face_counts.clone(),
+                        sample.face_indices.clone(),
+                    );
+                    out_sample.velocities = sample.velocities.clone();
+                    out_sample.uvs = sample.uvs.clone();
+                    out_sd.add_sample(&out_sample);
+                }
+            }
+            
+            let mut out_obj = out_sd.build();
+            let props = obj.getProperties();
+            copy_properties_from(&props, &mut out_obj.properties, ts_map);
+            
+            // Add material assignment if this mesh needs one
+            if let Some(mat_type) = mesh_materials.get(full_name) {
+                let mat_path = format!("/materials/{}", mat_type.name());
+                add_material_assignment(&mut out_obj, &mat_path);
+            }
+            
+            for child in obj.getChildren() {
+                if let Some(out_child) = materialize_object(&child, archive, ts_map, mesh_materials, stats) {
+                    out_obj.add_child(out_child);
+                }
+            }
+            return Some(out_obj);
+        }
+    }
+    
+    // Handle Xform - need to recurse with materialize_object
+    if schema.contains("Xform") {
+        if let Some(xform) = IXform::new(obj) {
+            stats.xform += 1;
+            let mut out_xform = OXform::new(name);
+            
+            let ts_idx = xform.getTimeSamplingIndex();
+            out_xform.set_time_sampling(map_ts(ts_map, ts_idx));
+            
+            for i in 0..xform.getNumSamples() {
+                if let Ok(sample) = xform.getSample(i) {
+                    out_xform.add_sample(OXformSample::from_ops(sample.ops.clone(), sample.inherits));
+                }
+            }
+            
+            let mut out_obj = out_xform.build();
+            let props = obj.getProperties();
+            copy_properties_from(&props, &mut out_obj.properties, ts_map);
+            
+            for child in obj.getChildren() {
+                if let Some(out_child) = materialize_object(&child, archive, ts_map, mesh_materials, stats) {
+                    out_obj.add_child(out_child);
+                }
+            }
+            return Some(out_obj);
+        }
+    }
+    
+    // For other object types, use the standard copy2 logic but recurse with materialize_object
+    let mut out_obj = OObject::new(name);
+    out_obj.meta_data = obj.getMetaData().clone();
+    let props = obj.getProperties();
+    copy_properties_from(&props, &mut out_obj.properties, ts_map);
+    
+    for child in obj.getChildren() {
+        if let Some(out_child) = materialize_object(&child, archive, ts_map, mesh_materials, stats) {
+            out_obj.add_child(out_child);
+        }
+    }
+    Some(out_obj)
+}
+
+/// Add material assignment property to an object
+fn add_material_assignment(obj: &mut OObject, material_path: &str) {
+    // Create .material compound property
+    let mut mat_compound = OProperty::compound(".material");
+    
+    // Add "assign" scalar property with the material path
+    let mut assign_prop = OProperty::scalar(
+        "assign",
+        alembic::util::DataType::new(PlainOldDataType::String, 1),
+    );
+    let mut path_bytes = material_path.as_bytes().to_vec();
+    path_bytes.push(0); // null terminator
+    assign_prop.add_scalar_sample(&path_bytes);
+    
+    if let OPropertyData::Compound(children) = &mut mat_compound.data {
+        children.push(assign_prop);
+    }
+    
+    obj.properties.push(mat_compound);
+}
+
+fn cmd_materialize(input: &str) {
+    // Generate output filename
+    let input_path = Path::new(input);
+    let stem = input_path.file_stem().unwrap_or_default().to_string_lossy();
+    let output = input_path.with_file_name(format!("{}_mat.abc", stem));
+    let output_str = output.to_string_lossy().to_string();
+    
+    info!("Materialize: {} -> {}", input, output_str);
+    
+    // Open input archive
+    let archive = match AbcIArchive::open(input) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Failed to open {}: {}", input, e);
+            std::process::exit(1);
+        }
+    };
+    
+    // Collect meshes needing materials
+    let root = archive.getTop();
+    let mut meshes_needing_mats = Vec::new();
+    for child in root.getChildren() {
+        collect_meshes_needing_materials(&child, &mut meshes_needing_mats);
+    }
+    
+    println!("Found {} meshes needing materials", meshes_needing_mats.len());
+    
+    // Assign materials based on heuristics
+    let mut mesh_materials: std::collections::HashMap<String, MaterialType> = std::collections::HashMap::new();
+    let mut mat_counts: std::collections::HashMap<&'static str, usize> = std::collections::HashMap::new();
+    
+    for path in &meshes_needing_mats {
+        let mat_type = guess_material_from_path(path);
+        mesh_materials.insert(path.clone(), mat_type);
+        *mat_counts.entry(mat_type.name()).or_insert(0) += 1;
+    }
+    
+    println!("Material assignments:");
+    for mat_type in MaterialType::all() {
+        if let Some(&count) = mat_counts.get(mat_type.name()) {
+            println!("  {}: {} meshes", mat_type.name(), count);
+        }
+    }
+    
+    // Create output archive
+    let mut out_archive = match OArchive::create(&output_str) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Failed to create {}: {}", output_str, e);
+            std::process::exit(1);
+        }
+    };
+    
+    // Copy archive metadata
+    out_archive.set_archive_metadata(archive.getArchiveMetaData().clone());
+    out_archive.set_library_version(archive.getArchiveVersion());
+    out_archive.set_indexed_metadata(archive.getIndexedMetaData());
+    
+    // Copy time samplings
+    let mut ts_map: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+    ts_map.insert(0, 0);
+    for i in 1..archive.getNumTimeSamplings() {
+        if let Some(ts) = archive.getTimeSampling(i) {
+            let new_idx = out_archive.addTimeSampling(ts.clone());
+            ts_map.insert(i as u32, new_idx);
+        }
+    }
+    
+    // Create root and add materials library
+    let mut out_root = OObject::new("");
+    
+    // Create /materials container with all material presets
+    let mut materials_container = OObject::new("materials");
+    for mat_type in MaterialType::all() {
+        if mat_counts.contains_key(mat_type.name()) {
+            let mat = create_material_preset(*mat_type);
+            materials_container.add_child(mat.build());
+        }
+    }
+    out_root.add_child(materials_container);
+    
+    // Copy object hierarchy with material assignments
+    let mut stats = CopyStats::default();
+    for child in root.getChildren() {
+        if let Some(out_child) = materialize_object(&child, &archive, &ts_map, &mesh_materials, &mut stats) {
+            out_root.add_child(out_child);
+        }
+    }
+    
+    // Write archive
+    if let Err(e) = out_archive.write_archive(&out_root) {
+        eprintln!("Failed to write archive: {}", e);
+        std::process::exit(1);
+    }
+    
+    println!("\nWrote: {}", output_str);
+    println!("  PolyMesh: {}", stats.polymesh);
+    println!("  SubD:     {}", stats.subd);
+    println!("  Xforms:   {}", stats.xform);
+    println!("  Materials created: {}", mat_counts.len());
 }
