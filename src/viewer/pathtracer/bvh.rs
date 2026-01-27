@@ -104,18 +104,31 @@ pub struct GpuTriangle {
     pub _pad4: u32,
 }
 
-/// Standard Surface material params for GPU (48 bytes).
+/// Standard Surface material params for GPU (144 bytes).
 ///
-/// Layout uses vec4 packing to avoid WGSL vec3 alignment issues:
-/// - `base_color_metallic`: rgb = base color, a = metallic
-/// - `emission_roughness`: rgb = emission, a = roughness
-/// - `opacity_ior_pad`: x = opacity, y = ior, zw = padding
+/// Matches StandardSurfaceParams layout from the rasterizer.
+/// All colors use vec4 packing: rgb = color, a = weight.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct GpuMaterial {
-    pub base_color_metallic: [f32; 4], // rgb=base_color, a=metallic
-    pub emission_roughness: [f32; 4],  // rgb=emission, a=roughness
-    pub opacity_ior_pad: [f32; 4],     // x=opacity, y=ior, zw=pad
+    /// Base color (rgb) and weight (a)
+    pub base_color_weight: [f32; 4],
+    /// Specular color (rgb) and weight (a)
+    pub specular_color_weight: [f32; 4],
+    /// Transmission color (rgb) and weight (a)
+    pub transmission_color_weight: [f32; 4],
+    /// Subsurface color (rgb) and weight (a)
+    pub subsurface_color_weight: [f32; 4],
+    /// Coat color (rgb) and weight (a)
+    pub coat_color_weight: [f32; 4],
+    /// Emission color (rgb) and weight (a)
+    pub emission_color_weight: [f32; 4],
+    /// Opacity (rgb), a unused
+    pub opacity: [f32; 4],
+    /// x=diffuse_roughness, y=metalness, z=specular_roughness, w=specular_IOR
+    pub params1: [f32; 4],
+    /// x=specular_anisotropy, y=coat_roughness, z=coat_IOR, w=unused
+    pub params2: [f32; 4],
 }
 
 /// CPU-side triangle used during BVH build (before GPU upload).

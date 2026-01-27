@@ -31,18 +31,30 @@ struct Triangle {
     _pad4: u32,
 };
 
-// Material matching GpuMaterial layout (48 bytes, vec4-packed).
+// Material matching GpuMaterial layout (144 bytes, vec4-packed).
+// Full Autodesk Standard Surface parameters.
 struct Material {
-    base_color_metallic: vec4<f32>,  // rgb=base_color, a=metallic
-    emission_roughness: vec4<f32>,   // rgb=emission, a=roughness
-    opacity_ior_pad: vec4<f32>,      // x=opacity, y=ior, zw=pad
+    base_color_weight: vec4<f32>,         // rgb=color, a=weight
+    specular_color_weight: vec4<f32>,     // rgb=color, a=weight
+    transmission_color_weight: vec4<f32>, // rgb=color, a=weight
+    subsurface_color_weight: vec4<f32>,   // rgb=color, a=weight
+    coat_color_weight: vec4<f32>,         // rgb=color, a=weight
+    emission_color_weight: vec4<f32>,     // rgb=color, a=weight (intensity in a)
+    opacity: vec4<f32>,                   // rgb=opacity, a=unused
+    params1: vec4<f32>,                   // x=diffuse_rough, y=metalness, z=spec_rough, w=spec_IOR
+    params2: vec4<f32>,                   // x=anisotropy, y=coat_rough, z=coat_IOR, w=unused
 };
 
 struct Camera {
-    inv_view: mat4x4<f32>,
-    inv_proj: mat4x4<f32>,
-    position: vec3<f32>,
-    frame_count: u32,
+    inv_view: mat4x4<f32>,      // offset 0, 64 bytes
+    inv_proj: mat4x4<f32>,      // offset 64, 64 bytes
+    position: vec3<f32>,        // offset 128, 12 bytes
+    _pad0: u32,                 // offset 140, 4 bytes (vec3 padding)
+    frame_count: u32,           // offset 144, 4 bytes
+    max_bounces: u32,           // offset 148, 4 bytes
+    _pad1: vec2<u32>,           // offset 152, 8 bytes
+    _pad2: vec4<u32>,           // offset 160, 16 bytes
+    // Total: 176 bytes
 };
 
 struct Ray {
@@ -64,12 +76,28 @@ struct HitInfo {
 @group(0) @binding(3) var output: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(4) var<storage, read_write> accum: array<vec4<f32>>;
 @group(0) @binding(5) var<storage, read> materials: array<Material>;
+@group(0) @binding(6) var env_map: texture_2d<f32>;
+@group(0) @binding(7) var env_sampler: sampler;
+@group(0) @binding(8) var<uniform> env: EnvParams;
+
+// Environment parameters
+struct EnvParams {
+    intensity: f32,
+    rotation: f32,
+    enabled: f32,
+    _pad: f32,
+};
 
 const MAX_STACK_DEPTH: u32 = 32u;
-const MAX_BOUNCES: u32 = 4u;
 const T_MAX: f32 = 1e30;
 const EPSILON: f32 = 1e-6;
 const PI: f32 = 3.14159265359;
+
+// Sun light parameters (could be uniforms later)
+const SUN_DIR: vec3<f32> = vec3<f32>(0.5, 0.8, 0.3);  // normalized in code
+const SUN_COLOR: vec3<f32> = vec3<f32>(1.0, 0.98, 0.95);
+const SUN_INTENSITY: f32 = 5.0;
+const SUN_ANGULAR_RADIUS: f32 = 0.00465; // ~0.53 degrees, real sun size
 
 // ---- PCG random number generator ----
 
@@ -179,6 +207,69 @@ fn trace_ray(ray: Ray) -> HitInfo {
     return best;
 }
 
+// Shadow ray: returns true if any intersection found before max_t.
+fn trace_shadow_ray(ray: Ray, max_t: f32) -> bool {
+    let inv_dir = 1.0 / ray.dir;
+
+    var stack: array<u32, MAX_STACK_DEPTH>;
+    var sp: u32 = 0u;
+    stack[0] = 0u;
+    sp = 1u;
+
+    while sp > 0u {
+        sp -= 1u;
+        let node_idx = stack[sp];
+        let node = nodes[node_idx];
+
+        if !intersect_aabb(ray, inv_dir, node, max_t) {
+            continue;
+        }
+
+        if node.count > 0u {
+            // Leaf: test triangles
+            for (var i = 0u; i < node.count; i++) {
+                let hit = intersect_tri(ray, node.left_or_first + i);
+                if hit.hit && hit.t < max_t && hit.t > EPSILON {
+                    return true; // occluded
+                }
+            }
+        } else {
+            // Internal: push children
+            if sp + 2u <= MAX_STACK_DEPTH {
+                stack[sp] = node.left_or_first + 1u;
+                sp += 1u;
+                stack[sp] = node.left_or_first;
+                sp += 1u;
+            }
+        }
+    }
+
+    return false; // not occluded
+}
+
+// Sample direction on sun disc (for soft shadows).
+fn sample_sun_direction(rng: ptr<function, u32>) -> vec3<f32> {
+    let sun_dir = normalize(SUN_DIR);
+    
+    // Build tangent frame
+    var t: vec3<f32>;
+    if abs(sun_dir.y) < 0.999 {
+        t = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), sun_dir));
+    } else {
+        t = normalize(cross(vec3<f32>(1.0, 0.0, 0.0), sun_dir));
+    }
+    let b = cross(sun_dir, t);
+    
+    // Sample uniformly on disc
+    let r1 = rand(rng);
+    let r2 = rand(rng);
+    let r = SUN_ANGULAR_RADIUS * sqrt(r1);
+    let theta = 2.0 * PI * r2;
+    
+    // Perturb direction
+    return normalize(sun_dir + r * (cos(theta) * t + sin(theta) * b));
+}
+
 // ---- Sampling ----
 
 // Cosine-weighted hemisphere sample around +Y.
@@ -274,15 +365,39 @@ fn hit_material(hit: HitInfo) -> Material {
     return materials[tri.material_id];
 }
 
-// HDR sky environment: gradient + sun disc.
+// Convert direction to equirectangular UV coordinates.
+fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
+    // Spherical coordinates: theta (azimuth), phi (elevation)
+    let theta = atan2(dir.z, dir.x);  // -PI to PI
+    let phi = asin(clamp(dir.y, -1.0, 1.0));  // -PI/2 to PI/2
+    
+    // Map to UV: u = theta/(2*PI) + 0.5, v = phi/PI + 0.5
+    var u = theta / (2.0 * PI) + 0.5 + rotation / (2.0 * PI);
+    let v = 0.5 - phi / PI;  // flip v so top is up
+    
+    // Wrap u
+    u = u - floor(u);
+    
+    return vec2<f32>(u, v);
+}
+
+// HDR sky environment: use loaded HDR map or fallback to gradient.
 fn sky_color(dir: vec3<f32>) -> vec3<f32> {
-    let t = dir.y * 0.5 + 0.5;
-    let sky = mix(vec3<f32>(0.7, 0.75, 0.8), vec3<f32>(0.4, 0.6, 1.0), t);
-    let sun_dir = normalize(vec3<f32>(0.5, 0.8, 0.3));
-    let sun_dot = max(dot(dir, sun_dir), 0.0);
-    let sun = pow(sun_dot, 256.0) * vec3<f32>(10.0, 9.0, 7.0);
-    let sun_glow = pow(sun_dot, 8.0) * vec3<f32>(0.3, 0.25, 0.15);
-    return sky + sun + sun_glow;
+    if env.enabled > 0.5 {
+        // Sample HDR environment map
+        let uv = dir_to_equirect_uv(dir, env.rotation);
+        let color = textureSampleLevel(env_map, env_sampler, uv, 0.0).rgb;
+        return color * env.intensity;
+    } else {
+        // Fallback: procedural gradient + sun
+        let t = dir.y * 0.5 + 0.5;
+        let sky = mix(vec3<f32>(0.7, 0.75, 0.8), vec3<f32>(0.4, 0.6, 1.0), t);
+        let sun_dir = normalize(vec3<f32>(0.5, 0.8, 0.3));
+        let sun_dot = max(dot(dir, sun_dir), 0.0);
+        let sun = pow(sun_dot, 256.0) * vec3<f32>(10.0, 9.0, 7.0);
+        let sun_glow = pow(sun_dot, 8.0) * vec3<f32>(0.3, 0.25, 0.15);
+        return sky + sun + sun_glow;
+    }
 }
 
 // ---- Path tracing kernel ----
@@ -312,7 +427,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var throughput = vec3<f32>(1.0);
     var radiance = vec3<f32>(0.0);
 
-    for (var bounce = 0u; bounce <= MAX_BOUNCES; bounce++) {
+    for (var bounce = 0u; bounce <= camera.max_bounces; bounce++) {
         let hit = trace_ray(ray);
 
         if !hit.hit {
@@ -331,12 +446,21 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             normal = -normal;
         }
 
-        // Unpack material fields
-        let base_color = mat.base_color_metallic.rgb;
-        let metallic = mat.base_color_metallic.a;
-        let emission = mat.emission_roughness.rgb;
-        let roughness = mat.emission_roughness.a;
-        let ior = mat.opacity_ior_pad.y;
+        // Unpack material fields (Standard Surface)
+        let base_color = mat.base_color_weight.rgb;
+        let base_weight = mat.base_color_weight.a;
+        let spec_color = mat.specular_color_weight.rgb;
+        let spec_weight = mat.specular_color_weight.a;
+        let transmission_color = mat.transmission_color_weight.rgb;
+        let transmission_weight = mat.transmission_color_weight.a;
+        let coat_color = mat.coat_color_weight.rgb;
+        let coat_weight = mat.coat_color_weight.a;
+        let emission = mat.emission_color_weight.rgb * mat.emission_color_weight.a;
+        let metallic = mat.params1.y;
+        let roughness = mat.params1.z;
+        let ior = mat.params1.w;
+        let coat_roughness = mat.params2.y;
+        let coat_ior = mat.params2.z;
 
         // Add emission
         radiance += throughput * emission;
@@ -350,23 +474,112 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             throughput /= p_continue;
         }
 
-        // Metallic workflow: F0 for dielectrics vs metals
-        let f0_dielectric = vec3<f32>(pow((ior - 1.0) / (ior + 1.0), 2.0));
-        let f0 = mix(f0_dielectric, base_color, metallic);
-
-        let alpha = roughness * roughness;
         let v_dir = -ray.dir; // view direction (toward camera)
         let ndotv = max(dot(normal, v_dir), EPSILON);
-
-        // Decide diffuse vs specular via Fresnel-weighted probability
-        let fresnel_estimate = fresnel_schlick(ndotv, f0);
-        let spec_weight = (fresnel_estimate.x + fresnel_estimate.y + fresnel_estimate.z) / 3.0;
-        let p_spec = clamp(spec_weight, 0.1, 0.9);
-
         let basis = onb_from_normal(normal);
 
-        if rand(&rng) < p_spec {
-            // ---- Specular (GGX) path ----
+        // ============================================================
+        // Next Event Estimation (NEE) - Direct sun light sampling
+        // ============================================================
+        // Only for diffuse/non-transmission surfaces, and when HDR not loaded
+        if transmission_weight < 0.5 && env.enabled < 0.5 {
+            let sun_dir_sample = sample_sun_direction(&rng);
+            let ndotl_sun = dot(normal, sun_dir_sample);
+            
+            if ndotl_sun > 0.0 {
+                // Shadow ray
+                var shadow_ray: Ray;
+                shadow_ray.origin = p + normal * 0.001;
+                shadow_ray.dir = sun_dir_sample;
+                
+                if !trace_shadow_ray(shadow_ray, T_MAX) {
+                    // Evaluate diffuse BRDF for sun light
+                    let diffuse_color = base_color * base_weight * (1.0 - metallic);
+                    let f0_dielectric = vec3<f32>(pow((ior - 1.0) / (ior + 1.0), 2.0));
+                    let f0_nee = mix(f0_dielectric, base_color, metallic);
+                    let f_sun = fresnel_schlick(ndotl_sun, f0_nee);
+                    
+                    // Lambert diffuse contribution
+                    let diffuse_contrib = diffuse_color * (1.0 - f_sun) * ndotl_sun / PI;
+                    
+                    // GGX specular contribution (simplified for sun)
+                    let alpha = roughness * roughness;
+                    let h_sun = normalize(v_dir + sun_dir_sample);
+                    let ndoth_sun = max(dot(normal, h_sun), EPSILON);
+                    let hdotv_sun = max(dot(h_sun, v_dir), EPSILON);
+                    let d_sun = ggx_d(ndoth_sun, alpha);
+                    let g_sun = smith_g1(ndotv, alpha) * smith_g1(ndotl_sun, alpha);
+                    let f_spec_sun = fresnel_schlick(hdotv_sun, f0_nee);
+                    let spec_contrib = spec_weight * f_spec_sun * d_sun * g_sun / (4.0 * ndotv * ndotl_sun + EPSILON);
+                    
+                    let sun_contrib = (diffuse_contrib + spec_contrib) * SUN_COLOR * SUN_INTENSITY;
+                    radiance += throughput * sun_contrib;
+                }
+            }
+        }
+
+        // ============================================================
+        // Layer 1: Coat (clearcoat on top)
+        // ============================================================
+        if coat_weight > 0.001 {
+            let coat_f0 = vec3<f32>(pow((coat_ior - 1.0) / (coat_ior + 1.0), 2.0));
+            let coat_fresnel = fresnel_schlick(ndotv, coat_f0);
+            let coat_reflect_prob = coat_weight * (coat_fresnel.x + coat_fresnel.y + coat_fresnel.z) / 3.0;
+
+            if rand(&rng) < coat_reflect_prob {
+                // Sample coat GGX
+                let coat_alpha = coat_roughness * coat_roughness;
+                let r1 = rand(&rng);
+                let r2 = rand(&rng);
+                let h_local = sample_ggx(r1, r2, coat_alpha);
+                let h_world = normalize(basis * h_local);
+                let hdotv = max(dot(h_world, v_dir), EPSILON);
+                let reflect_dir = reflect(-v_dir, h_world);
+                let ndotl = dot(normal, reflect_dir);
+
+                if ndotl > 0.0 {
+                    let ndoth = max(dot(normal, h_world), EPSILON);
+                    let f = fresnel_schlick(hdotv, coat_f0);
+                    let g = smith_g1(ndotv, coat_alpha) * smith_g1(ndotl, coat_alpha);
+                    let weight = f * g * hdotv / (ndotv * ndoth + EPSILON);
+                    throughput *= coat_color * weight / coat_reflect_prob;
+
+                    ray.origin = p + normal * 0.001;
+                    ray.dir = normalize(reflect_dir);
+                    continue;
+                }
+            }
+            // If we didn't reflect off coat, attenuate by (1 - coat_fresnel)
+            throughput *= 1.0 - coat_weight * coat_fresnel;
+        }
+
+        // ============================================================
+        // Layer 2: Specular reflection / Transmission / Diffuse
+        // ============================================================
+        
+        // Metallic workflow: F0 for dielectrics vs metals
+        let f0_dielectric = vec3<f32>(pow((ior - 1.0) / (ior + 1.0), 2.0));
+        let f0 = mix(f0_dielectric * spec_color, base_color, metallic);
+        let alpha = roughness * roughness;
+
+        // Compute Fresnel for lobe selection
+        let fresnel_estimate = fresnel_schlick(ndotv, f0);
+        let fresnel_avg = (fresnel_estimate.x + fresnel_estimate.y + fresnel_estimate.z) / 3.0;
+
+        // Probability weights for each lobe
+        let w_spec = spec_weight * fresnel_avg;
+        let w_trans = transmission_weight * (1.0 - fresnel_avg);
+        let w_diff = base_weight * (1.0 - metallic) * (1.0 - fresnel_avg);
+        let w_total = w_spec + w_trans + w_diff + EPSILON;
+
+        let p_spec = w_spec / w_total;
+        let p_trans = w_trans / w_total;
+        // p_diff = 1 - p_spec - p_trans
+
+        let lobe_rand = rand(&rng);
+
+        if lobe_rand < p_spec {
+            // ---- Specular (GGX) reflection ----
             let r1 = rand(&rng);
             let r2 = rand(&rng);
             let h_local = sample_ggx(r1, r2, alpha);
@@ -376,34 +589,64 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let ndotl = dot(normal, reflect_dir);
 
             if ndotl <= 0.0 {
-                break; // below surface
+                break;
             }
 
-            // GGX BRDF: F * G * D / (4 * NdotV * NdotL)
-            // GGX importance sampling PDF: D * NdotH / (4 * HdotV)
-            // Weight = F * G * HdotV / (NdotV * NdotH)
             let ndoth = max(dot(normal, h_world), EPSILON);
             let f = fresnel_schlick(hdotv, f0);
             let g = smith_g1(ndotv, alpha) * smith_g1(ndotl, alpha);
             let weight = f * g * hdotv / (ndotv * ndoth + EPSILON);
 
-            // For metals, no diffuse; for dielectrics, specular doesn't tint
             throughput *= weight / p_spec;
-
             ray.origin = p + normal * 0.001;
             ray.dir = normalize(reflect_dir);
+
+        } else if lobe_rand < p_spec + p_trans {
+            // ---- Transmission (refraction) ----
+            let eta = select(ior, 1.0 / ior, dot(n, ray.dir) < 0.0);
+            
+            // Sample microfacet for rough refraction
+            let r1 = rand(&rng);
+            let r2 = rand(&rng);
+            let h_local = sample_ggx(r1, r2, alpha);
+            let h_world = normalize(basis * h_local);
+            
+            // Compute refracted direction
+            let cos_i = dot(v_dir, h_world);
+            let sin2_t = eta * eta * (1.0 - cos_i * cos_i);
+            
+            if sin2_t > 1.0 {
+                // Total internal reflection
+                let reflect_dir = reflect(-v_dir, h_world);
+                throughput *= transmission_color;
+                ray.origin = p + normal * 0.001;
+                ray.dir = normalize(reflect_dir);
+            } else {
+                let cos_t = sqrt(1.0 - sin2_t);
+                let refract_dir = -eta * v_dir + (eta * cos_i - cos_t) * h_world;
+                
+                // Fresnel term for transmission
+                let f = fresnel_schlick(abs(cos_i), f0);
+                let trans_weight = (1.0 - f) * transmission_color;
+                
+                throughput *= trans_weight / p_trans;
+                ray.origin = p - normal * 0.001; // offset into surface
+                ray.dir = normalize(refract_dir);
+            }
+
         } else {
-            // ---- Diffuse (Lambert) path ----
+            // ---- Diffuse (Lambert) ----
             let r1 = rand(&rng);
             let r2 = rand(&rng);
             let local_dir = cosine_hemisphere(r1, r2);
             let world_dir = basis * local_dir;
 
-            // Diffuse color: for metals it's black, for dielectrics it's base_color
-            let diffuse_color = base_color * (1.0 - metallic);
-            // Account for energy conservation: (1 - F) * diffuse
+            let diffuse_color = base_color * base_weight * (1.0 - metallic);
             let f_diffuse = fresnel_schlick(max(dot(normal, normalize(world_dir)), 0.0), f0);
-            throughput *= diffuse_color * (1.0 - f_diffuse) / (1.0 - p_spec);
+            let diff_weight = diffuse_color * (1.0 - f_diffuse);
+            
+            let p_diff = 1.0 - p_spec - p_trans;
+            throughput *= diff_weight / max(p_diff, EPSILON);
 
             ray.origin = p + normal * 0.001;
             ray.dir = normalize(world_dir);

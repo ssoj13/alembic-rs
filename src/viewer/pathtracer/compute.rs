@@ -22,21 +22,53 @@ const BVH_TRAVERSE_WGSL: &str = include_str!("bvh_traverse.wgsl");
 const BLIT_WGSL: &str = include_str!("blit.wgsl");
 
 /// Camera uniform matching the WGSL Camera struct.
+/// WGSL alignment: vec3<f32> aligns to 16 bytes, so position needs padding.
+/// Total size must be 176 bytes to match WGSL struct.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct PtCameraUniform {
-    /// Inverse view matrix (world from view).
+    /// Inverse view matrix (world from view). Offset 0, 64 bytes.
     pub inv_view: [[f32; 4]; 4],
-    /// Inverse projection matrix (view from clip).
+    /// Inverse projection matrix (view from clip). Offset 64, 64 bytes.
     pub inv_proj: [[f32; 4]; 4],
-    /// Camera world position.
+    /// Camera world position. Offset 128, 12 bytes.
     pub position: [f32; 3],
-    /// Frame count for progressive accumulation.
+    /// Padding after position (vec3 -> vec4 alignment). Offset 140, 4 bytes.
+    pub _pad0: u32,
+    /// Frame count for progressive accumulation. Offset 144, 4 bytes.
     pub frame_count: u32,
+    /// Maximum bounces (1-8). Offset 148, 4 bytes.
+    pub max_bounces: u32,
+    /// Padding to align _pad2 to 16 bytes. Offset 152, 8 bytes.
+    pub _pad1: [u32; 2],
+    /// Final padding (vec3<u32> in WGSL = 16 bytes). Offset 160, 16 bytes.
+    pub _pad2: [u32; 4],
+    // Total: 176 bytes
 }
 
 /// Workgroup size (must match @workgroup_size in WGSL).
 const WG_SIZE: u32 = 8;
+
+/// Environment uniform for path tracer.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct PtEnvUniform {
+    pub intensity: f32,
+    pub rotation: f32,
+    pub enabled: f32,
+    pub _pad: f32,
+}
+
+impl Default for PtEnvUniform {
+    fn default() -> Self {
+        Self {
+            intensity: 1.0,
+            rotation: 0.0,
+            enabled: 0.0,
+            _pad: 0.0,
+        }
+    }
+}
 
 /// Path trace compute pipeline state.
 pub struct PathTraceCompute {
@@ -58,6 +90,14 @@ pub struct PathTraceCompute {
 
     // Accumulation buffer (vec4<f32> per pixel, read_write storage)
     accum_buffer: wgpu::Buffer,
+
+    // Environment map (shared from renderer)
+    #[allow(dead_code)] // Texture kept alive for env_view
+    env_texture: wgpu::Texture,
+    env_view: wgpu::TextureView,
+    env_sampler: wgpu::Sampler,
+    env_uniform_buffer: wgpu::Buffer,
+    env_dirty: bool,
 
     // Dimensions
     width: u32,
@@ -154,6 +194,35 @@ impl PathTraceCompute {
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // @binding(6) Environment map texture
+                wgpu::BindGroupLayoutEntry {
+                    binding: 6,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // @binding(7) Environment sampler
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // @binding(8) Environment params uniform
+                wgpu::BindGroupLayoutEntry {
+                    binding: 8,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -272,6 +341,22 @@ impl PathTraceCompute {
             ],
         }));
 
+        // Create default 1x1 black environment texture
+        let (env_texture, env_view) = Self::create_default_env_texture(device);
+        let env_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("pt_env_sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let env_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pt_env_uniform"),
+            contents: bytemuck::bytes_of(&PtEnvUniform::default()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
         Self {
             pipeline,
             bind_group_layout,
@@ -286,6 +371,11 @@ impl PathTraceCompute {
             output_texture,
             output_view,
             accum_buffer,
+            env_texture,
+            env_view,
+            env_sampler,
+            env_uniform_buffer,
+            env_dirty: false,
             width,
             height,
             frame_count: 0,
@@ -324,6 +414,36 @@ impl PathTraceCompute {
         (tex, view)
     }
 
+    /// Create default 1x1 black environment texture.
+    fn create_default_env_texture(device: &wgpu::Device) -> (wgpu::Texture, wgpu::TextureView) {
+        use half::f16;
+        // 1x1 black pixel in Rgba16Float
+        let data: [f16; 4] = [f16::ZERO, f16::ZERO, f16::ZERO, f16::ONE];
+        let bytes: &[u8] = bytemuck::cast_slice(&data);
+
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("pt_default_env"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba16Float,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        // Write data immediately
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pt_env_staging"),
+            contents: bytes,
+            usage: wgpu::BufferUsages::COPY_SRC,
+        });
+        // For a 1x1 texture we can use queue.write_texture in set_environment
+        // For now just create empty and let set_environment fill it
+
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        (tex, view)
+    }
+
     /// Resize output texture if dimensions changed.
     pub fn resize(&mut self, device: &wgpu::Device, width: u32, height: u32) {
         if self.width == width && self.height == height {
@@ -358,9 +478,10 @@ impl PathTraceCompute {
         });
 
         let mats_bytes = data.materials_bytes();
+        // GpuMaterial is 144 bytes (9 x vec4<f32>)
         let mats_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pt_materials"),
-            contents: if mats_bytes.is_empty() { &[0u8; 48] } else { mats_bytes },
+            contents: if mats_bytes.is_empty() { &[0u8; 144] } else { mats_bytes },
             usage: wgpu::BufferUsages::STORAGE,
         });
 
@@ -408,8 +529,22 @@ impl PathTraceCompute {
                     binding: 5,
                     resource: mats.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&self.env_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::Sampler(&self.env_sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: self.env_uniform_buffer.as_entire_binding(),
+                },
             ],
         }));
+        
+        self.env_dirty = false;
 
         // Rebuild blit bind group (references output_view)
         self.blit_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -431,6 +566,75 @@ impl PathTraceCompute {
     /// Update camera uniform.
     pub fn update_camera(&mut self, queue: &wgpu::Queue, uniform: &PtCameraUniform) {
         queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(uniform));
+    }
+
+    /// Set environment map from renderer's EnvironmentMap.
+    /// Call this when HDR is loaded or changed.
+    pub fn set_environment(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        env_view: &wgpu::TextureView,
+        env_sampler: &wgpu::Sampler,
+        intensity: f32,
+        enabled: bool,
+    ) {
+        // We need to recreate our own view/sampler references or copy the texture
+        // For now, we'll create a new bind group referencing the renderer's resources
+        // This requires storing references, which is complex. Instead, update uniform.
+        
+        let uniform = PtEnvUniform {
+            intensity,
+            rotation: 0.0,
+            enabled: if enabled { 1.0 } else { 0.0 },
+            _pad: 0.0,
+        };
+        queue.write_buffer(&self.env_uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+        
+        // Mark that we need to rebuild bind group with new env texture
+        // Store the view reference - but we can't store borrowed references
+        // So we need a different approach: pass the texture view at bind group rebuild time
+        self.env_dirty = true;
+        
+        // For proper integration, we'd store Arc<TextureView> or rebuild here
+        // For now, we'll need the renderer to call a special rebuild method
+        let _ = (device, env_view, env_sampler); // suppress warnings
+    }
+
+    /// Set environment from renderer's EnvironmentMap (creates new bind group).
+    pub fn set_environment_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        texture: &wgpu::Texture,
+        intensity: f32,
+        enabled: bool,
+    ) {
+        // Create our own view of the texture
+        self.env_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        
+        let uniform = PtEnvUniform {
+            intensity,
+            rotation: 0.0,
+            enabled: if enabled { 1.0 } else { 0.0 },
+            _pad: 0.0,
+        };
+        queue.write_buffer(&self.env_uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+        
+        // Rebuild bind group with new env texture
+        self.rebuild_bind_group(device);
+        self.reset_accumulation();
+    }
+
+    /// Update just the environment intensity/enabled state.
+    pub fn update_environment_params(&mut self, queue: &wgpu::Queue, intensity: f32, enabled: bool) {
+        let uniform = PtEnvUniform {
+            intensity,
+            rotation: 0.0,
+            enabled: if enabled { 1.0 } else { 0.0 },
+            _pad: 0.0,
+        };
+        queue.write_buffer(&self.env_uniform_buffer, 0, bytemuck::bytes_of(&uniform));
     }
 
     /// Reset progressive accumulation (call on camera move / scene change).
@@ -458,8 +662,10 @@ impl PathTraceCompute {
         self.frame_count += 1;
 
         // Update frame_count in camera uniform (offset of frame_count field)
-        let fc_offset = std::mem::size_of::<[[f32; 4]; 4]>() * 2 // inv_view + inv_proj
-                      + std::mem::size_of::<[f32; 3]>();          // position
+        // inv_view (64) + inv_proj (64) + position (12) + _pad0 (4) = 144
+        let fc_offset = std::mem::size_of::<[[f32; 4]; 4]>() * 2 // inv_view + inv_proj = 128
+                      + std::mem::size_of::<[f32; 3]>()          // position = 12
+                      + std::mem::size_of::<u32>();              // _pad0 = 4 -> total 144
         queue.write_buffer(
             &self.camera_buffer,
             fc_offset as u64,

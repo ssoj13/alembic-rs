@@ -53,30 +53,42 @@ pub fn extract_triangles(
 }
 
 /// Convert StandardSurfaceParams to GpuMaterial for path tracing.
+/// Copies all Standard Surface parameters to GPU format.
 pub fn material_from_params(params: &standard_surface::StandardSurfaceParams) -> GpuMaterial {
-    let base = params.base_color_weight;
-    let emission = params.emission_color_weight;
     GpuMaterial {
-        base_color_metallic: [base.x * base.w, base.y * base.w, base.z * base.w, params.params1.y],
-        emission_roughness: [
-            emission.x * emission.w,
-            emission.y * emission.w,
-            emission.z * emission.w,
-            params.params1.z.max(0.04), // clamp roughness for GGX stability
+        base_color_weight: params.base_color_weight.to_array(),
+        specular_color_weight: params.specular_color_weight.to_array(),
+        transmission_color_weight: params.transmission_color_weight.to_array(),
+        subsurface_color_weight: params.subsurface_color_weight.to_array(),
+        coat_color_weight: params.coat_color_weight.to_array(),
+        emission_color_weight: params.emission_color_weight.to_array(),
+        opacity: params.opacity.to_array(),
+        params1: [
+            params.params1.x,                  // diffuse_roughness
+            params.params1.y,                  // metalness
+            params.params1.z.max(0.04),        // specular_roughness (clamp for GGX stability)
+            params.params1.w,                  // specular_IOR
         ],
-        opacity_ior_pad: [
-            (params.opacity.x + params.opacity.y + params.opacity.z) / 3.0,
-            params.params1.w,
-            0.0, 0.0,
+        params2: [
+            params.params2.x,                  // specular_anisotropy
+            params.params2.y.max(0.04),        // coat_roughness
+            params.params2.z,                  // coat_IOR
+            0.0,                               // unused
         ],
     }
 }
 
-/// Create a default material (grey Lambert).
+/// Create a default material (grey plastic).
 pub fn default_material() -> GpuMaterial {
     GpuMaterial {
-        base_color_metallic: [0.8, 0.8, 0.8, 0.0],
-        emission_roughness: [0.0, 0.0, 0.0, 0.5],
-        opacity_ior_pad: [1.0, 1.5, 0.0, 0.0],
+        base_color_weight: [0.8, 0.8, 0.8, 1.0],
+        specular_color_weight: [1.0, 1.0, 1.0, 1.0],
+        transmission_color_weight: [1.0, 1.0, 1.0, 0.0],
+        subsurface_color_weight: [1.0, 1.0, 1.0, 0.0],
+        coat_color_weight: [1.0, 1.0, 1.0, 0.0],
+        emission_color_weight: [1.0, 1.0, 1.0, 0.0],
+        opacity: [1.0, 1.0, 1.0, 1.0],
+        params1: [0.0, 0.0, 0.2, 1.5], // diffuse_rough, metalness, spec_rough, IOR
+        params2: [0.0, 0.1, 1.5, 0.0], // anisotropy, coat_rough, coat_IOR, unused
     }
 }

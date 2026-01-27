@@ -510,326 +510,378 @@ impl ViewerApp {
     }
     
     fn side_panel(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Scene");
-        ui.separator();
-
-        // File info
-        if let Some(path) = &self.current_file {
-            ui.label(format!("File: {}", path.file_name().unwrap_or_default().to_string_lossy()));
-        } else {
-            ui.label("No file loaded");
-        }
-
-        ui.separator();
-
-        // Stats
-        ui.label(RichText::new("Statistics").strong());
-        ui.label(format!("Meshes: {}", self.mesh_count));
-        ui.label(format!("Vertices: {}", self.vertex_count));
-        ui.label(format!("Faces: {}", self.face_count));
-
-        ui.separator();
-        
-        // Selected object properties
-        if let Some(name) = &self.selected_object {
-            ui.label(RichText::new("Selected").strong());
-            ui.label(format!("Name: {}", name));
-            
-            // Find node type
-            if let Some(node) = self.find_node_by_name(name) {
-                ui.label(format!("Type: {}", node.node_type));
-            }
-            
-            // Get object properties from archive
-            if let Some(archive) = &self.archive {
-                self.show_object_properties_by_name(ui, archive, name);
-            }
-            
-            ui.separator();
-        }
-
-        // Camera info
-        ui.label(RichText::new("Camera").strong());
-        let pos = self.viewport.camera.position();
-        ui.label(format!("Position: ({:.2}, {:.2}, {:.2})", pos.x, pos.y, pos.z));
-        ui.label(format!("Distance: {:.2}", self.viewport.camera.distance()));
-
-        ui.separator();
-
-        // View settings
-        ui.label(RichText::new("Display").strong());
-        if let Some(renderer) = &mut self.viewport.renderer {
-            let mut changed = false;
-            
-            if ui.checkbox(&mut self.settings.show_wireframe, "Wireframe").changed() {
-                renderer.show_wireframe = self.settings.show_wireframe;
-                changed = true;
-            }
-            if ui.checkbox(&mut self.settings.flat_shading, "Flat Shading").changed() {
-                renderer.flat_shading = self.settings.flat_shading;
-                changed = true;
-            }
-            if ui.checkbox(&mut self.settings.show_shadows, "Shadows").changed() {
-                renderer.show_shadows = self.settings.show_shadows;
-                changed = true;
-            }
-            if ui.checkbox(&mut self.settings.ssao, "SSAO").changed() {
-                renderer.use_ssao = self.settings.ssao;
-                changed = true;
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            // ============================================================
+            // Scene Info (always visible)
+            // ============================================================
+            ui.heading("Scene");
+            if let Some(path) = &self.current_file {
+                ui.label(format!("File: {}", path.file_name().unwrap_or_default().to_string_lossy()));
+            } else {
+                ui.label("No file loaded");
             }
             ui.horizontal(|ui| {
-                ui.label("SSAO:");
-                if ui.add(egui::Slider::new(&mut self.settings.ssao_strength, 0.0..=2.0).step_by(0.05)).changed() {
-                    renderer.ssao_strength = self.settings.ssao_strength;
-                    changed = true;
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label("Radius:");
-                if ui.add(egui::Slider::new(&mut self.settings.ssao_radius, 0.005..=0.1).step_by(0.005)).changed() {
-                    renderer.ssao_radius = self.settings.ssao_radius;
-                    changed = true;
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label("Opacity:");
-                if ui.add(egui::Slider::new(&mut self.settings.xray_alpha, 0.01..=1.0).step_by(0.01)).changed() {
-                    renderer.xray_alpha = self.settings.xray_alpha;
-                    changed = true;
-                }
-            });
-            if ui.checkbox(&mut self.settings.double_sided, "Double Sided").changed() {
-                renderer.double_sided = self.settings.double_sided;
-                changed = true;
-            }
-            if ui.checkbox(&mut self.settings.auto_normals, "Auto Normals").changed() {
-                renderer.auto_normals = self.settings.auto_normals;
-                changed = true;
-            }
-            
-            // Smooth normals - recalculate dynamically
-            ui.horizontal(|ui| {
-                let checkbox_changed = ui.checkbox(&mut self.settings.smooth_normals, "SmoothN").changed();
-                let slider_changed = ui.add(egui::Slider::new(&mut self.settings.smooth_angle, 0.0..=180.0)
-                    .suffix("\u{00b0}")
-                    .fixed_decimals(0)).changed();
-                if checkbox_changed || slider_changed {
-                    renderer.recalculate_smooth_normals(
-                        self.settings.smooth_angle,
-                        self.settings.smooth_normals,
-                        true,
-                    );
-                    changed = true;
-                }
+                ui.label(format!("{} meshes", self.mesh_count));
+                ui.label(format!("{} verts", self.vertex_count));
+                ui.label(format!("{} tris", self.face_count));
             });
             
-            ui.separator();
-            // Path tracing toggle + settings
-            if ui.checkbox(&mut self.settings.path_tracing, "Path Tracing").changed() {
-                renderer.use_path_tracing = self.settings.path_tracing;
-                renderer.pt_max_samples = self.settings.pt_max_samples;
-                if self.settings.path_tracing {
-                    renderer.init_path_tracer(1280, 720);
-                    renderer.upload_scene_to_path_tracer();
+            // Selected object properties
+            if let Some(name) = &self.selected_object {
+                ui.separator();
+                ui.label(RichText::new("Selected").strong());
+                ui.label(format!("Name: {}", name));
+                if let Some(node) = self.find_node_by_name(name) {
+                    ui.label(format!("Type: {}", node.node_type));
                 }
-                changed = true;
+                if let Some(archive) = &self.archive {
+                    self.show_object_properties_by_name(ui, archive, name);
+                }
             }
-            if self.settings.path_tracing {
-                ui.horizontal(|ui| {
-                    ui.label("Bounces:");
-                    if ui.add(egui::Slider::new(&mut self.settings.pt_max_bounces, 1..=8)).changed() {
-                        // Reset accumulation when bounces change
-                        if let Some(pt) = &mut renderer.path_tracer {
-                            pt.reset_accumulation();
-                        }
-                        changed = true;
+
+            ui.add_space(8.0);
+
+            // ============================================================
+            // Render Mode Selection
+            // ============================================================
+            egui::CollapsingHeader::new(RichText::new("Render Mode").strong())
+                .default_open(true)
+                .show(ui, |ui| {
+                    if let Some(renderer) = &mut self.viewport.renderer {
+                        ui.horizontal(|ui| {
+                            if ui.selectable_label(!self.settings.path_tracing, "Rasterizer").clicked() {
+                                self.settings.path_tracing = false;
+                                renderer.use_path_tracing = false;
+                                self.settings.save();
+                            }
+                            if ui.selectable_label(self.settings.path_tracing, "Path Tracer").clicked() {
+                                self.settings.path_tracing = true;
+                                renderer.use_path_tracing = true;
+                                renderer.pt_max_samples = self.settings.pt_max_samples;
+                                renderer.pt_max_bounces = self.settings.pt_max_bounces;
+                                renderer.init_path_tracer(1280, 720);
+                                renderer.upload_scene_to_path_tracer();
+                                self.settings.save();
+                            }
+                        });
                     }
                 });
-                ui.horizontal(|ui| {
-                    ui.label("Max SPP:");
-                    if ui.add(egui::Slider::new(&mut self.settings.pt_max_samples, 16..=4096).logarithmic(true)).changed() {
-                        changed = true;
-                    }
-                });
-                if let Some(pt) = &renderer.path_tracer {
-                    let done = pt.frame_count >= self.settings.pt_max_samples;
-                    let label = if done {
-                        format!("Samples: {} (done)", pt.frame_count)
-                    } else {
-                        format!("Samples: {} / {}", pt.frame_count, self.settings.pt_max_samples)
-                    };
-                    ui.label(label);
-                }
-            }
-            ui.separator();
-            
-            // Anti-aliasing (requires restart to take effect)
-            ui.horizontal(|ui| {
-                ui.label("AA:");
-                let aa_changed = egui::ComboBox::from_id_salt("aa_combo")
-                    .width(50.0)
-                    .selected_text(format!("{}x", self.settings.antialiasing))
-                    .show_ui(ui, |ui| {
-                        let mut changed = false;
-                        for val in [1u8, 2, 4, 8] {
-                            let label = format!("{}x", val);
-                            if ui.selectable_value(&mut self.settings.antialiasing, val, label).changed() {
+
+            // ============================================================
+            // Rasterizer Settings (only when not path tracing)
+            // ============================================================
+            if !self.settings.path_tracing {
+                egui::CollapsingHeader::new("Rasterizer")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        if let Some(renderer) = &mut self.viewport.renderer {
+                            let mut changed = false;
+                            
+                            if ui.checkbox(&mut self.settings.show_wireframe, "Wireframe").changed() {
+                                renderer.show_wireframe = self.settings.show_wireframe;
                                 changed = true;
                             }
+                            if ui.checkbox(&mut self.settings.flat_shading, "Flat Shading").changed() {
+                                renderer.flat_shading = self.settings.flat_shading;
+                                changed = true;
+                            }
+                            if ui.checkbox(&mut self.settings.show_shadows, "Shadows").changed() {
+                                renderer.show_shadows = self.settings.show_shadows;
+                                changed = true;
+                            }
+                            if ui.checkbox(&mut self.settings.double_sided, "Double Sided").changed() {
+                                renderer.double_sided = self.settings.double_sided;
+                                changed = true;
+                            }
+                            if ui.checkbox(&mut self.settings.auto_normals, "Auto Normals").changed() {
+                                renderer.auto_normals = self.settings.auto_normals;
+                                changed = true;
+                            }
+                            
+                            // Smooth normals
+                            ui.horizontal(|ui| {
+                                let checkbox_changed = ui.checkbox(&mut self.settings.smooth_normals, "Smooth").changed();
+                                let slider_changed = ui.add(egui::Slider::new(&mut self.settings.smooth_angle, 0.0..=180.0)
+                                    .suffix("\u{00b0}")
+                                    .fixed_decimals(0)).changed();
+                                if checkbox_changed || slider_changed {
+                                    renderer.recalculate_smooth_normals(
+                                        self.settings.smooth_angle,
+                                        self.settings.smooth_normals,
+                                        true,
+                                    );
+                                    changed = true;
+                                }
+                            });
+                            
+                            ui.horizontal(|ui| {
+                                ui.label("Opacity:");
+                                if ui.add(egui::Slider::new(&mut self.settings.xray_alpha, 0.01..=1.0).step_by(0.01)).changed() {
+                                    renderer.xray_alpha = self.settings.xray_alpha;
+                                    changed = true;
+                                }
+                            });
+                            
+                            if changed {
+                                self.settings.save();
+                            }
                         }
-                        changed
-                    }).inner.unwrap_or(false);
-                if aa_changed {
-                    self.settings.save();
-                }
-                ui.label("(restart)").on_hover_text("Requires restart to apply");
-            });
-            
-            ui.horizontal(|ui| {
-                ui.label("Background:");
-                let mut color = Color32::from_rgba_unmultiplied(
-                    (self.settings.background_color[0] * 255.0) as u8,
-                    (self.settings.background_color[1] * 255.0) as u8,
-                    (self.settings.background_color[2] * 255.0) as u8,
-                    255,
-                );
-                if ui.color_edit_button_srgba(&mut color).changed() {
-                    self.settings.background_color = [
-                        color.r() as f32 / 255.0,
-                        color.g() as f32 / 255.0,
-                        color.b() as f32 / 255.0,
-                        1.0,
-                    ];
-                    renderer.background_color = self.settings.background_color;
-                    changed = true;
-                }
-            });
-            
-            if changed {
-                self.settings.save();
+                    });
+                
+                // SSAO Section
+                egui::CollapsingHeader::new("SSAO")
+                    .default_open(self.settings.ssao)
+                    .show(ui, |ui| {
+                        if let Some(renderer) = &mut self.viewport.renderer {
+                            let mut changed = false;
+                            
+                            if ui.checkbox(&mut self.settings.ssao, "Enable SSAO").changed() {
+                                renderer.use_ssao = self.settings.ssao;
+                                changed = true;
+                            }
+                            
+                            if self.settings.ssao {
+                                ui.horizontal(|ui| {
+                                    ui.label("Strength:");
+                                    if ui.add(egui::Slider::new(&mut self.settings.ssao_strength, 0.0..=2.0).step_by(0.05)).changed() {
+                                        renderer.ssao_strength = self.settings.ssao_strength;
+                                        changed = true;
+                                    }
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Radius:");
+                                    if ui.add(egui::Slider::new(&mut self.settings.ssao_radius, 0.005..=0.1).step_by(0.005)).changed() {
+                                        renderer.ssao_radius = self.settings.ssao_radius;
+                                        changed = true;
+                                    }
+                                });
+                            }
+                            
+                            if changed {
+                                self.settings.save();
+                            }
+                        }
+                    });
             }
-            
-        }
-        
-        // Lighting section
-        ui.separator();
-        ui.label(RichText::new("Lighting").strong());
-        
-        let has_scene_lights = !self.scene_lights.is_empty();
-        ui.add_enabled_ui(has_scene_lights, |ui| {
-            let label = if has_scene_lights {
-                format!("Scene Lights ({})", self.scene_lights.len())
-            } else {
-                "Scene Lights (none)".to_string()
-            };
-            if ui.checkbox(&mut self.settings.use_scene_lights, label).changed() {
-                if let Some(renderer) = &self.viewport.renderer {
-                    if self.settings.use_scene_lights && has_scene_lights {
-                        renderer.set_scene_lights(&self.scene_lights);
-                    } else {
-                        renderer.set_default_lights();
+
+            // ============================================================
+            // Path Tracer Settings (only when path tracing)
+            // ============================================================
+            if self.settings.path_tracing {
+                egui::CollapsingHeader::new("Path Tracer")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        if let Some(renderer) = &mut self.viewport.renderer {
+                            let mut changed = false;
+                            
+                            ui.horizontal(|ui| {
+                                ui.label("Bounces:");
+                                if ui.add(egui::Slider::new(&mut self.settings.pt_max_bounces, 1..=8)).changed() {
+                                    renderer.pt_max_bounces = self.settings.pt_max_bounces;
+                                    if let Some(pt) = &mut renderer.path_tracer {
+                                        pt.reset_accumulation();
+                                    }
+                                    changed = true;
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Max SPP:");
+                                if ui.add(egui::Slider::new(&mut self.settings.pt_max_samples, 16..=4096).logarithmic(true)).changed() {
+                                    renderer.pt_max_samples = self.settings.pt_max_samples;
+                                    changed = true;
+                                }
+                            });
+                            
+                            // Progress bar
+                            if let Some(pt) = &renderer.path_tracer {
+                                let progress = pt.frame_count as f32 / self.settings.pt_max_samples as f32;
+                                let done = pt.frame_count >= self.settings.pt_max_samples;
+                                ui.add(egui::ProgressBar::new(progress.min(1.0))
+                                    .text(if done {
+                                        format!("{} samples (done)", pt.frame_count)
+                                    } else {
+                                        format!("{} / {} samples", pt.frame_count, self.settings.pt_max_samples)
+                                    }));
+                            }
+                            
+                            if changed {
+                                self.settings.save();
+                            }
+                        }
+                    });
+            }
+
+            // ============================================================
+            // Environment
+            // ============================================================
+            egui::CollapsingHeader::new("Environment")
+                .default_open(true)
+                .show(ui, |ui| {
+                    let has_env = self.viewport.renderer.as_ref().map(|r| r.has_environment()).unwrap_or(false);
+                    
+                    // HDR toggle + exposure
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut self.settings.hdr_enabled, "HDR").changed() {
+                            if self.settings.hdr_enabled {
+                                if let Some(path) = self.settings.last_hdr_file.clone() {
+                                    if path.exists() {
+                                        self.pending_hdr_file = Some(path);
+                                    } else {
+                                        self.load_environment_dialog();
+                                    }
+                                } else {
+                                    self.load_environment_dialog();
+                                }
+                            } else {
+                                if let Some(renderer) = &mut self.viewport.renderer {
+                                    renderer.clear_environment();
+                                }
+                            }
+                            self.settings.save();
+                        }
+                        
+                        if self.settings.hdr_enabled {
+                            ui.label("Exp:");
+                            if ui.add(egui::Slider::new(&mut self.settings.hdr_exposure, 0.1..=10.0).logarithmic(true)).changed() {
+                                if let Some(renderer) = &mut self.viewport.renderer {
+                                    renderer.set_env_intensity(self.settings.hdr_exposure);
+                                }
+                                self.settings.save();
+                            }
+                        }
+                    });
+                    
+                    if has_env && ui.checkbox(&mut self.settings.hdr_visible, "Show Background").changed() {
+                        if let Some(renderer) = &mut self.viewport.renderer {
+                            renderer.hdr_visible = self.settings.hdr_visible;
+                        }
+                        self.settings.save();
                     }
-                }
-                self.settings.save();
-            }
-        });
-        if !has_scene_lights {
-            ui.label("(Default 3-point lighting)");
-        }
-        
-        // Environment section (outside renderer borrow)
-        ui.separator();
-        ui.label(RichText::new("Environment").strong());
-        
-        let has_env = self.viewport.renderer.as_ref().map(|r| r.has_environment()).unwrap_or(false);
-        
-        // HDR enable checkbox + exposure slider
-        ui.horizontal(|ui| {
-            if ui.checkbox(&mut self.settings.hdr_enabled, "HDR").changed() {
-                if self.settings.hdr_enabled {
-                    // Try to load last HDR file if available
-                    if let Some(path) = self.settings.last_hdr_file.clone() {
-                        if path.exists() {
-                            self.pending_hdr_file = Some(path);
-                        } else {
+                    
+                    if ui.checkbox(&mut self.settings.show_grid, "Grid").changed() {
+                        if let Some(renderer) = &mut self.viewport.renderer {
+                            renderer.show_grid = self.settings.show_grid;
+                        }
+                        self.settings.save();
+                    }
+                    
+                    if ui.checkbox(&mut self.settings.show_floor, "Floor").changed() {
+                        if let Some(renderer) = &mut self.viewport.renderer {
+                            if self.settings.show_floor {
+                                renderer.set_floor(&self.scene_bounds);
+                            } else {
+                                renderer.clear_floor();
+                            }
+                        }
+                        self.settings.save();
+                    }
+                    
+                    ui.horizontal(|ui| {
+                        if ui.button("Load HDR...").clicked() {
                             self.load_environment_dialog();
                         }
+                        if has_env && ui.button("Clear").clicked() {
+                            if let Some(renderer) = &mut self.viewport.renderer {
+                                renderer.clear_environment();
+                            }
+                            self.settings.hdr_enabled = false;
+                            self.settings.save();
+                        }
+                    });
+                });
+
+            // ============================================================
+            // Lighting
+            // ============================================================
+            egui::CollapsingHeader::new("Lighting")
+                .default_open(false)
+                .show(ui, |ui| {
+                    let has_scene_lights = !self.scene_lights.is_empty();
+                    
+                    if has_scene_lights {
+                        if ui.checkbox(&mut self.settings.use_scene_lights, 
+                            format!("Use Scene Lights ({})", self.scene_lights.len())).changed() {
+                            if let Some(renderer) = &self.viewport.renderer {
+                                if self.settings.use_scene_lights {
+                                    renderer.set_scene_lights(&self.scene_lights);
+                                } else {
+                                    renderer.set_default_lights();
+                                }
+                            }
+                            self.settings.save();
+                        }
                     } else {
-                        self.load_environment_dialog();
+                        ui.label("Default 3-point lighting");
                     }
-                } else {
-                    // Disable HDR
-                    if let Some(renderer) = &mut self.viewport.renderer {
-                        renderer.clear_environment();
+                });
+
+            // ============================================================
+            // Display Settings
+            // ============================================================
+            egui::CollapsingHeader::new("Display")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("AA:");
+                        let aa_changed = egui::ComboBox::from_id_salt("aa_combo")
+                            .width(50.0)
+                            .selected_text(format!("{}x", self.settings.antialiasing))
+                            .show_ui(ui, |ui| {
+                                let mut changed = false;
+                                for val in [1u8, 2, 4, 8] {
+                                    if ui.selectable_value(&mut self.settings.antialiasing, val, format!("{}x", val)).changed() {
+                                        changed = true;
+                                    }
+                                }
+                                changed
+                            }).inner.unwrap_or(false);
+                        if aa_changed {
+                            self.settings.save();
+                        }
+                        ui.label("(restart)");
+                    });
+                    
+                    ui.horizontal(|ui| {
+                        ui.label("Background:");
+                        let mut color = Color32::from_rgba_unmultiplied(
+                            (self.settings.background_color[0] * 255.0) as u8,
+                            (self.settings.background_color[1] * 255.0) as u8,
+                            (self.settings.background_color[2] * 255.0) as u8,
+                            255,
+                        );
+                        if ui.color_edit_button_srgba(&mut color).changed() {
+                            self.settings.background_color = [
+                                color.r() as f32 / 255.0,
+                                color.g() as f32 / 255.0,
+                                color.b() as f32 / 255.0,
+                                1.0,
+                            ];
+                            if let Some(renderer) = &mut self.viewport.renderer {
+                                renderer.background_color = self.settings.background_color;
+                            }
+                            self.settings.save();
+                        }
+                    });
+                    
+                    // Camera info
+                    let pos = self.viewport.camera.position();
+                    ui.label(format!("Camera: ({:.1}, {:.1}, {:.1})", pos.x, pos.y, pos.z));
+                });
+
+            // ============================================================
+            // Debug (collapsed by default)
+            // ============================================================
+            egui::CollapsingHeader::new("Debug")
+                .default_open(false)
+                .show(ui, |ui| {
+                    if ui.button("Load Test Cube").clicked() {
+                        self.load_test_cube();
                     }
-                }
-                self.settings.save();
-            }
-            
-            // Exposure slider (only when HDR enabled)
-            if self.settings.hdr_enabled {
-                ui.label("Exp:");
-                if ui.add(egui::Slider::new(&mut self.settings.hdr_exposure, 0.1..=10.0).logarithmic(true)).changed() {
-                    // Update env intensity
-                    if let Some(renderer) = &mut self.viewport.renderer {
-                        renderer.set_env_intensity(self.settings.hdr_exposure);
+                    if ui.button("Clear Scene").clicked() {
+                        self.clear_scene();
                     }
-                    self.settings.save();
-                }
-            }
+                });
         });
-        
-        // HDR visibility (show background sphere but keep reflections)
-        if has_env && ui.checkbox(&mut self.settings.hdr_visible, "Show Background").changed() {
-            if let Some(renderer) = &mut self.viewport.renderer {
-                renderer.hdr_visible = self.settings.hdr_visible;
-            }
-            self.settings.save();
-        }
-        
-        // Grid
-        if ui.checkbox(&mut self.settings.show_grid, "Grid").changed() {
-            if let Some(renderer) = &mut self.viewport.renderer {
-                renderer.show_grid = self.settings.show_grid;
-            }
-            self.settings.save();
-        }
-        
-        // Floor plane - checkbox directly controls floor mesh existence
-        if ui.checkbox(&mut self.settings.show_floor, "Floor").changed() {
-            if let Some(renderer) = &mut self.viewport.renderer {
-                if self.settings.show_floor {
-                    renderer.set_floor(&self.scene_bounds);
-                } else {
-                    renderer.clear_floor();
-                }
-            }
-            self.settings.save();
-        }
-        
-        if ui.button("Load HDR/EXR...").clicked() {
-            self.load_environment_dialog();
-        }
-        
-        if has_env
-            && ui.button("Clear Environment").clicked() {
-                if let Some(renderer) = &mut self.viewport.renderer {
-                    renderer.clear_environment();
-                }
-                self.settings.hdr_enabled = false;
-                self.settings.save();
-            }
-
-        ui.separator();
-
-        // Actions
-        if ui.button("Load Test Cube").clicked() {
-            self.load_test_cube();
-        }
-
-        if ui.button("Clear Scene").clicked() {
-            self.clear_scene();
-        }
     }
 
     fn status_bar(&self, ui: &mut egui::Ui) {
@@ -1820,7 +1872,8 @@ impl eframe::App for ViewerApp {
             })
         });
         
-        if self.active_camera.is_none() {
+        // Skip dynamic near/far adjustment when path tracing (causes constant resets)
+        if self.active_camera.is_none() && !self.settings.path_tracing {
             if let Some(bounds) = &self.scene_bounds {
                 let center = bounds.center();
                 let radius = bounds.radius().max(0.1);
@@ -1955,6 +2008,9 @@ impl eframe::App for ViewerApp {
                     renderer.double_sided = self.settings.double_sided;
                     renderer.auto_normals = self.settings.auto_normals;
                     renderer.background_color = self.settings.background_color;
+                    // Path tracer settings
+                    renderer.pt_max_samples = self.settings.pt_max_samples;
+                    renderer.pt_max_bounces = self.settings.pt_max_bounces;
                     // Set floor if enabled (uses scene_bounds for sizing)
                     if self.settings.show_floor {
                         renderer.set_floor(&self.scene_bounds);

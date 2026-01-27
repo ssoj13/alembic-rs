@@ -127,6 +127,7 @@ pub struct Renderer {
     /// When true, render using path tracer instead of rasterizer.
     pub use_path_tracing: bool,
     pub pt_max_samples: u32,
+    pub pt_max_bounces: u32,
     /// Surface format needed for path tracer blit pipeline creation.
     #[allow(dead_code)]
     surface_format: wgpu::TextureFormat,
@@ -561,6 +562,7 @@ impl Renderer {
             path_tracer: None,
             use_path_tracing: false,
             pt_max_samples: 512,
+            pt_max_bounces: 4,
             surface_format: format,
         }
     }
@@ -589,22 +591,28 @@ impl Renderer {
             let inv_proj = proj.inverse();
 
             let pos_arr = position.to_array();
-            // Compare with epsilon to avoid spurious resets from near/far interpolation drift
+            // Compare with higher epsilon to avoid spurious resets
+            // Position threshold: ~0.01 units of movement
+            // ViewProj threshold: ~1% change in any matrix element
             let vp_arr = view_proj.to_cols_array_2d();
             let camera_changed = pt.last_camera_pos.map_or(true, |prev| {
-                (prev[0] - pos_arr[0]).abs() > 1e-5
-                    || (prev[1] - pos_arr[1]).abs() > 1e-5
-                    || (prev[2] - pos_arr[2]).abs() > 1e-5
+                (prev[0] - pos_arr[0]).abs() > 0.01
+                    || (prev[1] - pos_arr[1]).abs() > 0.01
+                    || (prev[2] - pos_arr[2]).abs() > 0.01
             }) || pt.last_view_proj.map_or(true, |prev| {
                 prev.iter().flatten().zip(vp_arr.iter().flatten())
-                    .any(|(a, b)| (a - b).abs() > 1e-4)
+                    .any(|(a, b)| (a - b).abs() > 0.01)
             });
 
             let cam = super::pathtracer::PtCameraUniform {
                 inv_view: inv_view.to_cols_array_2d(),
                 inv_proj: inv_proj.to_cols_array_2d(),
                 position: pos_arr,
+                _pad0: 0,
                 frame_count: pt.frame_count,
+                max_bounces: self.pt_max_bounces,
+                _pad1: [0; 2],
+                _pad2: [0; 4],
             };
             pt.update_camera(&self.queue, &cam);
 
@@ -682,6 +690,16 @@ impl Renderer {
         let gpu_data = gpu_data::build_gpu_data(&bvh, &all_tris, &materials);
 
         pt.upload_scene(&self.device, &self.queue, &gpu_data);
+        
+        // Also set the environment texture
+        let has_env = self.env_map.intensity > 0.0;
+        pt.set_environment_texture(
+            &self.device,
+            &self.queue,
+            &self.env_map.texture,
+            self.env_map.intensity,
+            has_env,
+        );
     }
 
     /// Reset to default 3-point lighting
@@ -1581,6 +1599,17 @@ impl Renderer {
             path,
         )?;
         self.postfx_bind_groups_dirty = true;
+        
+        // Update path tracer environment
+        if let Some(pt) = &mut self.path_tracer {
+            pt.set_environment_texture(
+                &self.device,
+                &self.queue,
+                &self.env_map.texture,
+                self.env_map.intensity,
+                true,
+            );
+        }
         Ok(())
     }
 
@@ -1592,6 +1621,11 @@ impl Renderer {
             &self.layouts.environment,
         );
         self.postfx_bind_groups_dirty = true;
+        
+        // Update path tracer to disable environment
+        if let Some(pt) = &mut self.path_tracer {
+            pt.update_environment_params(&self.queue, 0.0, false);
+        }
     }
 
     /// Check if environment map is loaded
@@ -1609,6 +1643,12 @@ impl Renderer {
             _pad: 0.0,
         };
         self.queue.write_buffer(&self.env_map.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+        
+        // Update path tracer environment intensity
+        if let Some(pt) = &mut self.path_tracer {
+            pt.update_environment_params(&self.queue, intensity, intensity > 0.0);
+            pt.reset_accumulation();
+        }
     }
     
     /// Set floor plane based on scene bounds (call when checkbox enabled)
