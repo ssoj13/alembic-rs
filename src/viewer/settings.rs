@@ -63,6 +63,11 @@ pub struct Settings {
     pub path_tracing: bool,
     pub pt_max_bounces: u32,
     pub pt_max_samples: u32,
+    pub pt_samples_per_update: u32,
+    pub pt_max_transmission_depth: u32,
+    
+    // Material randomization
+    pub materialize_missing: bool,
 }
 
 impl Default for Settings {
@@ -103,6 +108,9 @@ impl Default for Settings {
             path_tracing: false,
             pt_max_bounces: 4,
             pt_max_samples: 512,
+            pt_samples_per_update: 1,
+            pt_max_transmission_depth: 8,
+            materialize_missing: false,
         }
     }
 }

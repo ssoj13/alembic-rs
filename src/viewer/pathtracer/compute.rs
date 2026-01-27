@@ -39,8 +39,10 @@ pub struct PtCameraUniform {
     pub frame_count: u32,
     /// Maximum bounces (1-8). Offset 148, 4 bytes.
     pub max_bounces: u32,
-    /// Padding to align _pad2 to 16 bytes. Offset 152, 8 bytes.
-    pub _pad1: [u32; 2],
+    /// Maximum transmission/glass depth. Offset 152, 4 bytes.
+    pub max_transmission_depth: u32,
+    /// Padding. Offset 156, 4 bytes.
+    pub _pad1: u32,
     /// Final padding (vec3<u32> in WGSL = 16 bytes). Offset 160, 16 bytes.
     pub _pad2: [u32; 4],
     // Total: 176 bytes

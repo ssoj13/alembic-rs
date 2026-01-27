@@ -88,6 +88,52 @@ pub struct ViewerApp {
     epoch: u64,  // Incremented on each request, used to discard stale results
     is_fullscreen: bool,
     _trace_guard: Option<tracing_chrome::FlushGuard>,
+    
+    // Scene reload trigger (for materialize toggle, etc.)
+    needs_scene_reload: bool,
+}
+
+/// Guess material properties from object path for auto-materialization
+fn guess_material_from_path(path: &str) -> (Vec3, f32, f32, f32, f32) {
+    // Returns: (base_color, roughness, metallic, transmission, ior)
+    let lower = path.to_lowercase();
+    
+    // Glass
+    if lower.contains("glass") || lower.contains("windshield") || lower.contains("window") {
+        return (Vec3::new(0.9, 0.95, 1.0), 0.0, 0.0, 0.95, 1.5);
+    }
+    
+    // Metal/Chrome
+    if lower.contains("chrome") || lower.contains("metal") || lower.contains("rim") 
+        || lower.contains("nuts") || lower.contains("bolt") || lower.contains("steel")
+        || lower.contains("brake_disc") || lower.contains("baraban") {
+        return (Vec3::new(0.8, 0.8, 0.85), 0.3, 1.0, 0.0, 1.5);
+    }
+    
+    // Rubber/Tire
+    if lower.contains("tire") || lower.contains("tyre") || lower.contains("rubber") {
+        return (Vec3::new(0.05, 0.05, 0.05), 0.9, 0.0, 0.0, 1.5);
+    }
+    
+    // Plastic
+    if lower.contains("plastic") || lower.contains("grill") || lower.contains("bumper") {
+        return (Vec3::new(0.2, 0.2, 0.22), 0.4, 0.0, 0.0, 1.5);
+    }
+    
+    // Paint/Body -> metallic paint
+    if lower.contains("paint") || lower.contains("body") {
+        return (Vec3::new(0.7, 0.1, 0.1), 0.3, 0.9, 0.0, 1.5); // Red metallic
+    }
+    
+    // Default: use path hash to pick a random material type
+    let hash: u32 = path.bytes().fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
+    match hash % 5 {
+        0 => (Vec3::new(0.9, 0.95, 1.0), 0.0, 0.0, 0.95, 1.5), // glass
+        1 => (Vec3::new(0.8, 0.8, 0.85), 0.3, 1.0, 0.0, 1.5),  // metal
+        2 => (Vec3::new(0.2, 0.2, 0.22), 0.4, 0.0, 0.0, 1.5),  // plastic
+        3 => (Vec3::new(0.15, 0.08, 0.05), 0.7, 0.0, 0.0, 1.4), // leather
+        _ => (Vec3::new(0.05, 0.05, 0.05), 0.9, 0.0, 0.0, 1.5), // rubber
+    }
 }
 
 impl ViewerApp {
@@ -159,6 +205,7 @@ impl ViewerApp {
             epoch: 0,
             is_fullscreen: false,
             _trace_guard: trace_guard,
+            needs_scene_reload: false,
         }
     }
 
@@ -559,6 +606,7 @@ impl ViewerApp {
                                 renderer.use_path_tracing = true;
                                 renderer.pt_max_samples = self.settings.pt_max_samples;
                                 renderer.pt_max_bounces = self.settings.pt_max_bounces;
+                                renderer.pt_samples_per_update = self.settings.pt_samples_per_update;
                                 renderer.init_path_tracer(1280, 720);
                                 renderer.upload_scene_to_path_tracer();
                                 self.settings.save();
@@ -678,6 +726,16 @@ impl ViewerApp {
                                 ui.label("Bounces:");
                                 if ui.add(egui::Slider::new(&mut self.settings.pt_max_bounces, 1..=8)).changed() {
                                     renderer.pt_max_bounces = self.settings.pt_max_bounces;
+                                    if let Some(pt) = &mut renderer.path_tracer {
+                                        pt.reset_accumulation();
+                                    }
+                                    changed = true;
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Glass depth:");
+                                if ui.add(egui::Slider::new(&mut self.settings.pt_max_transmission_depth, 1..=16)).changed() {
+                                    renderer.pt_max_transmission_depth = self.settings.pt_max_transmission_depth;
                                     if let Some(pt) = &mut renderer.path_tracer {
                                         pt.reset_accumulation();
                                     }
@@ -862,6 +920,18 @@ impl ViewerApp {
                             self.settings.save();
                         }
                     });
+                    
+                    ui.separator();
+                    
+                    // Materializer - randomize materials for meshes without them
+                    if ui.checkbox(&mut self.settings.materialize_missing, "Materialize")
+                        .on_hover_text("Assign materials to meshes based on name heuristics")
+                        .changed() 
+                    {
+                        self.settings.save();
+                        // Trigger scene reload to apply materialization
+                        self.needs_scene_reload = true;
+                    }
                     
                     // Camera info
                     let pos = self.viewport.camera.position();
@@ -1652,15 +1722,41 @@ impl ViewerApp {
                 }
             } else {
                 // Build material from mesh properties
-                let base_color = mesh.base_color.unwrap_or(Vec3::new(0.7, 0.7, 0.75));
-                let roughness = mesh.roughness.unwrap_or(0.4);
-                let metallic = mesh.metallic.unwrap_or(0.0);
+                // Check if mesh has explicit material, or use auto-materialization
+                let has_material = mesh.base_color.is_some() || mesh.metallic.is_some() 
+                    || mesh.roughness.is_some() || mesh.transmission.is_some();
                 
-                let mut material = if metallic > 0.5 {
+                let (base_color, roughness, metallic, transmission, ior) = if has_material {
+                    // Use explicit material properties
+                    (
+                        mesh.base_color.unwrap_or(Vec3::new(0.7, 0.7, 0.75)),
+                        mesh.roughness.unwrap_or(0.4),
+                        mesh.metallic.unwrap_or(0.0),
+                        mesh.transmission.unwrap_or(0.0),
+                        mesh.specular_ior.unwrap_or(1.5),
+                    )
+                } else if self.settings.materialize_missing {
+                    // Auto-materialize based on path
+                    guess_material_from_path(&mesh.path)
+                } else {
+                    // Default grey plastic
+                    (Vec3::new(0.7, 0.7, 0.75), 0.4, 0.0, 0.0, 1.5)
+                };
+                
+                let mut material = if transmission > 0.1 {
+                    // Glass-like material with transmission
+                    StandardSurfaceParams::glass(base_color, ior)
+                } else if metallic > 0.5 {
                     StandardSurfaceParams::metal(base_color, roughness)
                 } else {
                     StandardSurfaceParams::plastic(base_color, roughness)
                 };
+                
+                // Apply additional properties
+                if transmission > 0.1 {
+                    // Glass: set roughness separately (glass() defaults to 0)
+                    material.params1.z = roughness;
+                }
                 material.set_metalness(metallic);
                 
                 renderer.add_mesh(
@@ -1896,6 +1992,18 @@ impl eframe::App for ViewerApp {
         }
         
         checkpoint!("camera_setup");
+        
+        // Handle scene reload request (e.g., from materialize toggle)
+        if self.needs_scene_reload {
+            self.needs_scene_reload = false;
+            self.last_scene_hash = None; // Invalidate cache to force re-apply
+            // Clear meshes so they get re-added with new materials
+            if let Some(renderer) = &mut self.viewport.renderer {
+                renderer.meshes.clear();
+            }
+            self.request_frame(self.current_frame);
+        }
+        
         // Process any ready frames from background worker (non-blocking)
         self.process_worker_results();
         checkpoint!("worker_results");
@@ -2011,6 +2119,7 @@ impl eframe::App for ViewerApp {
                     // Path tracer settings
                     renderer.pt_max_samples = self.settings.pt_max_samples;
                     renderer.pt_max_bounces = self.settings.pt_max_bounces;
+                    renderer.pt_samples_per_update = self.settings.pt_samples_per_update;
                     // Set floor if enabled (uses scene_bounds for sizing)
                     if self.settings.show_floor {
                         renderer.set_floor(&self.scene_bounds);

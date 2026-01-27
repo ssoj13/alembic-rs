@@ -128,6 +128,10 @@ pub struct Renderer {
     pub use_path_tracing: bool,
     pub pt_max_samples: u32,
     pub pt_max_bounces: u32,
+    /// Samples per frame update (batch multiple samples before display refresh)
+    pub pt_samples_per_update: u32,
+    /// Max transmission/glass bounces (separate from diffuse/specular bounces)
+    pub pt_max_transmission_depth: u32,
     /// Surface format needed for path tracer blit pipeline creation.
     #[allow(dead_code)]
     surface_format: wgpu::TextureFormat,
@@ -563,6 +567,8 @@ impl Renderer {
             use_path_tracing: false,
             pt_max_samples: 512,
             pt_max_bounces: 4,
+            pt_samples_per_update: 1,
+            pt_max_transmission_depth: 8,
             surface_format: format,
         }
     }
@@ -611,7 +617,8 @@ impl Renderer {
                 _pad0: 0,
                 frame_count: pt.frame_count,
                 max_bounces: self.pt_max_bounces,
-                _pad1: [0; 2],
+                max_transmission_depth: self.pt_max_transmission_depth,
+                _pad1: 0,
                 _pad2: [0; 4],
             };
             pt.update_camera(&self.queue, &cam);
@@ -1753,16 +1760,13 @@ impl Renderer {
             if let Some(pt) = &mut self.path_tracer {
                 pt.resize(&self.device, width, height);
                 pt.max_samples = self.pt_max_samples;
+                
                 let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("pt_encoder"),
                 });
                 pt.dispatch(&mut encoder, &self.queue);
                 pt.blit(&mut encoder, view);
                 self.queue.submit(std::iter::once(encoder.finish()));
-                let render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
-                if render_ms > 5.0 {
-                    tracing::warn!("SLOW PT RENDER: {:.1}ms frame={}", render_ms, pt.frame_count);
-                }
             }
             return;
         }

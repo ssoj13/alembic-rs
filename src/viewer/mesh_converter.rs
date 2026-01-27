@@ -421,6 +421,8 @@ pub fn convert_polymesh(sample: &PolyMeshSample, transform: Mat4) -> Option<Conv
         base_color: None,  // set by apply_materials
         metallic: None,
         roughness: None,
+        transmission: None,
+        specular_ior: None,
         smooth_data: Some(smooth_data),
     })
 }
@@ -624,6 +626,8 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
             base_color: None,  // set by apply_materials
             metallic: None,
             roughness: None,
+            transmission: None,
+            specular_ior: None,
             smooth_data: None,  // cached meshes don't store smooth data
         });
     }
@@ -675,6 +679,8 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
                 mesh.base_color = mat.base_color;
                 mesh.metallic = mat.metallic;
                 mesh.roughness = mat.roughness;
+                mesh.transmission = mat.transmission;
+                mesh.specular_ior = mat.specular_ior;
             }
         }
     }
@@ -1029,6 +1035,8 @@ fn collect_samples_recursive(
         let base_color = find_vec3(&["base_color", "diffuse_color", "color"]);
         let metallic = find_float(&["metallic", "metalness", "metal"]);
         let roughness = find_float(&["roughness", "specular_roughness", "diffuse_roughness"]);
+        let transmission = find_float(&["transmission", "transmission_weight"]);
+        let specular_ior = find_float(&["specular_IOR", "IOR", "ior"]);
         
         materials.push(SceneMaterial {
             name: imat.getName().to_string(),
@@ -1036,6 +1044,8 @@ fn collect_samples_recursive(
             base_color,
             metallic,
             roughness,
+            transmission,
+            specular_ior,
             inherits_path: imat.inherits_path(),
             targets,
         });
@@ -1078,21 +1088,23 @@ pub struct MeshStats {
     pub triangle_count: usize,
 }
 
+/// Material properties tuple for inheritance
+type MatProps = (Option<Vec3>, Option<f32>, Option<f32>, Option<f32>, Option<f32>);
+
 /// Resolve material inheritance - fill in missing values from parent materials
-#[allow(clippy::type_complexity)]  // HashMap with tuple is clear enough for local use
 pub fn resolve_material_inheritance(materials: &mut [SceneMaterial]) {
     // Resolve in multiple passes (for chains)
     for _ in 0..10 {  // Max 10 levels of inheritance
         // Build lookup each pass (properties may have changed)
-        let parent_data: HashMap<String, (Option<Vec3>, Option<f32>, Option<f32>)> = materials.iter()
-            .map(|m| (m.path.clone(), (m.base_color, m.metallic, m.roughness)))
+        let parent_data: HashMap<String, MatProps> = materials.iter()
+            .map(|m| (m.path.clone(), (m.base_color, m.metallic, m.roughness, m.transmission, m.specular_ior)))
             .collect();
         
         let mut changes = false;
         
         for mat in materials.iter_mut() {
             if let Some(parent_path) = &mat.inherits_path {
-                if let Some(&(parent_color, parent_metallic, parent_roughness)) = parent_data.get(parent_path) {
+                if let Some(&(parent_color, parent_metallic, parent_roughness, parent_transmission, parent_ior)) = parent_data.get(parent_path) {
                     // Copy missing values from parent
                     if mat.base_color.is_none() && parent_color.is_some() {
                         mat.base_color = parent_color;
@@ -1104,6 +1116,14 @@ pub fn resolve_material_inheritance(materials: &mut [SceneMaterial]) {
                     }
                     if mat.roughness.is_none() && parent_roughness.is_some() {
                         mat.roughness = parent_roughness;
+                        changes = true;
+                    }
+                    if mat.transmission.is_none() && parent_transmission.is_some() {
+                        mat.transmission = parent_transmission;
+                        changes = true;
+                    }
+                    if mat.specular_ior.is_none() && parent_ior.is_some() {
+                        mat.specular_ior = parent_ior;
                         changes = true;
                     }
                 }

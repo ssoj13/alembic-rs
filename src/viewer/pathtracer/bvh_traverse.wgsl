@@ -52,7 +52,8 @@ struct Camera {
     _pad0: u32,                 // offset 140, 4 bytes (vec3 padding)
     frame_count: u32,           // offset 144, 4 bytes
     max_bounces: u32,           // offset 148, 4 bytes
-    _pad1: vec2<u32>,           // offset 152, 8 bytes
+    max_transmission_depth: u32, // offset 152, 4 bytes
+    _pad1: u32,                 // offset 156, 4 bytes
     _pad2: vec4<u32>,           // offset 160, 16 bytes
     // Total: 176 bytes
 };
@@ -426,6 +427,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Path trace with multiple bounces
     var throughput = vec3<f32>(1.0);
     var radiance = vec3<f32>(0.0);
+    var transmission_depth = 0u;
 
     for (var bounce = 0u; bounce <= camera.max_bounces; bounce++) {
         let hit = trace_ray(ray);
@@ -603,6 +605,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
         } else if lobe_rand < p_spec + p_trans {
             // ---- Transmission (refraction) ----
+            // Check transmission depth limit
+            if transmission_depth >= camera.max_transmission_depth {
+                // Exceeded transmission depth - treat as opaque
+                break;
+            }
+            transmission_depth += 1u;
+            
             let eta = select(ior, 1.0 / ior, dot(n, ray.dir) < 0.0);
             
             // Sample microfacet for rough refraction
@@ -654,13 +663,23 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 
     // Progressive accumulation: blend new sample with previous frames
-    let prev = accum[pixel_idx];
+    // On first frame (fc=1), ignore prev to clear any NaN/Inf from old frames
     let fc = f32(camera.frame_count);
-    let new_color = vec4<f32>(
-        (prev.rgb * (fc - 1.0) + radiance) / fc,
-        1.0,
-    );
+    var new_color: vec4<f32>;
+    if fc <= 1.0 {
+        // First frame: just use new radiance, ignore prev (clears NaN/Inf)
+        new_color = vec4<f32>(radiance, 1.0);
+    } else {
+        let prev = accum[pixel_idx];
+        new_color = vec4<f32>(
+            (prev.rgb * (fc - 1.0) + radiance) / fc,
+            1.0,
+        );
+    }
+    
+    // Sanitize output - clamp to prevent NaN/Inf propagation
+    new_color = clamp(new_color, vec4<f32>(0.0), vec4<f32>(100.0));
+    
     accum[pixel_idx] = new_color;
-
     textureStore(output, vec2<i32>(px), new_color);
 }
