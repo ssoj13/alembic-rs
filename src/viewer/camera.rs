@@ -30,10 +30,10 @@ impl OrbitCamera {
     pub fn new(target: Vec3, distance: f32) -> Self {
         let rig = CameraRig::builder()
             .with(YawPitch::new().yaw_degrees(45.0).pitch_degrees(-30.0))
-            .with(Smooth::new_rotation(1.5))
+            .with(Smooth::new_rotation(0.0))
             .with(Arm::new(mint::Vector3 { x: 0.0, y: 0.0, z: distance }))
-            .with(Smooth::new_position(1.5))
-            .with(LookAt::new(mint::Point3 { x: target.x, y: target.y, z: target.z }).tracking_smoothness(1.5))
+            .with(Smooth::new_position(0.0))
+            .with(LookAt::new(mint::Point3 { x: target.x, y: target.y, z: target.z }).tracking_smoothness(0.0))
             .build();
 
         Self {

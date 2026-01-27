@@ -597,7 +597,7 @@ impl Renderer {
                     || (prev[2] - pos_arr[2]).abs() > 1e-5
             }) || pt.last_view_proj.map_or(true, |prev| {
                 prev.iter().flatten().zip(vp_arr.iter().flatten())
-                    .any(|(a, b)| (a - b).abs() > 1e-5)
+                    .any(|(a, b)| (a - b).abs() > 1e-4)
             });
 
             let cam = super::pathtracer::PtCameraUniform {
@@ -607,13 +607,24 @@ impl Renderer {
                 frame_count: pt.frame_count,
             };
             pt.update_camera(&self.queue, &cam);
-            pt.last_camera_pos = Some(pos_arr);
-            pt.last_view_proj = Some(vp_arr);
 
             if camera_changed {
-                tracing::debug!("PT: camera changed, resetting accumulation");
+                // Log max delta to diagnose spurious resets
+                let pos_delta = pt.last_camera_pos.map_or(f32::MAX, |prev| {
+                    (prev[0] - pos_arr[0]).abs()
+                        .max((prev[1] - pos_arr[1]).abs())
+                        .max((prev[2] - pos_arr[2]).abs())
+                });
+                let vp_delta = pt.last_view_proj.map_or(f32::MAX, |prev| {
+                    prev.iter().flatten().zip(vp_arr.iter().flatten())
+                        .map(|(a, b)| (a - b).abs())
+                        .fold(0.0f32, f32::max)
+                });
+                tracing::warn!("PT: camera changed, pos_delta={pos_delta:.2e}, vp_delta={vp_delta:.2e}, resetting");
                 pt.reset_accumulation();
             }
+            pt.last_camera_pos = Some(pos_arr);
+            pt.last_view_proj = Some(vp_arr);
         }
     }
 
