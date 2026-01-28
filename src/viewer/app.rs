@@ -318,21 +318,30 @@ impl ViewerApp {
         h1 ^ h2
     }
 
-    fn compute_scene_hash(scene: &mesh_converter::CollectedScene) -> u64 {
+    /// Per-object hashes + combined scene hash. Returns (scene_hash, mesh_hashes, curve_hashes, point_hashes).
+    fn compute_scene_hashes(scene: &mesh_converter::CollectedScene)
+        -> (u64, Vec<u64>, Vec<u64>, Vec<u64>)
+    {
         let mut acc = 0u64;
+        let mut mesh_hashes = Vec::with_capacity(scene.meshes.len());
         for mesh in &scene.meshes {
-            let data_hash = super::renderer::compute_mesh_hash(&mesh.vertices, &mesh.indices);
-            acc ^= Self::hash_scene_object(&mesh.path, mesh.transform, data_hash);
+            let h = super::renderer::compute_mesh_hash(&mesh.vertices, &mesh.indices);
+            mesh_hashes.push(h);
+            acc ^= Self::hash_scene_object(&mesh.path, mesh.transform, h);
         }
+        let mut curve_hashes = Vec::with_capacity(scene.curves.len());
         for curves in &scene.curves {
-            let data_hash = super::renderer::compute_curves_hash(&curves.vertices, &curves.indices);
-            acc ^= Self::hash_scene_object(&curves.path, curves.transform, data_hash);
+            let h = super::renderer::compute_curves_hash(&curves.vertices, &curves.indices);
+            curve_hashes.push(h);
+            acc ^= Self::hash_scene_object(&curves.path, curves.transform, h);
         }
+        let mut point_hashes = Vec::with_capacity(scene.points.len());
         for pts in &scene.points {
-            let data_hash = super::renderer::compute_points_hash(&pts.positions, &pts.widths);
-            acc ^= Self::hash_scene_object(&pts.path, pts.transform, data_hash);
+            let h = super::renderer::compute_points_hash(&pts.positions, &pts.widths);
+            point_hashes.push(h);
+            acc ^= Self::hash_scene_object(&pts.path, pts.transform, h);
         }
-        acc
+        (acc, mesh_hashes, curve_hashes, point_hashes)
     }
     pub fn new(
         _cc: &eframe::CreationContext<'_>,
@@ -1990,12 +1999,18 @@ impl ViewerApp {
             self.pending_frame = None;
         }
 
-        let scene_hash = Self::compute_scene_hash(&scene);
-        if self.last_scene_hash == Some(scene_hash) {
-            self.current_frame = frame;
-            return;
+        // Skip full scene hash during animation (frame changed = data changed).
+        // Only hash when same frame re-applied (e.g. settings change triggers reload).
+        let same_frame = frame == self.current_frame;
+        if same_frame {
+            let (scene_hash, _, _, _) = Self::compute_scene_hashes(&scene);
+            if self.last_scene_hash == Some(scene_hash) {
+                return;
+            }
+            self.last_scene_hash = Some(scene_hash);
+        } else {
+            self.last_scene_hash = None;
         }
-        self.last_scene_hash = Some(scene_hash);
 
         let stats = mesh_converter::compute_stats(&scene.meshes);
         let bounds = mesh_converter::compute_scene_bounds(&scene.meshes, &scene.points, &scene.curves);
@@ -2039,20 +2054,18 @@ impl ViewerApp {
         renderer.points.retain(|path, _| new_point_paths.contains(path.as_str()));
 
         let mut smooth_dirty = false;
+        let t_meshes = std::time::Instant::now();
 
         // Update or add meshes (use path as key for uniqueness)
-        for mesh in scene.meshes {
+        for mesh in scene.meshes.into_iter() {
             if renderer.has_mesh(&mesh.path) {
-                // Always update transform (cheap uniform write)
                 renderer.update_mesh_transform(&mesh.path, mesh.transform);
-                
-                // Only update vertices if they actually changed (expensive buffer recreation)
-                let new_hash = super::renderer::compute_mesh_hash(&mesh.vertices, &mesh.indices);
-                if let Some(old_hash) = renderer.get_vertex_hash(&mesh.path) {
-                    if new_hash != old_hash {
-                        renderer.update_mesh_vertices(&mesh.path, &mesh.vertices, &mesh.indices);
-                        smooth_dirty = true;
-                    }
+                // Compare pre-computed hash (from worker) with stored hash — O(1)
+                let old_hash = renderer.get_vertex_hash(&mesh.path).unwrap_or(0);
+                if mesh.data_hash != old_hash {
+                    let bounds = (mesh.bounds.min, mesh.bounds.max);
+                    renderer.update_mesh_vertices(&mesh.path, &mesh.vertices, &mesh.indices, mesh.data_hash, bounds);
+                    smooth_dirty = true;
                 }
             } else {
                 // Build material from mesh properties
@@ -2110,14 +2123,13 @@ impl ViewerApp {
             Vec3::new(0.9, 0.7, 0.3),
             0.3,
         );
-        for curves in scene.curves {
+        for curves in scene.curves.into_iter() {
             if renderer.has_curves(&curves.path) {
                 renderer.update_curves_transform(&curves.path, curves.transform);
-                let new_hash = super::renderer::compute_curves_hash(&curves.vertices, &curves.indices);
-                if let Some(old_hash) = renderer.get_curves_hash(&curves.path) {
-                    if new_hash != old_hash {
-                        renderer.update_curves_vertices(&curves.path, &curves.vertices, &curves.indices);
-                    }
+                let old_hash = renderer.get_curves_hash(&curves.path).unwrap_or(0);
+                if curves.data_hash != old_hash {
+                    let bounds = (curves.bounds.min, curves.bounds.max);
+                    renderer.update_curves_vertices(&curves.path, &curves.vertices, &curves.indices, curves.data_hash, bounds);
                 }
             } else {
                 renderer.add_curves(
@@ -2155,6 +2167,13 @@ impl ViewerApp {
             }
         }
 
+        let meshes_ms = t_meshes.elapsed().as_secs_f64() * 1000.0;
+        if meshes_ms > 5.0 {
+            let n_meshes = renderer.meshes.len();
+            let n_curves = renderer.curves.len();
+            tracing::warn!("apply_scene: update took {meshes_ms:.1}ms ({n_meshes} meshes, {n_curves} curves)");
+        }
+
         if self.settings.smooth_normals && smooth_dirty {
             renderer.recalculate_smooth_normals(
                 self.settings.smooth_angle,
@@ -2163,6 +2182,7 @@ impl ViewerApp {
             );
         }
         
+        let t_pt = std::time::Instant::now();
         // Init/update path tracer if enabled
         if self.settings.path_tracing {
             renderer.use_path_tracing = true;
@@ -2180,6 +2200,11 @@ impl ViewerApp {
                 self.settings.smooth_normals,
                 self.settings.smooth_angle,
             );
+        }
+
+        let pt_ms = t_pt.elapsed().as_secs_f64() * 1000.0;
+        if pt_ms > 5.0 {
+            tracing::warn!("apply_scene: PT upload took {pt_ms:.1}ms");
         }
 
         // Update stats

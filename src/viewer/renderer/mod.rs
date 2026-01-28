@@ -1867,32 +1867,35 @@ impl Renderer {
     
     /// Update vertex data for existing mesh (for deforming animation)
     /// Returns true if mesh was found and updated
-    pub fn update_mesh_vertices(&mut self, name: &str, vertices: &[Vertex], indices: &[u32]) -> bool {
-        if !self.meshes.contains_key(name) {
-            return false;
-        }
-        let new_hash = compute_mesh_hash(vertices, indices);
+    /// Update mesh GPU buffers with pre-computed hash and bounds from worker thread.
+    pub fn update_mesh_vertices(
+        &mut self, name: &str, vertices: &[Vertex], indices: &[u32],
+        data_hash: u64, bounds: (Vec3, Vec3),
+    ) -> bool {
+        let scene_mesh = match self.meshes.get_mut(name) {
+            Some(m) => m,
+            None => return false,
+        };
         let vertex_bytes = bytemuck::cast_slice(vertices);
         let index_bytes = bytemuck::cast_slice(indices);
-        let vertex_size = vertex_bytes.len();
-        let index_size = index_bytes.len();
-        if let Some(scene_mesh) = self.meshes.get_mut(name) {
-            if vertex_size <= scene_mesh.mesh.vertex_buffer_size
-                && index_size <= scene_mesh.mesh.index_buffer_size
-            {
-                self.queue.write_buffer(&scene_mesh.mesh.vertex_buffer, 0, vertex_bytes);
-                self.queue.write_buffer(&scene_mesh.mesh.index_buffer, 0, index_bytes);
-                scene_mesh.mesh.index_count = indices.len() as u32;
-            } else {
-                let new_mesh = Self::create_mesh(&self.device, vertices, indices);
-                scene_mesh.mesh = new_mesh;
-            }
-            scene_mesh.vertex_hash = new_hash;
-            scene_mesh.bounds = compute_mesh_bounds(vertices, scene_mesh.transform);
+        if vertex_bytes.len() <= scene_mesh.mesh.vertex_buffer_size
+            && index_bytes.len() <= scene_mesh.mesh.index_buffer_size
+        {
+            self.queue.write_buffer(&scene_mesh.mesh.vertex_buffer, 0, vertex_bytes);
+            self.queue.write_buffer(&scene_mesh.mesh.index_buffer, 0, index_bytes);
+            scene_mesh.mesh.index_count = indices.len() as u32;
+        } else {
+            let new_mesh = Self::create_mesh(&self.device, vertices, indices);
+            scene_mesh.mesh = new_mesh;
+        }
+        scene_mesh.vertex_hash = data_hash;
+        scene_mesh.bounds = bounds;
+        // CPU copies for PT — only if path tracing is active
+        if self.use_path_tracing {
             scene_mesh.base_vertices = Some(vertices.to_vec());
             scene_mesh.base_indices = Some(indices.to_vec());
-            scene_mesh.smooth_dirty = true;
         }
+        scene_mesh.smooth_dirty = true;
         true
     }
     
@@ -1929,7 +1932,7 @@ impl Renderer {
                 let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("mesh_vertex_buffer"),
                     contents: bytemuck::cast_slice(&new_vertices),
-                    usage: wgpu::BufferUsages::VERTEX,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 });
                 scene_mesh.mesh.vertex_buffer = vertex_buffer;
                 scene_mesh.smooth_dirty = false;
@@ -1959,29 +1962,31 @@ impl Renderer {
     }
 
     /// Update curves vertices/indices for existing curves
-    pub fn update_curves_vertices(&mut self, name: &str, vertices: &[Vertex], indices: &[u32]) -> bool {
-        if !self.curves.contains_key(name) {
-            return false;
-        }
-        let new_hash = compute_curves_hash(vertices, indices);
+    /// Update curves GPU buffers with pre-computed hash and bounds from worker thread.
+    pub fn update_curves_vertices(
+        &mut self, name: &str, vertices: &[Vertex], indices: &[u32],
+        data_hash: u64, bounds: (Vec3, Vec3),
+    ) -> bool {
+        let curves = match self.curves.get_mut(name) {
+            Some(c) => c,
+            None => return false,
+        };
         let vertex_bytes = bytemuck::cast_slice(vertices);
         let index_bytes = bytemuck::cast_slice(indices);
-        let vertex_size = vertex_bytes.len();
-        let index_size = index_bytes.len();
-        if let Some(curves) = self.curves.get_mut(name) {
-            if vertex_size <= curves.mesh.vertex_buffer_size
-                && index_size <= curves.mesh.index_buffer_size
-            {
-                self.queue.write_buffer(&curves.mesh.vertex_buffer, 0, vertex_bytes);
-                self.queue.write_buffer(&curves.mesh.index_buffer, 0, index_bytes);
-                curves.mesh.index_count = indices.len() as u32;
-            } else {
-                let new_mesh = Self::create_mesh(&self.device, vertices, indices);
-                curves.mesh = new_mesh;
-            }
-            curves.data_hash = new_hash;
-            curves.bounds = compute_mesh_bounds(vertices, curves.transform);
+        if vertex_bytes.len() <= curves.mesh.vertex_buffer_size
+            && index_bytes.len() <= curves.mesh.index_buffer_size
+        {
+            self.queue.write_buffer(&curves.mesh.vertex_buffer, 0, vertex_bytes);
+            self.queue.write_buffer(&curves.mesh.index_buffer, 0, index_bytes);
+            curves.mesh.index_count = indices.len() as u32;
+        } else {
+            let new_mesh = Self::create_mesh(&self.device, vertices, indices);
+            curves.mesh = new_mesh;
         }
+        curves.data_hash = data_hash;
+        curves.bounds = bounds;
+        curves.base_vertices = Some(vertices.to_vec());
+        curves.base_indices = Some(indices.to_vec());
         true
     }
 
@@ -2036,7 +2041,7 @@ impl Renderer {
                 points.vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("points_vertex_buffer"),
                     contents: vertex_bytes,
-                    usage: wgpu::BufferUsages::VERTEX,
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 });
                 points.vertex_buffer_size = vertex_size;
             }

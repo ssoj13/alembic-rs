@@ -10,6 +10,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use parking_lot::Mutex;  // faster than std::sync::Mutex
 
+/// Fast content hash for vertex+index data (SpookyHash).
+/// Called on worker thread (parallel via rayon) to avoid main-thread stalls.
+fn compute_data_hash(vertices: &[Vertex], indices: &[u32]) -> u64 {
+    let vb = bytemuck::cast_slice(vertices);
+    let ib = bytemuck::cast_slice(indices);
+    let (h1, h2) = spooky_hash::SpookyHash::hash128(vb, 0, 0);
+    let (h3, h4) = spooky_hash::SpookyHash::hash128(ib, h1, h2);
+    h3 ^ h4
+}
+
 /// Axis-aligned bounding box
 #[derive(Clone, Copy, Debug)]
 pub struct Bounds {
@@ -78,6 +88,8 @@ pub struct ConvertedMesh {
     pub specular_ior: Option<f32>,
     // Data for dynamic smooth normal recalculation
     pub smooth_data: Option<SmoothNormalData>,
+    /// Pre-computed vertex+index hash (from worker thread)
+    pub data_hash: u64,
 }
 
 /// Converted curves data ready for GPU (as line strips)
@@ -87,6 +99,7 @@ pub struct ConvertedCurves {
     pub indices: Arc<Vec<u32>>,
     pub transform: Mat4,
     pub bounds: Bounds,
+    pub data_hash: u64,
 }
 
 /// Converted points data ready for GPU
@@ -256,12 +269,14 @@ pub fn convert_curves(sample: &CurvesSample, path: &str, transform: Mat4) -> Opt
     }
     
     let bounds = bounds_from_vertices(&vertices, &transform);
+    let data_hash = compute_data_hash(&vertices, &indices);
     Some(ConvertedCurves {
         path: path.to_string(),
         vertices: Arc::new(vertices),
         indices: Arc::new(indices),
         transform,
         bounds,
+        data_hash,
     })
 }
 
@@ -412,6 +427,7 @@ pub fn convert_polymesh(sample: &PolyMeshSample, transform: Mat4) -> Option<Conv
     // Build smooth normal data for dynamic recalculation
     let smooth_data = SmoothNormalData::from_vertices(&smooth_positions, &smooth_face_normals);
     
+    let data_hash = compute_data_hash(&vertices, &indices);
     Some(ConvertedMesh {
         path: String::new(),  // set by caller
         vertices: Arc::new(vertices),
@@ -424,6 +440,7 @@ pub fn convert_polymesh(sample: &PolyMeshSample, transform: Mat4) -> Option<Conv
         transmission: None,
         specular_ior: None,
         smooth_data: Some(smooth_data),
+        data_hash,
     })
 }
 
@@ -480,6 +497,7 @@ pub(crate) struct CachedMesh {
     vertices: Arc<Vec<Vertex>>,  // Arc for zero-copy sharing
     indices: Arc<Vec<u32>>,
     local_bounds: Bounds,
+    data_hash: u64,
 }
 
 /// Cached curves data for constant geometry
@@ -487,6 +505,7 @@ pub(crate) struct CachedMesh {
 pub(crate) struct CachedCurves {
     vertices: Arc<Vec<Vertex>>,
     indices: Arc<Vec<u32>>,
+    data_hash: u64,
 }
 
 /// Cached points data for constant geometry
@@ -532,6 +551,7 @@ struct CachedResult {
     indices: Arc<Vec<u32>>,
     transform: Mat4,
     local_bounds: Bounds,
+    data_hash: u64,
 }
 
 struct CachedCurvesResult {
@@ -539,6 +559,7 @@ struct CachedCurvesResult {
     vertices: Arc<Vec<Vertex>>,
     indices: Arc<Vec<u32>>,
     transform: Mat4,
+    data_hash: u64,
 }
 
 struct CachedPointsResult {
@@ -603,6 +624,7 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
                             vertices: Arc::clone(&converted.vertices),
                             indices: Arc::clone(&converted.indices),
                             local_bounds,
+                            data_hash: converted.data_hash,
                         });
                     }
                 }
@@ -629,6 +651,7 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
             transmission: None,
             specular_ior: None,
             smooth_data: None,  // cached meshes don't store smooth data
+            data_hash: cached.data_hash,
         });
     }
     
@@ -643,6 +666,7 @@ pub fn collect_scene_cached(archive: &crate::abc::IArchive, sample_index: usize,
             indices: cached.indices,
             transform: cached.transform,
             bounds,
+            data_hash: cached.data_hash,
         });
     }
 
@@ -811,10 +835,11 @@ fn collect_samples_recursive(
         if let Some(cached_mesh) = cached {
             cached_results.push(CachedResult {
                 path: mesh_path,
-                vertices: cached_mesh.vertices,
-                indices: cached_mesh.indices,
+                vertices: cached_mesh.vertices.clone(),
+                indices: cached_mesh.indices.clone(),
                 transform: world_transform,
                 local_bounds: cached_mesh.local_bounds,
+                data_hash: cached_mesh.data_hash,
             });
         } else if num_samples > 0 {
             if let Ok(sample) = polymesh.getSample(sample_idx) {
@@ -853,10 +878,11 @@ fn collect_samples_recursive(
         if let Some(cached_mesh) = cached {
             cached_results.push(CachedResult {
                 path: mesh_path,
-                vertices: cached_mesh.vertices,
-                indices: cached_mesh.indices,
+                vertices: cached_mesh.vertices.clone(),
+                indices: cached_mesh.indices.clone(),
                 transform: world_transform,
                 local_bounds: cached_mesh.local_bounds,
+                data_hash: cached_mesh.data_hash,
             });
         } else if num_samples > 0 {
             if let Ok(sample) = subd.getSample(sample_idx) {
@@ -903,9 +929,10 @@ fn collect_samples_recursive(
         if let Some(cached_curves) = cached {
             cached_curve_results.push(CachedCurvesResult {
                 path: curve_path,
-                vertices: cached_curves.vertices,
-                indices: cached_curves.indices,
+                vertices: cached_curves.vertices.clone(),
+                indices: cached_curves.indices.clone(),
                 transform: world_transform,
+                data_hash: cached_curves.data_hash,
             });
         } else if num_samples > 0 {
             if let Ok(sample) = icurves.getSample(sample_idx) {
@@ -915,6 +942,7 @@ fn collect_samples_recursive(
                             cache.lock().curves.insert(converted.path.clone(), CachedCurves {
                                 vertices: Arc::clone(&converted.vertices),
                                 indices: Arc::clone(&converted.indices),
+                                data_hash: converted.data_hash,
                             });
                         }
                     }
