@@ -748,8 +748,32 @@ impl ViewerApp {
             // Selected object properties
             if let Some(name) = &self.selected_object {
                 ui.separator();
-                ui.label(RichText::new("Selected").strong());
-                ui.label(format!("Name: {}", name));
+                ui.label(RichText::new("Selected").strong().color(egui::Color32::from_rgb(100, 180, 255)));
+
+                // Short name (last path component)
+                let short = name.rsplit('/').next().unwrap_or(name);
+                ui.label(RichText::new(short).strong());
+                ui.label(RichText::new(name).weak().small());
+
+                // Mesh bounds & stats from renderer
+                if let Some(renderer) = &self.viewport.renderer {
+                    if let Some(mesh) = renderer.meshes.get(name.as_str()) {
+                        let (min, max) = mesh.bounds;
+                        let size = max - min;
+                        let center = (min + max) * 0.5;
+                        ui.add_space(4.0);
+                        ui.label(format!("Center: ({:.2}, {:.2}, {:.2})", center.x, center.y, center.z));
+                        ui.label(format!("Size: ({:.2}, {:.2}, {:.2})", size.x, size.y, size.z));
+                        if let Some(verts) = &mesh.base_vertices {
+                            ui.label(format!("Verts: {}", verts.len()));
+                        }
+                        if let Some(idx) = &mesh.base_indices {
+                            ui.label(format!("Tris: {}", idx.len() / 3));
+                        }
+                    }
+                }
+
+                // Archive properties (type, samples, etc.)
                 if let Some(node) = self.find_node_by_name(name) {
                     ui.label(format!("Type: {}", node.node_type));
                 }
@@ -2243,7 +2267,7 @@ impl eframe::App for ViewerApp {
         }
         
         // Save camera state
-        self.settings.camera_distance = self.viewport.camera.distance();
+        self.settings.camera_distance = self.viewport.camera.distance;
         let (yaw, pitch) = self.viewport.camera.angles();
         self.settings.camera_yaw = yaw;
         self.settings.camera_pitch = pitch;
@@ -2340,14 +2364,29 @@ impl eframe::App for ViewerApp {
             self.status_message = "Camera reset".into();
         }
         
-        // F = Fit view (focus on scene bounds)
+        // F = Focus on selected object, or fit whole scene if nothing selected
         if ctx.input(|i| i.key_pressed(egui::Key::F)) {
-            if let Some(bounds) = &self.scene_bounds {
-                self.viewport.camera.focus(bounds.center(), bounds.radius().max(0.1));
-                self.status_message = format!("Fit to scene (radius: {:.2})", bounds.radius());
-            } else {
-                self.viewport.camera.focus(glam::Vec3::ZERO, 5.0);
-                self.status_message = "No scene bounds".into();
+            let mut focused = false;
+            if let Some(name) = &self.selected_object {
+                if let Some(renderer) = &self.viewport.renderer {
+                    if let Some(mesh) = renderer.meshes.get(name.as_str()) {
+                        let (min, max) = mesh.bounds;
+                        let center = (min + max) * 0.5;
+                        let radius = (max - min).length() * 0.5;
+                        self.viewport.camera.focus(center, radius.max(0.1));
+                        self.status_message = format!("Focus: {} (r={:.2})", name, radius);
+                        focused = true;
+                    }
+                }
+            }
+            if !focused {
+                if let Some(bounds) = &self.scene_bounds {
+                    self.viewport.camera.focus(bounds.center(), bounds.radius().max(0.1));
+                    self.status_message = format!("Fit to scene (radius: {:.2})", bounds.radius());
+                } else {
+                    self.viewport.camera.focus(glam::Vec3::ZERO, 5.0);
+                    self.status_message = "No scene bounds".into();
+                }
             }
         }
 
@@ -2563,6 +2602,14 @@ impl eframe::App for ViewerApp {
                     eprintln!("OBJECT PICK: \"{}\" at ({:.1}, {:.1}, {:.1}), z_depth={:.2}",
                         pick.mesh_name, pick.point.x, pick.point.y, pick.point.z, pick.t);
                     self.selected_object = Some(pick.mesh_name.clone());
+                    // Auto-set DoF focus distance to picked point
+                    self.settings.pt_focus_distance = pick.t;
+                    if let Some(renderer) = &mut self.viewport.renderer {
+                        renderer.pt_focus_distance = pick.t;
+                        if let Some(pt) = &mut renderer.path_tracer {
+                            pt.reset_accumulation();
+                        }
+                    }
                 } else {
                     eprintln!("OBJECT PICK: <miss>");
                     self.selected_object = None;

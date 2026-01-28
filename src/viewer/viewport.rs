@@ -116,7 +116,7 @@ impl Viewport {
 
                 // Render scene
                 if let (Some(renderer), Some(rt)) = (&mut self.renderer, &self.render_texture) {
-                    renderer.render(&rt.view, width, height, self.camera.distance(), self.camera.near(), self.camera.far());
+                    renderer.render(&rt.view, width, height, self.camera.distance, self.camera.near(), self.camera.far());
                     
                     // Poll for hover pick result (must be after render submits GPU commands)
                     if renderer.hover_mode != super::settings::HoverMode::None {
@@ -208,7 +208,7 @@ impl Viewport {
         let ctrl_held = input.modifiers.ctrl;
         
         // Orbit with left mouse drag (only when Ctrl not held)
-        if response.dragged_by(egui::PointerButton::Primary) && !input.modifiers.shift && !ctrl_held {
+        if response.dragged_by(egui::PointerButton::Primary) && !ctrl_held {
             let delta = response.drag_delta();
             self.camera.orbit(delta.x, delta.y);
         }
@@ -238,14 +238,10 @@ impl Viewport {
             self.camera.reset();
         }
 
-        // Focus on scene with F key
-        if response.has_focus() && input.key_pressed(egui::Key::F) {
-            // TODO: Calculate scene bounds
-            self.camera.focus(glam::Vec3::ZERO, 5.0);
-        }
-        
-        // Ctrl+LMB = continuous focus sampling (click or drag)
-        if ctrl_held && (response.clicked() || response.dragged_by(egui::PointerButton::Primary)) {
+        // MMB click or Ctrl+LMB = DoF focus pick
+        if response.clicked_by(egui::PointerButton::Middle)
+            || (ctrl_held && (response.clicked() || response.dragged_by(egui::PointerButton::Primary)))
+        {
             if let Some(pos) = input.pointer.hover_pos() {
                 let rect = response.rect;
                 if rect.contains(pos) {
@@ -256,9 +252,8 @@ impl Viewport {
             }
         }
         
-        // Shift+LMB = object picking (selection) - continuous like Ctrl+LMB
-        let shift_held = input.modifiers.shift;
-        if shift_held && (response.clicked() || response.dragged_by(egui::PointerButton::Primary)) {
+        // LMB click = object picking (selection); click-drag = orbit, click-release = select
+        if response.clicked() && !ctrl_held {
             if let Some(pos) = input.pointer.hover_pos() {
                 let rect = response.rect;
                 if rect.contains(pos) {

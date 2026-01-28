@@ -53,18 +53,16 @@ dependencies = [
  "bytemuck",
  "byteorder",
  "dirs",
- "dolly",
  "eframe",
  "egui",
  "egui-wgpu",
  "env_logger",
  "flate2",
- "glam 0.30.10",
+ "glam",
  "half",
  "image",
  "log",
  "memmap2",
- "mint",
  "murmur3",
  "parking_lot",
  "pyo3",
@@ -623,16 +621,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dolly"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1057c2875c640d0d6c961e0bfe5c31d03010d0e72ea96f6c40fffe6b7aebf235"
-dependencies = [
- "glam 0.28.0",
- "mint",
-]
-
-[[package]]
 name = "downcast-rs"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -984,15 +972,6 @@ dependencies = [
  "khronos_api",
  "log",
  "xml-rs",
-]
-
-[[package]]
-name = "glam"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "779ae4bf7e8421cf91c0b3b64e7e8b40b862fba4d393f59150042de7c4965a94"
-dependencies = [
- "mint",
 ]
 
 [[package]]
@@ -2576,7 +2555,7 @@ name = "standard-surface"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "glam 0.30.10",
+ "glam",
  "wgpu",
 ]
 

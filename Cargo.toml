@@ -35,8 +35,6 @@ eframe = { version = "0.33", default-features = false, features = ["default_font
 egui = { version = "0.33", optional = true }
 egui-wgpu = { version = "0.33", optional = true }
 wgpu = { version = "27", optional = true }
-dolly = { version = "0.6", optional = true }
-mint = { version = "0.5", optional = true }
 log = { version = "0.4", optional = true }
 env_logger = { version = "0.11", optional = true }
 anyhow = { version = "1.0", optional = true }
@@ -65,7 +63,7 @@ mmap = []
 python = ["pyo3"]
 viewer = [
     "standard-surface", "eframe", "egui", "egui-wgpu", "wgpu",
-    "dolly", "mint", "log", "env_logger", "anyhow", "rfd", "serde", "dirs", "image",
+    "log", "env_logger", "anyhow", "rfd", "serde", "dirs", "image",
     "tracing-chrome",
 ]
 

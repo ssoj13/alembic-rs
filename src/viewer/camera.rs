@@ -1,7 +1,6 @@
-//! Camera controls using dolly
+//! Simple Maya-style orbit camera using glam (no external rig library)
 
-use dolly::prelude::*;
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Quat};
 
 const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4::from_cols_array(&[
     1.0, 0.0, 0.0, 0.0,
@@ -11,149 +10,113 @@ const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4::from_cols_array(&[
 ]);
 
 pub fn wgpu_projection(fov_y: f32, aspect: f32, near: f32, far: f32) -> Mat4 {
-    // wgpu uses 0..1 depth; no Y flip needed for NDC orientation.
     OPENGL_TO_WGPU_MATRIX * Mat4::perspective_rh(fov_y, aspect, near, far)
 }
 
-/// Orbit camera rig for 3D viewport
+/// Maya-style orbit camera: pivot point + yaw/pitch + arm distance
 pub struct OrbitCamera {
-    rig: CameraRig,
+    /// Point of interest (orbit pivot)
+    pub target: Vec3,
+    /// Horizontal rotation in degrees
+    pub yaw: f32,
+    /// Vertical rotation in degrees (clamped to avoid gimbal flip)
+    pub pitch: f32,
+    /// Distance from target
+    pub distance: f32,
     /// Vertical FOV in degrees
     pub fov: f32,
 }
 
 impl OrbitCamera {
     pub fn new(target: Vec3, distance: f32) -> Self {
-        let rig = CameraRig::builder()
-            .with(YawPitch::new().yaw_degrees(45.0).pitch_degrees(-30.0))
-            .with(Smooth::new_rotation(0.0))
-            .with(Arm::new(mint::Vector3 { x: 0.0, y: 0.0, z: distance }))
-            .with(Smooth::new_position(0.0))
-            .with(LookAt::new(mint::Point3 { x: target.x, y: target.y, z: target.z }).tracking_smoothness(0.0))
-            .build();
-
         Self {
-            rig,
+            target,
+            yaw: 45.0,
+            pitch: -30.0,
+            distance,
             fov: 45.0,
         }
     }
-    
-    /// Near clip plane - fixed value for stability
-    pub fn near(&self) -> f32 {
-        0.1
-    }
-    
-    /// Far clip plane - fixed value for stability
-    pub fn far(&self) -> f32 {
-        10000.0
-    }
 
-    /// Orbit around target (drag)
+    pub fn near(&self) -> f32 { 0.1 }
+    pub fn far(&self) -> f32 { 10000.0 }
+
+    /// Orbit around target (LMB drag) - Maya tumble
     pub fn orbit(&mut self, delta_x: f32, delta_y: f32) {
-        let sensitivity = 0.5;
-        self.rig.driver_mut::<YawPitch>().rotate_yaw_pitch(
-            -delta_x * sensitivity,
-            -delta_y * sensitivity,
-        );
+        let sensitivity = 0.3;
+        self.yaw -= delta_x * sensitivity;
+        self.pitch -= delta_y * sensitivity;
+        self.pitch = self.pitch.clamp(-89.0, 89.0);
     }
 
-    /// Pan camera (shift+drag) - screen-space pan like Houdini/Maya
+    /// Pan camera (MMB drag) - screen-space translation of pivot
     pub fn pan(&mut self, delta_x: f32, delta_y: f32) {
-        // Use camera right and up vectors for screen-space movement
-        let right: Vec3 = self.rig.final_transform.right();
-        let up: Vec3 = self.rig.final_transform.up();
-        let dist = self.rig.driver::<Arm>().offset.z;
-        
-        let sensitivity = 0.002 * dist;  // Scale with distance
-        let offset = right * (-delta_x * sensitivity) + up * (delta_y * sensitivity);
-        
-        let look_at = self.rig.driver_mut::<LookAt>();
-        look_at.target.x += offset.x;
-        look_at.target.y += offset.y;
-        look_at.target.z += offset.z;
+        let rot = self.rotation();
+        let right = rot * Vec3::X;
+        let up = rot * Vec3::Y;
+        let sensitivity = 0.002 * self.distance;
+        self.target += right * (-delta_x * sensitivity) + up * (delta_y * sensitivity);
     }
 
-    /// Zoom (scroll)
+    /// Zoom (RMB drag / scroll)
     pub fn zoom(&mut self, delta: f32) {
-        let arm = self.rig.driver_mut::<Arm>();
-        let current = arm.offset.z;
-        let sensitivity = 0.0002 * current.max(1.0);
+        let sensitivity = 0.0002 * self.distance.max(1.0);
         let factor = 1.0 - delta * sensitivity;
-        arm.offset.z = (current * factor).clamp(0.1, 5000.0);
+        self.distance = (self.distance * factor).clamp(0.01, 50000.0);
     }
 
-    /// Focus on bounding box
+    /// Focus on bounding box center with given radius
     pub fn focus(&mut self, center: Vec3, radius: f32) {
-        let look_at = self.rig.driver_mut::<LookAt>();
-        look_at.target = mint::Point3 { x: center.x, y: center.y, z: center.z };
-        self.rig.driver_mut::<Arm>().offset.z = radius * 2.5;
+        self.target = center;
+        self.distance = radius * 2.5;
     }
 
     /// Reset to default view
     pub fn reset(&mut self) {
-        self.rig.driver_mut::<YawPitch>().set_rotation_quat(
-            mint::Quaternion::from(glam::Quat::from_euler(
-                glam::EulerRot::YXZ, 
-                45.0_f32.to_radians(), 
-                -30.0_f32.to_radians(), 
-                0.0
-            ))
-        );
-        self.rig.driver_mut::<LookAt>().target = mint::Point3 { x: 0.0, y: 0.0, z: 0.0 };
-        self.rig.driver_mut::<Arm>().offset.z = 5.0;
-    }
-
-    /// Get current distance from target
-    pub fn distance(&self) -> f32 {
-        self.rig.driver::<Arm>().offset.z
+        self.target = Vec3::ZERO;
+        self.yaw = 45.0;
+        self.pitch = -30.0;
+        self.distance = 5.0;
     }
 
     /// Set distance from target
     pub fn set_distance(&mut self, dist: f32) {
-        self.rig.driver_mut::<Arm>().offset.z = dist.clamp(0.1, 5000.0);
+        self.distance = dist.clamp(0.01, 50000.0);
     }
 
-    /// Get yaw and pitch angles in degrees (from final transform)
+    /// Get yaw and pitch angles in degrees
     pub fn angles(&self) -> (f32, f32) {
-        // Extract euler angles from the final transform rotation
-        let rot = self.rig.final_transform.rotation;
-        let q = glam::Quat::from_xyzw(rot.v.x, rot.v.y, rot.v.z, rot.s);
-        let (yaw, pitch, _) = q.to_euler(glam::EulerRot::YXZ);
-        (yaw.to_degrees(), pitch.to_degrees())
+        (self.yaw, self.pitch)
     }
 
     /// Set yaw and pitch angles in degrees
     pub fn set_angles(&mut self, yaw: f32, pitch: f32) {
-        let yp = self.rig.driver_mut::<YawPitch>();
-        yp.set_rotation_quat(mint::Quaternion::from(glam::Quat::from_euler(
-            glam::EulerRot::YXZ,
-            yaw.to_radians(),
-            pitch.to_radians(),
-            0.0,
-        )));
+        self.yaw = yaw;
+        self.pitch = pitch.clamp(-89.0, 89.0);
     }
 
-    /// Update camera (call each frame)
-    pub fn update(&mut self, dt: f32) {
-        self.rig.update(dt);
+    /// Update camera (no-op, kept for API compat)
+    pub fn update(&mut self, _dt: f32) {}
+
+    /// Camera rotation quaternion (yaw around Y, then pitch around local X)
+    fn rotation(&self) -> Quat {
+        Quat::from_euler(glam::EulerRot::YXZ, self.yaw.to_radians(), self.pitch.to_radians(), 0.0)
     }
 
-    /// Get camera position
+    /// Get camera world position
     pub fn position(&self) -> Vec3 {
-        let p = self.rig.final_transform.position;
-        Vec3::new(p.x, p.y, p.z)
+        let rot = self.rotation();
+        let offset = rot * Vec3::new(0.0, 0.0, self.distance);
+        self.target + offset
     }
 
-    /// Get view matrix
+    /// Get view matrix (look from position toward target)
     pub fn view_matrix(&self) -> Mat4 {
-        let t = &self.rig.final_transform;
-        let pos = Vec3::new(t.position.x, t.position.y, t.position.z);
-        let fwd: Vec3 = t.forward();
-        let up: Vec3 = t.up();
-        Mat4::look_at_rh(pos, pos + fwd, up)
+        let pos = self.position();
+        Mat4::look_at_rh(pos, self.target, Vec3::Y)
     }
 
-    /// Get projection matrix with near/far planes
+    /// Get projection matrix
     pub fn projection_matrix(&self, aspect: f32) -> Mat4 {
         wgpu_projection(self.fov.to_radians(), aspect, self.near(), self.far())
     }
