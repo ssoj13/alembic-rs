@@ -14,6 +14,7 @@ pub fn extract_triangles(
     indices: &[u32],
     transform: &glam::Mat4,
     material_id: u32,
+    object_id: u32,
 ) -> Vec<Triangle> {
     let mut tris = Vec::with_capacity(indices.len() / 3);
 
@@ -46,6 +47,7 @@ pub fn extract_triangles(
             n1: n1.to_array(),
             n2: n2.to_array(),
             material_id,
+            object_id,
         });
     }
 
@@ -73,7 +75,7 @@ pub fn material_from_params(params: &standard_surface::StandardSurfaceParams) ->
             params.params2.x,                  // specular_anisotropy
             params.params2.y.max(0.04),        // coat_roughness
             params.params2.z,                  // coat_IOR
-            0.0,                               // unused
+            1.0,                               // visible (1=vis, 0=hidden)
         ],
     }
 }
@@ -89,6 +91,6 @@ pub fn default_material() -> GpuMaterial {
         emission_color_weight: [1.0, 1.0, 1.0, 0.0],
         opacity: [1.0, 1.0, 1.0, 1.0],
         params1: [0.0, 0.0, 0.2, 1.5], // diffuse_rough, metalness, spec_rough, IOR
-        params2: [0.0, 0.1, 1.5, 0.0], // anisotropy, coat_rough, coat_IOR, unused
+        params2: [0.0, 0.1, 1.5, 1.0], // anisotropy, coat_rough, coat_IOR, visible
     }
 }

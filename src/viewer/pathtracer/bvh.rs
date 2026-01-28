@@ -85,15 +85,15 @@ pub struct BvhNode {
     pub count: u32,
 }
 
-/// Triangle primitive for GPU storage (48 bytes).
-/// Packed: 3 vertices × (pos + normal) = 3 × 2 × vec3.
+/// Triangle primitive for GPU storage (112 bytes).
+/// Packed: 3 vertices × (pos + normal) = 3 × 2 × vec3, plus material and object IDs.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct GpuTriangle {
     pub v0: [f32; 3],
     pub material_id: u32,
     pub v1: [f32; 3],
-    pub _pad0: u32,
+    pub object_id: u32,
     pub v2: [f32; 3],
     pub _pad1: u32,
     pub n0: [f32; 3],
@@ -127,7 +127,7 @@ pub struct GpuMaterial {
     pub opacity: [f32; 4],
     /// x=diffuse_roughness, y=metalness, z=specular_roughness, w=specular_IOR
     pub params1: [f32; 4],
-    /// x=specular_anisotropy, y=coat_roughness, z=coat_IOR, w=unused
+    /// x=specular_anisotropy, y=coat_roughness, z=coat_IOR, w=visible (0=hidden, 1=visible)
     pub params2: [f32; 4],
 }
 
@@ -141,6 +141,7 @@ pub struct Triangle {
     pub n1: [f32; 3],
     pub n2: [f32; 3],
     pub material_id: u32,
+    pub object_id: u32,
 }
 
 impl Triangle {
@@ -168,7 +169,7 @@ impl Triangle {
             v0: self.v0,
             material_id: self.material_id,
             v1: self.v1,
-            _pad0: 0,
+            object_id: self.object_id,
             v2: self.v2,
             _pad1: 0,
             n0: self.n0,

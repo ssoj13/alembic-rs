@@ -26,7 +26,7 @@ impl Renderer {
         shadow_pass.set_pipeline(&self.pipelines.shadow_pipeline);
         shadow_pass.set_bind_group(0, &self.shadow_pass_bind_group, &[]);
 
-        for mesh in self.meshes.values() {
+        for mesh in self.meshes.values().filter(|m| m.visible) {
             shadow_pass.set_bind_group(1, &mesh.model_bind_group, &[]);
             shadow_pass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
             shadow_pass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);

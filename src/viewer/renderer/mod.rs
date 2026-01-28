@@ -103,6 +103,7 @@ pub struct Renderer {
     // Scene points (rendered as point sprites)
     pub points: HashMap<String, ScenePoints>,
 
+
     // Settings
     pub show_wireframe: bool,
     pub flat_shading: bool,
@@ -136,8 +137,10 @@ pub struct Renderer {
     pub pt_dof_enabled: bool,
     /// Aperture radius for DoF
     pub pt_aperture: f32,
-    /// Focus distance for DoF
+    /// Focus distance for DoF (recomputed from focus_world_point each frame)
     pub pt_focus_distance: f32,
+    /// World-space point to keep in focus (set by F-key or Ctrl+LMB pick)
+    pub pt_focus_point: Option<glam::Vec3>,
     /// Surface format needed for path tracer blit pipeline creation.
     #[allow(dead_code)]
     surface_format: wgpu::TextureFormat,
@@ -177,6 +180,11 @@ pub struct SceneMesh {
     pub bounds: (Vec3, Vec3),  // (min, max) in world space
     pub opacity: f32,
     pub object_id: u32,  // Unique ID for hover/picking (0 = none/background)
+    /// Per-object visibility flag. Controls rendering in both rasterizer and
+    /// path tracer. When `false`, the mesh is skipped during opaque/transparent
+    /// draw calls and marked invisible in the PT visibility buffer.
+    /// Toggled via UI (e.g. floor checkbox) or programmatically.
+    pub visible: bool,
     // For dynamic smooth normal recalculation
     pub smooth_data: Option<SmoothNormalData>,
     pub base_vertices: Option<Vec<Vertex>>,  // vertices with flat normals
@@ -197,6 +205,65 @@ pub fn compute_mesh_hash(vertices: &[standard_surface::Vertex], indices: &[u32])
 /// Compute a content hash for curves (vertices + indices).
 pub fn compute_curves_hash(vertices: &[standard_surface::Vertex], indices: &[u32]) -> u64 {
     compute_mesh_hash(vertices, indices)
+}
+
+/// Convert LINE_LIST curves into ribbon triangles for path tracer.
+/// Each line segment becomes a thin quad (2 tris) oriented toward camera-up.
+/// Width is read from vertex uv.y (set during curve conversion).
+fn curves_to_ribbon_tris(
+    verts: &[Vertex],
+    indices: &[u32],
+    transform: &Mat4,
+    material_id: u32,
+) -> Vec<super::pathtracer::bvh::Triangle> {
+    use super::pathtracer::bvh::Triangle;
+    let mut tris = Vec::with_capacity(indices.len()); // ~2 tris per segment
+
+    for pair in indices.chunks_exact(2) {
+        let (i0, i1) = (pair[0] as usize, pair[1] as usize);
+        if i0 >= verts.len() || i1 >= verts.len() {
+            continue;
+        }
+
+        let p0 = transform.transform_point3(Vec3::from(verts[i0].position));
+        let p1 = transform.transform_point3(Vec3::from(verts[i1].position));
+
+        // Width from uv.y (half-width for offset)
+        let w0 = verts[i0].uv[1].max(0.001) * 0.5;
+        let w1 = verts[i1].uv[1].max(0.001) * 0.5;
+
+        // Tangent along segment
+        let tangent = (p1 - p0).normalize_or_zero();
+        if tangent == Vec3::ZERO {
+            continue;
+        }
+
+        // Choose a side vector perpendicular to tangent
+        let up = if tangent.y.abs() < 0.9 { Vec3::Y } else { Vec3::X };
+        let side = tangent.cross(up).normalize();
+
+        // Quad corners
+        let a = p0 - side * w0;
+        let b = p0 + side * w0;
+        let c = p1 + side * w1;
+        let d = p1 - side * w1;
+
+        // Normal = side × tangent (face normal)
+        let n = side.cross(tangent).normalize();
+        let nn: [f32; 3] = n.into();
+
+        tris.push(Triangle {
+            v0: a.into(), v1: b.into(), v2: c.into(),
+            n0: nn, n1: nn, n2: nn,
+            material_id, object_id: 0,
+        });
+        tris.push(Triangle {
+            v0: a.into(), v1: c.into(), v2: d.into(),
+            n0: nn, n1: nn, n2: nn,
+            material_id, object_id: 0,
+        });
+    }
+    tris
 }
 
 /// Compute a content hash for points (positions + widths).
@@ -268,12 +335,15 @@ pub struct SceneCurves {
     pub model_bind_group: wgpu::BindGroup,
     #[allow(dead_code)] // kept for potential animation updates
     pub model_buffer: wgpu::Buffer,
-    #[allow(dead_code)] // kept for potential animation updates
     pub transform: Mat4,
     pub bounds: (Vec3, Vec3),
     pub data_hash: u64,
     #[allow(dead_code)]
     pub name: String,
+    // CPU-side data for path tracer ribbon conversion
+    pub base_vertices: Option<Vec<Vertex>>,
+    pub base_indices: Option<Vec<u32>>,
+    pub material_params: StandardSurfaceParams,
 }
 
 /// Scene points with transform and material
@@ -603,6 +673,7 @@ impl Renderer {
             pt_dof_enabled: false,
             pt_aperture: 0.1,
             pt_focus_distance: 10.0,
+            pt_focus_point: None,
             surface_format: format,
             object_id_texture: None,
             object_id_pick_buffer,
@@ -635,6 +706,11 @@ impl Renderer {
         };
         self.queue.write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
         self.camera_position = position;
+
+        // Recompute focus distance from world-space focus point
+        if let Some(fp) = self.pt_focus_point {
+            self.pt_focus_distance = (fp - position).length();
+        }
 
         // Update path tracer camera — only reset accumulation if camera actually moved
         if let Some(pt) = &mut self.path_tracer {
@@ -725,14 +801,15 @@ impl Renderer {
             None => return,
         };
 
-        // Collect triangles and materials from all scene meshes + floor
+        // Collect triangles and materials from all scene meshes + curves + floor
         let mut all_tris = Vec::new();
         let mut materials = Vec::new();
+        // Track max object_id for visibility buffer sizing
+        let mut max_object_id: u32 = 0;
 
-        // Helper: extract from a SceneMesh if it has CPU-side data
+        // Scene meshes
         for mesh in self.meshes.values() {
             if let (Some(base_verts), Some(indices)) = (&mesh.base_vertices, &mesh.base_indices) {
-                // Apply smooth normals if enabled
                 let verts = if smooth_enabled {
                     if let Some(smooth_data) = &mesh.smooth_data {
                         let mut new_verts = base_verts.clone();
@@ -747,24 +824,37 @@ impl Renderer {
                 } else {
                     base_verts.clone()
                 };
-                
+
                 let mat_id = materials.len() as u32;
                 materials.push(scene_convert::material_from_params(&mesh.material_params));
                 let tris = scene_convert::extract_triangles(
-                    &verts, indices, &mesh.transform, mat_id,
+                    &verts, indices, &mesh.transform, mat_id, mesh.object_id,
                 );
+                max_object_id = max_object_id.max(mesh.object_id);
                 all_tris.extend(tris);
             }
         }
-        
-        // Floor mesh (no smooth normals needed)
+
+        // Curves (ribbon quads)
+        for curve in self.curves.values() {
+            if let (Some(verts), Some(indices)) = (&curve.base_vertices, &curve.base_indices) {
+                let mat_id = materials.len() as u32;
+                materials.push(scene_convert::material_from_params(&curve.material_params));
+                // Curves use object_id 0 (no per-object visibility yet)
+                let ribbon_tris = curves_to_ribbon_tris(verts, indices, &curve.transform, mat_id);
+                all_tris.extend(ribbon_tris);
+            }
+        }
+
+        // Floor mesh
         for mesh in self.floor_mesh.iter() {
             if let (Some(verts), Some(indices)) = (&mesh.base_vertices, &mesh.base_indices) {
                 let mat_id = materials.len() as u32;
                 materials.push(scene_convert::material_from_params(&mesh.material_params));
                 let tris = scene_convert::extract_triangles(
-                    verts, indices, &mesh.transform, mat_id,
+                    verts, indices, &mesh.transform, mat_id, mesh.object_id,
                 );
+                max_object_id = max_object_id.max(mesh.object_id);
                 all_tris.extend(tris);
             }
         }
@@ -780,7 +870,7 @@ impl Renderer {
         let bvh = build::build_bvh(&all_tris);
         let gpu_data = gpu_data::build_gpu_data(&bvh, &all_tris, &materials);
 
-        pt.upload_scene(&self.device, &self.queue, &gpu_data);
+        pt.upload_scene(&self.device, &self.queue, &gpu_data, max_object_id);
         
         // Also set the environment texture
         let has_env = self.env_map.intensity > 0.0;
@@ -791,6 +881,13 @@ impl Renderer {
             self.env_map.intensity,
             has_env,
         );
+    }
+
+    /// Set PT visibility for a specific object_id (no BVH rebuild).
+    pub fn set_pt_object_visible(&mut self, object_id: u32, visible: bool) {
+        if let Some(pt) = &mut self.path_tracer {
+            pt.set_object_visible(&self.queue, object_id, visible);
+        }
     }
 
     /// Reset to default 3-point lighting
@@ -994,8 +1091,8 @@ impl Renderer {
         render_pass.set_pipeline(pipeline);
         render_pass.set_bind_group(0, &self.camera_light_bind_group, &[]);
         
-        // Render all meshes
-        for mesh in self.meshes.values() {
+        // Render visible meshes only
+        for mesh in self.meshes.values().filter(|m| m.visible) {
             render_pass.set_bind_group(1, &mesh.model_bind_group, &[]);
             render_pass.set_vertex_buffer(0, mesh.mesh.vertex_buffer.slice(..));
             render_pass.set_index_buffer(mesh.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
@@ -1469,13 +1566,13 @@ impl Renderer {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mesh_vertex_buffer"),
             contents: bytemuck::cast_slice(vertices),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
         let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("mesh_index_buffer"),
             contents: bytemuck::cast_slice(indices),
-            usage: wgpu::BufferUsages::INDEX,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
         });
 
         Mesh {
@@ -1553,6 +1650,7 @@ impl Renderer {
             base_indices: Some(indices.to_vec()),
             material_params: params.clone(),
             smooth_dirty: true,
+            visible: true,
         });
     }
 
@@ -1610,6 +1708,9 @@ impl Renderer {
             bounds,
             data_hash,
             name,
+            base_vertices: Some(vertices.to_vec()),
+            base_indices: Some(indices.to_vec()),
+            material_params: params.clone(),
         });
     }
 
@@ -1637,7 +1738,7 @@ impl Renderer {
         let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("points_vertex_buffer"),
             contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
         // Material
@@ -1987,6 +2088,7 @@ impl Renderer {
         // Update path tracer to disable environment
         if let Some(pt) = &mut self.path_tracer {
             pt.update_environment_params(&self.queue, 0.0, false);
+            pt.reset_accumulation();
         }
     }
 
@@ -2106,13 +2208,10 @@ impl Renderer {
             base_indices: Some(indices),
             material_params: material,
             smooth_dirty: false,
+            visible: true,
         });
     }
     
-    /// Clear floor plane (call when checkbox disabled)
-    pub fn clear_floor(&mut self) {
-        self.floor_mesh = None;
-    }
 
     /// Render the scene
     pub fn render(&mut self, view: &wgpu::TextureView, width: u32, height: u32, camera_distance: f32, _near: f32, _far: f32) {
@@ -2174,9 +2273,9 @@ impl Renderer {
 
         // Opaque render pass (Stage 1: G-Buffer + lighting)
         if self.show_wireframe {
-            let mut meshes: Vec<&SceneMesh> = self.meshes.values().collect();
+            let mut meshes: Vec<&SceneMesh> = self.meshes.values().filter(|m| m.visible).collect();
             if let Some(floor) = &self.floor_mesh {
-                meshes.push(floor);
+                if floor.visible { meshes.push(floor); }
             }
             let opaque_depth_load = wgpu::LoadOp::Clear(1.0);
             let wire_pipeline = if self.double_sided {
@@ -2204,6 +2303,7 @@ impl Renderer {
         let mut floor_opaque = false;
 
         for (name, mesh) in &self.meshes {
+            if !mesh.visible { continue; }
             let effective_opacity = mesh.opacity * self.xray_alpha;
             if effective_opacity < opacity_threshold {
                 let distance = bounds_sort_distance(mesh.bounds, self.camera_position);
@@ -2213,12 +2313,14 @@ impl Renderer {
             }
         }
         if let Some(floor) = &self.floor_mesh {
-            let effective_opacity = floor.opacity * self.xray_alpha;
-            if effective_opacity < opacity_threshold {
-                let distance = bounds_sort_distance(floor.bounds, self.camera_position);
-                floor_transparent_distance = Some(distance);
-            } else {
-                floor_opaque = true;
+            if floor.visible {
+                let effective_opacity = floor.opacity * self.xray_alpha;
+                if effective_opacity < opacity_threshold {
+                    let distance = bounds_sort_distance(floor.bounds, self.camera_position);
+                    floor_transparent_distance = Some(distance);
+                } else {
+                    floor_opaque = true;
+                }
             }
         }
 

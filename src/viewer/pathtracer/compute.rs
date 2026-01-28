@@ -123,6 +123,10 @@ pub struct PathTraceCompute {
     // Whether scene data has been uploaded
     scene_ready: bool,
 
+    // Per-object visibility buffer (u32 per object_id: 0=hidden, 1=visible)
+    visibility_buffer: wgpu::Buffer,
+    max_object_id: u32,
+
     // Blit pipeline (renders PT output to screen with tone mapping)
     blit_pipeline: wgpu::RenderPipeline,
     blit_bind_group_layout: wgpu::BindGroupLayout,
@@ -231,6 +235,17 @@ impl PathTraceCompute {
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // @binding(9) Object visibility buffer (per object_id, 0=hidden 1=visible)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 9,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -349,6 +364,13 @@ impl PathTraceCompute {
             ],
         }));
 
+        // Default visibility buffer (1 entry, visible)
+        let visibility_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pt_visibility"),
+            contents: bytemuck::cast_slice(&[1u32]),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+
         // Create default 1x1 black environment texture
         let (env_texture, env_view) = Self::create_default_env_texture(device);
         let env_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -388,6 +410,8 @@ impl PathTraceCompute {
             height,
             frame_count: 0,
             scene_ready: false,
+            visibility_buffer,
+            max_object_id: 0,
             blit_pipeline,
             blit_bind_group_layout,
             blit_bind_group,
@@ -468,7 +492,7 @@ impl PathTraceCompute {
     }
 
     /// Upload scene data (BVH nodes + triangles) to GPU.
-    pub fn upload_scene(&mut self, device: &wgpu::Device, _queue: &wgpu::Queue, data: &GpuSceneData) {
+    pub fn upload_scene(&mut self, device: &wgpu::Device, _queue: &wgpu::Queue, data: &GpuSceneData, max_object_id: u32) {
         let nodes_bytes = data.nodes_bytes();
         let tris_bytes = data.triangles_bytes();
 
@@ -492,6 +516,16 @@ impl PathTraceCompute {
             contents: if mats_bytes.is_empty() { &[0u8; 144] } else { mats_bytes },
             usage: wgpu::BufferUsages::STORAGE,
         });
+
+        // Visibility buffer: all visible by default (object_id 0 = background, always visible)
+        let vis_count = (max_object_id + 1) as usize;
+        let vis_data: Vec<u32> = vec![1u32; vis_count.max(1)];
+        self.visibility_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pt_visibility"),
+            contents: bytemuck::cast_slice(&vis_data),
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        });
+        self.max_object_id = max_object_id;
 
         self.nodes_buffer = Some(nodes_buffer);
         self.triangles_buffer = Some(tris_buffer);
@@ -549,9 +583,13 @@ impl PathTraceCompute {
                     binding: 8,
                     resource: self.env_uniform_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: self.visibility_buffer.as_entire_binding(),
+                },
             ],
         }));
-        
+
         self.env_dirty = false;
 
         // Rebuild blit bind group (references output_view)
@@ -643,6 +681,18 @@ impl PathTraceCompute {
             _pad: 0.0,
         };
         queue.write_buffer(&self.env_uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+    }
+
+    /// Set visibility for a specific object_id (0=hidden, 1=visible).
+    /// Does NOT rebuild BVH — just updates the visibility buffer.
+    pub fn set_object_visible(&mut self, queue: &wgpu::Queue, object_id: u32, visible: bool) {
+        if object_id > self.max_object_id {
+            return;
+        }
+        let val: u32 = if visible { 1 } else { 0 };
+        let offset = (object_id as u64) * 4;
+        queue.write_buffer(&self.visibility_buffer, offset, bytemuck::bytes_of(&val));
+        self.frame_count = 0; // reset accumulation
     }
 
     /// Reset progressive accumulation (call on camera move / scene change).

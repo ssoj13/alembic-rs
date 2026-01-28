@@ -1020,6 +1020,7 @@ impl ViewerApp {
                                         .logarithmic(true)).changed() 
                                     {
                                         renderer.pt_focus_distance = self.settings.pt_focus_distance;
+                                        renderer.pt_focus_point = None; // manual override
                                         if let Some(pt) = &mut renderer.path_tracer {
                                             pt.reset_accumulation();
                                         }
@@ -1090,6 +1091,10 @@ impl ViewerApp {
                     if has_env && ui.checkbox(&mut self.settings.hdr_visible, "Show Background").changed() {
                         if let Some(renderer) = &mut self.viewport.renderer {
                             renderer.hdr_visible = self.settings.hdr_visible;
+                            // PT needs accumulation reset for background visibility change
+                            if let Some(pt) = &mut renderer.path_tracer {
+                                pt.reset_accumulation();
+                            }
                         }
                         self.settings.save();
                     }
@@ -1103,10 +1108,15 @@ impl ViewerApp {
                     
                     if ui.checkbox(&mut self.settings.show_floor, "Floor").changed() {
                         if let Some(renderer) = &mut self.viewport.renderer {
-                            if self.settings.show_floor {
-                                renderer.set_floor(&self.scene_bounds);
-                            } else {
-                                renderer.clear_floor();
+                            let vis = self.settings.show_floor;
+                            // Set rasterizer visibility flag
+                            let floor_id = if let Some(floor) = &mut renderer.floor_mesh {
+                                floor.visible = vis;
+                                Some(floor.object_id)
+                            } else { None };
+                            // Sync PT visibility buffer
+                            if let Some(id) = floor_id {
+                                renderer.set_pt_object_visible(id, vis);
                             }
                         }
                         self.settings.save();
@@ -2266,11 +2276,13 @@ impl eframe::App for ViewerApp {
             worker.stop();
         }
         
-        // Save camera state
-        self.settings.camera_distance = self.viewport.camera.distance;
+        // Save camera state & keep DoF focus tied to camera distance
+        let cam_dist = self.viewport.camera.distance;
+        self.settings.camera_distance = cam_dist;
         let (yaw, pitch) = self.viewport.camera.angles();
         self.settings.camera_yaw = yaw;
         self.settings.camera_pitch = pitch;
+
         self.settings.save();
     }
     
@@ -2389,11 +2401,12 @@ impl eframe::App for ViewerApp {
                     self.status_message = "No scene bounds".into();
                 }
             }
-            // Set DoF focus distance = camera distance to pivot
-            let focus_dist = self.viewport.camera.distance;
-            self.settings.pt_focus_distance = focus_dist;
+            // Set DoF focus point = camera pivot (recomputed to distance each frame)
+            let focus_pt = self.viewport.camera.target;
+            self.settings.pt_focus_distance = self.viewport.camera.distance;
             if let Some(renderer) = &mut self.viewport.renderer {
-                renderer.pt_focus_distance = focus_dist;
+                renderer.pt_focus_point = Some(focus_pt);
+                renderer.pt_focus_distance = self.viewport.camera.distance;
                 if let Some(pt) = &mut renderer.path_tracer {
                     pt.reset_accumulation();
                 }
@@ -2573,17 +2586,18 @@ impl eframe::App for ViewerApp {
                         rel_y,
                         aspect,
                     );
-                    let focus_dist = if let Some(pick) = result {
+                    let (focus_dist, focus_pt) = if let Some(pick) = result {
                         eprintln!("FOCUS PICK: \"{}\" at ({:.1}, {:.1}, {:.1}), z_depth={:.2}",
                             pick.mesh_name, pick.point.x, pick.point.y, pick.point.z, pick.t);
-                        pick.t  // Use ray distance as focus distance
+                        (pick.t, Some(pick.point))
                     } else {
                         eprintln!("FOCUS PICK: <sky>, setting infinity");
-                        1000.0  // Infinity focus for background
+                        (1000.0, None)  // Infinity focus for background
                     };
-                    
+
                     self.settings.pt_focus_distance = focus_dist;
                     if let Some(renderer) = &mut self.viewport.renderer {
+                        renderer.pt_focus_point = focus_pt;
                         renderer.pt_focus_distance = focus_dist;
                         if let Some(pt) = &mut renderer.path_tracer {
                             pt.reset_accumulation();
@@ -2612,9 +2626,10 @@ impl eframe::App for ViewerApp {
                     eprintln!("OBJECT PICK: \"{}\" at ({:.1}, {:.1}, {:.1}), z_depth={:.2}",
                         pick.mesh_name, pick.point.x, pick.point.y, pick.point.z, pick.t);
                     self.selected_object = Some(pick.mesh_name.clone());
-                    // Auto-set DoF focus distance to picked point
+                    // Auto-set DoF focus to picked world point
                     self.settings.pt_focus_distance = pick.t;
                     if let Some(renderer) = &mut self.viewport.renderer {
+                        renderer.pt_focus_point = Some(pick.point);
                         renderer.pt_focus_distance = pick.t;
                         if let Some(pt) = &mut renderer.path_tracer {
                             pt.reset_accumulation();
@@ -2687,6 +2702,13 @@ impl eframe::App for ViewerApp {
         });
         
         // Request repaint only when animation is playing
+        // Sync focus distance from renderer (recomputed from world-space focus point)
+        if let Some(renderer) = &self.viewport.renderer {
+            if renderer.pt_focus_point.is_some() {
+                self.settings.pt_focus_distance = renderer.pt_focus_distance;
+            }
+        }
+
         // egui handles repaint for pointer interactions automatically
         // This saves CPU when idle (was causing 100% CPU usage)
         if self.playing || self.settings.path_tracing {

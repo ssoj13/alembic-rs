@@ -20,7 +20,7 @@ struct Triangle {
     v0: vec3<f32>,
     material_id: u32,
     v1: vec3<f32>,
-    _pad0: u32,
+    object_id: u32,
     v2: vec3<f32>,
     _pad1: u32,
     n0: vec3<f32>,
@@ -42,7 +42,7 @@ struct Material {
     emission_color_weight: vec4<f32>,     // rgb=color, a=weight (intensity in a)
     opacity: vec4<f32>,                   // rgb=opacity, a=unused
     params1: vec4<f32>,                   // x=diffuse_rough, y=metalness, z=spec_rough, w=spec_IOR
-    params2: vec4<f32>,                   // x=anisotropy, y=coat_rough, z=coat_IOR, w=unused
+    params2: vec4<f32>,                   // x=anisotropy, y=coat_rough, z=coat_IOR, w=visible
 };
 
 struct Camera {
@@ -83,6 +83,7 @@ struct HitInfo {
 @group(0) @binding(6) var env_map: texture_2d<f32>;
 @group(0) @binding(7) var env_sampler: sampler;
 @group(0) @binding(8) var<uniform> env: EnvParams;
+@group(0) @binding(9) var<storage, read> visibility: array<u32>;
 
 // Environment parameters
 struct EnvParams {
@@ -192,8 +193,13 @@ fn trace_ray(ray: Ray) -> HitInfo {
         if node.count > 0u {
             // Leaf: test triangles
             for (var i = 0u; i < node.count; i++) {
-                let hit = intersect_tri(ray, node.left_or_first + i);
+                let tri_id = node.left_or_first + i;
+                let hit = intersect_tri(ray, tri_id);
                 if hit.hit && hit.t < best.t {
+                    // Skip hidden objects/materials
+                    let tri = triangles[tri_id];
+                    if visibility[tri.object_id] == 0u { continue; }
+                    if materials[tri.material_id].params2.w < 0.5 { continue; }
                     best = hit;
                 }
             }
@@ -232,8 +238,12 @@ fn trace_shadow_ray(ray: Ray, max_t: f32) -> bool {
         if node.count > 0u {
             // Leaf: test triangles
             for (var i = 0u; i < node.count; i++) {
-                let hit = intersect_tri(ray, node.left_or_first + i);
+                let s_tri_id = node.left_or_first + i;
+                let hit = intersect_tri(ray, s_tri_id);
                 if hit.hit && hit.t < max_t && hit.t > EPSILON {
+                    let tri = triangles[s_tri_id];
+                    if visibility[tri.object_id] == 0u { continue; }
+                    if materials[tri.material_id].params2.w < 0.5 { continue; }
                     return true; // occluded
                 }
             }
