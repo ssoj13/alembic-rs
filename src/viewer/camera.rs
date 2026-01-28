@@ -95,10 +95,10 @@ impl OrbitCamera {
         self.vel_pan = offset;
     }
 
-    /// Zoom (RMB drag / scroll)
+    /// Zoom (RMB drag / scroll) - logarithmic for consistent feel at any scale
     pub fn zoom(&mut self, delta: f32) {
-        let sensitivity = 0.0002 * self.distance.max(1.0);
-        let factor = 1.0 - delta * sensitivity;
+        let sensitivity = 0.003;
+        let factor = (-delta * sensitivity).exp();
         self.distance = (self.distance * factor).clamp(0.01, 50000.0);
         self.vel_zoom = delta * sensitivity;
     }

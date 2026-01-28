@@ -531,7 +531,9 @@ impl ViewerApp {
 
         let filter = self.object_filter.to_lowercase();
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
             let tree = std::mem::take(&mut self.scene_tree);
             let mut selected = self.selected_object.clone();
             let mut expanded = std::mem::take(&mut self.expanded_nodes);
@@ -738,7 +740,9 @@ impl ViewerApp {
     }
     
     fn side_panel(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
             // ============================================================
             // Scene Info (always visible)
             // ============================================================
