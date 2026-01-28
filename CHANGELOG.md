@@ -1,5 +1,71 @@
 # CHANGELOG
 
+## Session 2026-01-26 .. 2026-01-28: Viewer Major Upgrade
+
+### Path Tracer (GPU compute, new module `src/viewer/pathtracer/`)
+- Full GPU path tracer via wgpu compute shaders with BVH acceleration
+- PBR materials: glass (transmission + IOR), metals, plastics, rubber, leather
+- Auto-materializer: `guess_material_from_path()` assigns materials based on object name keywords
+- Depth of Field with aperture/focus controls, world-space focus point tracking
+- Focus picking: Ctrl+LMB or MMB click sets DoF focus to picked surface point
+- HDR environment lighting integration (env map sampling in PT shaders)
+- Curves rendered as ribbon triangles in PT (`curves_to_ribbon_tris()`)
+- Per-object visibility buffer for PT (floor toggle syncs to PT)
+- Accumulation reset on camera move, env change, background toggle, focus change
+- Settings: `pt_samples_per_update`, `pt_max_transmission_depth`, `pt_dof_enabled`, `pt_aperture`, `pt_focus_distance`, `materialize_missing`
+
+### Object Picking & Hover Highlighting
+- Object ID render pass (`object_id.wgsl`) for GPU-based picking
+- Outline shader (`outline.wgsl`) with configurable thickness and alpha
+- Highlight shader (`highlight.wgsl`) for tint-based hover
+- `HoverMode` enum: None, Outline, Tint, Both (persisted in settings)
+- LMB click = object selection, selected object shown in properties panel
+
+### Camera Overhaul
+- Replaced `dolly` crate with custom Maya-style orbit camera (`OrbitCamera`)
+- Pure glam math: target + yaw/pitch + arm distance
+- Inertia system: exponential velocity decay on orbit/pan/zoom after drag release
+- `begin_drag()` / `end_drag()` / `update(dt)` / `kill_inertia()` API
+- Configurable `inertia_ms` (default 150ms half-life)
+- Ctrl+LMB = continuous DoF focus sampling (disables orbit)
+
+### Renderer Optimizations
+- Pre-cached post-fx bind groups: SSAO, blur (H+V separate), lighting bind groups rebuilt only on resize/env change (`postfx_bind_groups_dirty` flag)
+- Separated SSAO blur into horizontal + vertical passes (two buffers/bind groups)
+- GPU buffer reuse: `write_buffer()` when new data fits existing allocation, recreate only when larger
+- Pre-computed per-object data hashes on worker thread, O(1) comparison on main thread
+- `apply_scene()` skips full scene hash during animation (frame change = data change)
+- Vertex buffer created with `COPY_DST` usage for in-place updates
+- Performance tracing: warnings logged when mesh upload or PT upload exceeds 5ms
+
+### Smooth Normals
+- `smooth_normals.rs`: angle-weighted smooth normal recalculation
+- Smooth angle threshold setting, dirty flag per mesh
+- Base vertices preserved for re-smoothing on deformation
+
+### Write Tests (891 new lines in `tests/write_tests.rs`)
+- Roundtrip tests: curves (Linear, Cubic, Periodic, multi-width), points, SubD, camera, light, NuPatch, FaceSet
+- Multi-sample animation tests for all geometry types
+- Binary diff analysis test
+
+### Python Bindings
+- `ISampleSelector` class for frame-based sample queries
+- `getValue(index, selector)` on all schema classes (PolyMesh, Xform, SubD, Curves, Points, Camera, Light, NuPatch, FaceSet)
+- `getArchive()` and `getMetaData()` on `IObject`
+- `TimeSampling` class exposed
+- Fixed `CurveType` constants to match C++ (`kCubic=0, kLinear=1, kVariableOrder=2`)
+
+### CLI Additions
+- Extended `alembic` binary with new commands and options
+- `bmw_mat.abc` test data file
+
+### Other
+- Removed `dolly` dependency, added glam-only camera
+- `.gitignore` updates for trace/log files
+- `FINDINGS.md`, `PLAN_1.md`, `PLAN_2.md` working documents
+
+---
+
 ## Session 2026-01-16: FULL BINARY PARITY with C++ Alembic
 
 ### Achievement
