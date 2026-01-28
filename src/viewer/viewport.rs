@@ -256,8 +256,9 @@ impl Viewport {
             }
         }
         
-        // Shift+LMB = object picking (selection)
-        if input.modifiers.shift && response.clicked_by(egui::PointerButton::Primary) {
+        // Shift+LMB = object picking (selection) - continuous like Ctrl+LMB
+        let shift_held = input.modifiers.shift;
+        if shift_held && (response.clicked() || response.dragged_by(egui::PointerButton::Primary)) {
             if let Some(pos) = input.pointer.hover_pos() {
                 let rect = response.rect;
                 if rect.contains(pos) {

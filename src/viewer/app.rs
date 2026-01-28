@@ -2500,6 +2500,7 @@ impl eframe::App for ViewerApp {
                     renderer.double_sided = self.settings.double_sided;
                     renderer.auto_normals = self.settings.auto_normals;
                     renderer.background_color = self.settings.background_color;
+                    renderer.hover_mode = self.settings.hover_mode;
                     // Path tracer settings
                     renderer.pt_max_samples = self.settings.pt_max_samples;
                     renderer.pt_max_bounces = self.settings.pt_max_bounces;

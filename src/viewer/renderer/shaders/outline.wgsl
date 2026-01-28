@@ -28,7 +28,7 @@ fn vs_main(@builtin(vertex_index) vertex_idx: u32) -> VertexOutput {
     // Triangle vertices: (-1,-1), (3,-1), (-1,3)
     let x = f32(i32(vertex_idx & 1u) * 4 - 1);
     let y = f32(i32(vertex_idx >> 1u) * 4 - 1);
-    out.position = vec4<f32>(x, -y, 0.0, 1.0);
+    out.position = vec4<f32>(x, y, 0.0, 1.0);  // No Y flip - matches blit.wgsl
     out.uv = vec2<f32>((x + 1.0) * 0.5, (1.0 - y) * 0.5);
     return out;
 }
