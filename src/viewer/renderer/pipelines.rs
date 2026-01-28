@@ -218,8 +218,8 @@ fn create_object_id_pipeline(
         },
         depth_stencil: Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth32Float,
-            depth_write_enabled: false,  // Don't write, just test
-            depth_compare: wgpu::CompareFunction::LessEqual,  // Must be LessEqual to match existing depth
+            depth_write_enabled: true,  // Write depth for proper occlusion in PT mode
+            depth_compare: wgpu::CompareFunction::LessEqual,
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         }),

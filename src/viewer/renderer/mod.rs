@@ -142,18 +142,14 @@ pub struct Renderer {
     #[allow(dead_code)]
     surface_format: wgpu::TextureFormat,
     
-    // Depth picking
-    depth_pick_buffer: wgpu::Buffer,
-    depth_pick_buffer_size: u32,  // current buffer size (width)
-    pending_depth_pick: Option<(u32, u32)>,  // pixel coords to pick
-    pub depth_pick_result: Option<f32>,      // linear depth result
-    
     // Hover highlighting (object ID buffer approach)
     object_id_texture: Option<ObjectIdTexture>,
     object_id_pick_buffer: wgpu::Buffer,
     hover_pipeline: HoverPipeline,
     hover_bind_group: Option<wgpu::BindGroup>,
     pub hover_mode: super::settings::HoverMode,
+    pub hover_outline_thickness: f32,
+    pub hover_outline_alpha: f32,
     pub hovered_mesh_path: Option<String>,
     pub hovered_object_id: u32,              // Current hovered object ID (0 = none)
     pending_hover_pick: Option<(u32, u32)>,  // Pixel to read for hover detection
@@ -180,7 +176,6 @@ pub struct SceneMesh {
     pub vertex_hash: u64,  // Quick hash for change detection
     pub bounds: (Vec3, Vec3),  // (min, max) in world space
     pub opacity: f32,
-    pub name: String,
     pub object_id: u32,  // Unique ID for hover/picking (0 = none/background)
     // For dynamic smooth normal recalculation
     pub smooth_data: Option<SmoothNormalData>,
@@ -527,13 +522,6 @@ impl Renderer {
             contents: bytemuck::bytes_of(&EnvUniform::default()),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
-
-        let depth_pick_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("depth_pick_buffer"),
-            size: 4, // single f32
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
         
         // Buffer for reading back object ID - needs to hold entire row (aligned to 256)
         // For 4K (3840px) * 4 bytes = 15360 bytes, aligned = 15360 bytes
@@ -616,15 +604,13 @@ impl Renderer {
             pt_aperture: 0.1,
             pt_focus_distance: 10.0,
             surface_format: format,
-            depth_pick_buffer,
-            depth_pick_buffer_size: 256,  // initial size, will grow as needed
-            pending_depth_pick: None,
-            depth_pick_result: None,
             object_id_texture: None,
             object_id_pick_buffer,
             hover_pipeline,
             hover_bind_group: None,
             hover_mode: super::settings::HoverMode::None,
+            hover_outline_thickness: 2.0,
+            hover_outline_alpha: 1.0,
             hovered_mesh_path: None,
             hovered_object_id: 0,
             pending_hover_pick: None,
@@ -716,215 +702,6 @@ impl Renderer {
         self.path_tracer = Some(super::pathtracer::PathTraceCompute::new(
             &self.device, width, height, self.surface_format,
         ));
-    }
-    
-    /// Request a depth pick at the given pixel coordinates.
-    /// The result will be available in `depth_pick_result` after the next render.
-    pub fn request_depth_pick(&mut self, x: u32, y: u32) {
-        self.pending_depth_pick = Some((x, y));
-        self.depth_pick_result = None;
-    }
-    
-    /// Take the depth pick result if available.
-    pub fn take_depth_pick_result(&mut self) -> Option<f32> {
-        self.depth_pick_result.take()
-    }
-    
-    /// Render a depth-only pass for picking, then read the depth value.
-    fn render_depth_pick_pass(&mut self, width: u32, height: u32, near: f32, far: f32) {
-        let (px, py) = match self.pending_depth_pick.take() {
-            Some(coords) => coords,
-            None => return,
-        };
-        
-        eprintln!("DEPTH PICK PASS: px={}, py={}, near={:.2}, far={:.2}, meshes={}, cam_pos=({:.1},{:.1},{:.1})", 
-            px, py, near, far, self.meshes.len(), 
-            self.camera_position.x, self.camera_position.y, self.camera_position.z);
-        
-        self.ensure_depth_texture(width, height);
-        self.ensure_gbuffer(width, height);
-        
-        let depth_view = match &self.depth_texture {
-            Some(dt) => dt.view.clone(),
-            None => return,
-        };
-        
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("depth_pick_encoder"),
-        });
-        
-        // Collect all meshes (scene + floor) for a single gbuffer pass
-        let mut all_meshes: Vec<&SceneMesh> = self.meshes.values().collect();
-        if let Some(floor) = &self.floor_mesh {
-            all_meshes.push(floor);
-        }
-        
-        // Use gbuffer pass to render depth (it writes to gbuffer + depth)
-        self.render_gbuffer_pass(&mut encoder, &depth_view, &all_meshes);
-        
-        // Copy entire depth texture to staging buffer
-        // (partial copies not supported for depth textures)
-        let (tex_width, tex_height, bytes_per_row) = if let Some(dt) = &self.depth_texture {
-            let w = dt.size.0;
-            let h = dt.size.1;
-            // bytes_per_row must be 256-aligned
-            let bpr = ((w * 4 + 255) / 256) * 256;
-            (w, h, bpr)
-        } else {
-            self.queue.submit(std::iter::once(encoder.finish()));
-            return;
-        };
-        
-        if px >= tex_width || py >= tex_height {
-            self.queue.submit(std::iter::once(encoder.finish()));
-            return;
-        }
-        
-        // Ensure buffer is large enough for entire texture
-        let required_size = (bytes_per_row * tex_height) as u64;
-        if self.depth_pick_buffer_size < tex_width * tex_height {
-            self.depth_pick_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("depth_pick_buffer"),
-                size: required_size,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            });
-            self.depth_pick_buffer_size = tex_width * tex_height;
-        }
-        
-        if let Some(dt) = &self.depth_texture {
-            encoder.copy_texture_to_buffer(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &dt.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                wgpu::TexelCopyBufferInfo {
-                    buffer: &self.depth_pick_buffer,
-                    layout: wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(bytes_per_row),
-                        rows_per_image: Some(tex_height),
-                    },
-                },
-                wgpu::Extent3d { width: tex_width, height: tex_height, depth_or_array_layers: 1 },
-            );
-        }
-        
-        self.queue.submit(std::iter::once(encoder.finish()));
-        
-        // Read depth value synchronously from the correct offset
-        let buffer_slice = self.depth_pick_buffer.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = tx.send(result);
-        });
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        
-        if let Ok(Ok(())) = rx.recv() {
-            let data = buffer_slice.get_mapped_range();
-            // Calculate offset: row * bytes_per_row + col * 4
-            let offset = (py as usize) * (bytes_per_row as usize) + (px as usize) * 4;
-            if offset + 4 <= data.len() {
-                let ndc_depth: f32 = *bytemuck::from_bytes(&data[offset..offset+4]);
-                drop(data);
-                self.depth_pick_buffer.unmap();
-                
-                if ndc_depth >= 0.9999 {
-                    self.depth_pick_result = Some(1000.0);
-                    eprintln!("DEPTH PICK: sky (ndc={:.4})", ndc_depth);
-                } else if ndc_depth <= 0.0001 {
-                    self.depth_pick_result = Some(near);
-                    eprintln!("DEPTH PICK: near (ndc={:.4})", ndc_depth);
-                } else {
-                    let linear_z = (near * far) / (far - ndc_depth * (far - near));
-                    self.depth_pick_result = Some(linear_z);
-                    eprintln!("DEPTH PICK: ndc={:.4}, linear_z={:.2}", ndc_depth, linear_z);
-                }
-            } else {
-                drop(data);
-                self.depth_pick_buffer.unmap();
-            }
-        }
-    }
-    
-    /// Process pending depth pick - copy depth from texture and read back.
-    /// Called after rasterizer render pass completes.
-    #[allow(dead_code)]
-    fn process_depth_pick(&mut self, encoder: &mut wgpu::CommandEncoder, near: f32, far: f32) {
-        let (px, py) = match self.pending_depth_pick.take() {
-            Some(coords) => coords,
-            None => return,
-        };
-        
-        let depth_texture = match &self.depth_texture {
-            Some(dt) => &dt.texture,
-            None => return,
-        };
-        
-        let (tex_w, tex_h) = match &self.depth_texture {
-            Some(dt) => dt.size,
-            None => return,
-        };
-        
-        // Clamp to valid range
-        if px >= tex_w || py >= tex_h {
-            return;
-        }
-        
-        // Copy single pixel from depth texture to staging buffer
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: depth_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d { x: px, y: py, z: 0 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &self.depth_pick_buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4),
-                    rows_per_image: None,
-                },
-            },
-            wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
-        );
-        
-        // Schedule buffer mapping and read
-        let buffer_slice = self.depth_pick_buffer.slice(..);
-        let (tx, rx) = std::sync::mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            let _ = tx.send(result);
-        });
-        
-        // Need to poll device for the map to complete
-        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
-        
-        if let Ok(Ok(())) = rx.recv() {
-            let data = buffer_slice.get_mapped_range();
-            let ndc_depth: f32 = *bytemuck::from_bytes(&data[0..4]);
-            drop(data);
-            self.depth_pick_buffer.unmap();
-            
-            // Convert NDC depth [0, 1] to linear view-space z-depth
-            // For perspective projection with reversed-Z: z_ndc = far * (1 - near/z) / (far - near)
-            // Solving for z: z = near * far / (far - z_ndc * (far - near))
-            // But wgpu uses standard depth [0, 1] where 0 is near, 1 is far
-            // Linear depth = near * far / (far - ndc_depth * (far - near))
-            if ndc_depth >= 1.0 {
-                // Hit background/sky
-                self.depth_pick_result = Some(1000.0);
-            } else if ndc_depth <= 0.0 {
-                self.depth_pick_result = Some(near);
-            } else {
-                let linear_z = (near * far) / (far - ndc_depth * (far - near));
-                self.depth_pick_result = Some(linear_z);
-                eprintln!("DEPTH PICK: ndc={:.4}, linear_z={:.2}, near={}, far={}", 
-                    ndc_depth, linear_z, near, far);
-            }
-        }
     }
 
     /// Build BVH from current scene meshes and upload to path tracer.
@@ -1172,7 +949,8 @@ impl Renderer {
     }
     
     /// Render object IDs to the object ID texture for hover detection
-    fn render_object_id_pass(&mut self, encoder: &mut wgpu::CommandEncoder, depth_view: &wgpu::TextureView) {
+    /// If `clear_depth` is true, clears depth buffer (for PT mode). Otherwise loads existing depth.
+    fn render_object_id_pass(&mut self, encoder: &mut wgpu::CommandEncoder, depth_view: &wgpu::TextureView, clear_depth: bool) {
         let id_texture = match &self.object_id_texture {
             Some(t) => t,
             None => return,
@@ -1182,6 +960,12 @@ impl Renderer {
             &self.pipelines.object_id_pipeline_double_sided
         } else {
             &self.pipelines.object_id_pipeline
+        };
+        
+        let depth_load = if clear_depth {
+            wgpu::LoadOp::Clear(1.0)
+        } else {
+            wgpu::LoadOp::Load
         };
         
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1198,7 +982,7 @@ impl Renderer {
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_view,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Load,  // Reuse depth from main pass
+                    load: depth_load,
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,
@@ -1269,9 +1053,9 @@ impl Renderer {
         let params = HoverParams {
             hovered_id: self.hovered_object_id,
             mode,
-            outline_width: 2.0,
+            outline_width: self.hover_outline_thickness,
             _pad0: 0.0,
-            outline_color: [1.0, 0.5, 0.0, 1.0],  // Orange
+            outline_color: [1.0, 0.5, 0.0, self.hover_outline_alpha],  // Orange with configurable alpha
             tint_color: [1.0, 0.5, 0.0, 0.12],    // Semi-transparent orange
             viewport_size: [width as f32, height as f32],
             _pad1: [0.0; 2],
@@ -1767,7 +1551,6 @@ impl Renderer {
             vertex_hash: compute_mesh_hash(vertices, indices),
             bounds,
             opacity,
-            name,
             object_id,
             smooth_data,
             base_vertices: Some(vertices.to_vec()),
@@ -2321,7 +2104,6 @@ impl Renderer {
             vertex_hash: 0,
             bounds,
             opacity,
-            name: "_FLOOR_".into(),
             object_id: floor_object_id,
             smooth_data: None,
             base_vertices: Some(vertices),
@@ -2337,12 +2119,8 @@ impl Renderer {
     }
 
     /// Render the scene
-    pub fn render(&mut self, view: &wgpu::TextureView, width: u32, height: u32, camera_distance: f32, near: f32, far: f32) {
+    pub fn render(&mut self, view: &wgpu::TextureView, width: u32, height: u32, camera_distance: f32, _near: f32, _far: f32) {
         let render_start = std::time::Instant::now();
-        
-        // GPU depth picking disabled - using CPU ray-triangle intersection instead
-        // (GPU depth picking had issues with gbuffer not rendering geometry correctly)
-        self.pending_depth_pick = None;
         
         // Path tracing mode: dispatch compute shader and blit to screen
         if self.use_path_tracing {
@@ -2355,6 +2133,21 @@ impl Renderer {
                 });
                 pt.dispatch(&mut encoder, &self.queue);
                 pt.blit(&mut encoder, view);
+                
+                // Add hover overlay in PT mode if enabled
+                if self.hover_mode != super::settings::HoverMode::None {
+                    self.ensure_depth_texture(width, height);
+                    self.ensure_object_id_texture(width, height);
+                    
+                    if let Some(dt) = &self.depth_texture {
+                        let depth_view = dt.view.clone();
+                        // Render object IDs with depth clear (PT doesn't have depth buffer)
+                        self.render_object_id_pass(&mut encoder, &depth_view, true);
+                        self.process_hover_pick(&mut encoder);
+                        self.render_hover_pass(&mut encoder, view, width, height);
+                    }
+                }
+                
                 self.queue.submit(std::iter::once(encoder.finish()));
             }
             return;
@@ -2523,14 +2316,10 @@ impl Renderer {
             );
         }
 
-        // Object ID pass for hover detection
+        // Object ID pass for hover detection (reuse depth from main pass)
         if self.hover_mode != super::settings::HoverMode::None {
-            self.render_object_id_pass(&mut encoder, &depth_view);
-            
-            // Process hover pick if requested
+            self.render_object_id_pass(&mut encoder, &depth_view, false);
             self.process_hover_pick(&mut encoder);
-            
-            // Render hover highlight overlay
             self.render_hover_pass(&mut encoder, color_target_view_ref, width, height);
         }
 

@@ -33,6 +33,24 @@ fn vs_main(@builtin(vertex_index) vertex_idx: u32) -> VertexOutput {
     return out;
 }
 
+// Sample object ID with bounds checking
+fn sample_id(pos: vec2<i32>) -> u32 {
+    if pos.x < 0 || pos.y < 0 || 
+       pos.x >= i32(params.viewport_size.x) || 
+       pos.y >= i32(params.viewport_size.y) {
+        return 0u;
+    }
+    return textureLoad(id_texture, pos, 0).r;
+}
+
+// Check if pixel is on hovered object
+fn is_hovered(pos: vec2<i32>) -> f32 {
+    if sample_id(pos) == params.hovered_id {
+        return 1.0;
+    }
+    return 0.0;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Early out if no hover
@@ -41,7 +59,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
     
     let pixel = vec2<i32>(in.uv * params.viewport_size);
-    let center_id = textureLoad(id_texture, pixel, 0).r;
+    let center_id = sample_id(pixel);
     
     var result = vec4<f32>(0.0);
     
@@ -51,46 +69,60 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         result = params.tint_color;
     }
     
-    // Outline mode: detect edges around hovered object
+    // Outline mode: antialiased using SDF-like approach
     let do_outline = (params.mode & 1u) != 0u;
     if do_outline {
-        let width = i32(params.outline_width);
-        var is_outline = false;
+        let width = params.outline_width;
         
-        // Check if this pixel is at the edge of the hovered object
-        // Either: we're on the hovered object and neighbor is not
-        // Or: we're not on it but neighbor is (outer glow)
-        let on_hovered = center_id == params.hovered_id;
+        // Sample a grid of neighbors and compute coverage-based SDF
+        // Using a larger kernel with distance weighting for smooth edges
+        let search_radius = i32(ceil(width)) + 1;
         
-        for (var dy = -width; dy <= width; dy = dy + 1) {
-            for (var dx = -width; dx <= width; dx = dx + 1) {
-                if dx == 0 && dy == 0 {
-                    continue;
-                }
-                let neighbor_pos = pixel + vec2<i32>(dx, dy);
-                // Bounds check
-                if neighbor_pos.x < 0 || neighbor_pos.y < 0 || 
-                   neighbor_pos.x >= i32(params.viewport_size.x) || 
-                   neighbor_pos.y >= i32(params.viewport_size.y) {
-                    continue;
-                }
-                let neighbor_id = textureLoad(id_texture, neighbor_pos, 0).r;
-                let neighbor_on_hovered = neighbor_id == params.hovered_id;
+        var weighted_sum = 0.0;
+        var weight_total = 0.0;
+        
+        // Compute weighted average of "inside" samples
+        // This approximates a signed distance field
+        for (var dy = -search_radius; dy <= search_radius; dy = dy + 1) {
+            for (var dx = -search_radius; dx <= search_radius; dx = dx + 1) {
+                let offset = vec2<f32>(f32(dx), f32(dy));
+                let dist = length(offset);
                 
-                // Edge: transition between hovered and non-hovered
-                if on_hovered != neighbor_on_hovered {
-                    is_outline = true;
-                    break;
+                // Only consider samples within our search radius
+                if dist <= f32(search_radius) {
+                    let neighbor_pos = pixel + vec2<i32>(dx, dy);
+                    let is_inside = is_hovered(neighbor_pos);
+                    
+                    // Weight by gaussian-like falloff for smoothness
+                    let sigma = width * 0.5 + 0.5;
+                    let weight = exp(-dist * dist / (2.0 * sigma * sigma));
+                    
+                    weighted_sum += is_inside * weight;
+                    weight_total += weight;
                 }
-            }
-            if is_outline {
-                break;
             }
         }
         
-        if is_outline {
-            // Blend outline over tint
-            result = mix(result, params.outline_color, params.outline_color.a);
+        // Normalize to get coverage (0 = outside, 1 = inside)
+        let coverage = weighted_sum / max(weight_total, 0.001);
+        
+        // Outline appears at the edge where coverage transitions
+        // Map coverage to outline intensity
+        // Edge is where coverage is around 0.5
+        // We want outline where coverage is between ~0.1 and ~0.9
+        
+        // Compute edge intensity - peaks at coverage = 0.5 (the edge)
+        let edge_sharpness = 2.0 / width;  // Sharper for thinner outlines
+        let edge_center = 0.5;
+        let edge_dist = abs(coverage - edge_center);
+        
+        // Outline alpha based on how close we are to the edge
+        // Thicker outline = wider band around the edge
+        let outline_band = 0.5 * (1.0 - 1.0 / (width + 1.0));
+        let outline_alpha = smoothstep(outline_band, 0.0, edge_dist) * params.outline_color.a;
+        
+        if outline_alpha > 0.01 {
+            result = mix(result, vec4<f32>(params.outline_color.rgb, 1.0), outline_alpha);
         }
     }
     

@@ -102,6 +102,8 @@ pub struct Settings {
     
     // Hover highlighting
     pub hover_mode: HoverMode,
+    pub hover_outline_thickness: f32,
+    pub hover_outline_alpha: f32,
 }
 
 impl Default for Settings {
@@ -149,6 +151,8 @@ impl Default for Settings {
             pt_focus_distance: 10.0,
             materialize_missing: false,
             hover_mode: HoverMode::Outline,  // Default to outline hover
+            hover_outline_thickness: 2.0,
+            hover_outline_alpha: 1.0,
         }
     }
 }

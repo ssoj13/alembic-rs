@@ -147,103 +147,6 @@ fn guess_material_from_path(path: &str) -> (Vec3, f32, f32, f32, f32) {
 }
 
 impl ViewerApp {
-    /// Calculate focus distance by tracing a ray from screen position through scene geometry
-    fn calculate_focus_distance(&self, rel_x: f32, rel_y: f32, bounds: &mesh_converter::Bounds) -> f32 {
-        // Convert to NDC (-1 to 1)
-        let ndc_x = rel_x * 2.0 - 1.0;
-        let ndc_y = 1.0 - rel_y * 2.0; // flip Y
-        
-        // Get actual viewport aspect ratio
-        let aspect = if let Some(rt) = self.viewport.render_texture_size() {
-            rt.0 as f32 / rt.1.max(1) as f32
-        } else {
-            16.0 / 9.0
-        };
-        
-        // Use scene camera if active, otherwise orbit camera
-        let (proj, view) = if let Some(scene_cam) = &self.viewport.scene_camera {
-            let proj = glam::Mat4::perspective_rh(
-                scene_cam.fov_y,
-                aspect,
-                scene_cam.near,
-                scene_cam.far,
-            );
-            (proj, scene_cam.view)
-        } else {
-            let proj = glam::Mat4::perspective_rh(
-                self.viewport.camera.fov,
-                aspect,
-                self.viewport.camera.near,
-                self.viewport.camera.far,
-            );
-            (proj, self.viewport.camera.view_matrix())
-        };
-        
-        let inv_proj = proj.inverse();
-        let inv_view = view.inverse();
-        
-        // Unproject to get ray direction
-        // glam::perspective_rh uses depth range [0, 1], so near=0, far=1 in NDC
-        let near_clip = inv_proj * glam::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
-        let near_point = near_clip.truncate() / near_clip.w;
-        let far_clip = inv_proj * glam::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
-        let far_point = far_clip.truncate() / far_clip.w;
-        
-        let ray_origin = (inv_view * glam::Vec4::new(near_point.x, near_point.y, near_point.z, 1.0)).truncate();
-        let ray_end = (inv_view * glam::Vec4::new(far_point.x, far_point.y, far_point.z, 1.0)).truncate();
-        let ray_dir = (ray_end - ray_origin).normalize();
-        
-        // Debug: print camera and ray info
-        eprintln!("DEBUG: click=({:.2},{:.2}) ndc=({:.2},{:.2})", rel_x, rel_y, ndc_x, ndc_y);
-        eprintln!("DEBUG: ray_origin=({:.1},{:.1},{:.1}) ray_dir=({:.3},{:.3},{:.3})",
-            ray_origin.x, ray_origin.y, ray_origin.z, ray_dir.x, ray_dir.y, ray_dir.z);
-        
-        // Try to intersect with actual geometry first
-        if let Some(renderer) = &self.viewport.renderer {
-            if let Some(hit) = Self::ray_scene_intersect(renderer, ray_origin, ray_dir) {
-                // Convert world-space hit point to view-space z-depth
-                // DoF shader expects depth along optical axis (view-space Z)
-                let hit_view = view * glam::Vec4::new(hit.point.x, hit.point.y, hit.point.z, 1.0);
-                let z_depth = -hit_view.z; // Negate because view space Z is negative forward
-                
-                // Extract short name from path (last component)
-                let short_name = hit.mesh_name.rsplit('/').next().unwrap_or(&hit.mesh_name);
-                eprintln!("PICK: \"{}\" at ({:.1}, {:.1}, {:.1}), z_depth={:.2}",
-                    short_name, hit.point.x, hit.point.y, hit.point.z, z_depth);
-                return z_depth;
-            } else {
-                // No geometry hit - focus at infinity (environment/sky)
-                let infinity_focus = 1000.0; // Large distance for "infinity" focus
-                eprintln!("PICK: <sky/environment>, z_depth=infinity ({})", infinity_focus);
-                return infinity_focus;
-            }
-        }
-        
-        // Fallback: intersect with scene bounding sphere
-        let center = bounds.center();
-        let radius = bounds.radius();
-        
-        let oc = ray_origin - center;
-        let a = ray_dir.dot(ray_dir);
-        let b = 2.0 * oc.dot(ray_dir);
-        let c = oc.dot(oc) - radius * radius;
-        let discriminant = b * b - 4.0 * a * c;
-        
-        if discriminant >= 0.0 {
-            let t = (-b - discriminant.sqrt()) / (2.0 * a);
-            if t > 0.0 {
-                return t;
-            }
-            let t2 = (-b + discriminant.sqrt()) / (2.0 * a);
-            if t2 > 0.0 {
-                return t2;
-            }
-        }
-        
-        // Last fallback: distance to center
-        (ray_origin - center).length()
-    }
-    
     /// Ray-triangle intersection (Moller-Trumbore, double-sided)
     fn ray_triangle_intersect(
         ray_origin: Vec3,
@@ -298,19 +201,19 @@ impl ViewerApp {
         ray_dir: Vec3,
     ) -> Option<PickResult> {
         let mut closest: Option<PickResult> = None;
-        let mut mesh_count = 0;
-        let mut tri_count = 0;
+        let mut _mesh_count = 0;
+        let mut _tri_count = 0;
         let mut skipped_meshes: Vec<String> = Vec::new();
         
         // Test scene meshes
         for (path, mesh) in renderer.meshes.iter() {
             if let (Some(vertices), Some(indices)) = (&mesh.base_vertices, &mesh.base_indices) {
-                mesh_count += 1;
+                _mesh_count += 1;
                 let transform = mesh.transform;
                 
                 for tri in indices.chunks(3) {
                     if tri.len() < 3 { continue; }
-                    tri_count += 1;
+                    _tri_count += 1;
                     
                     let v0 = transform.transform_point3(Vec3::from(vertices[tri[0] as usize].position));
                     let v1 = transform.transform_point3(Vec3::from(vertices[tri[1] as usize].position));
@@ -335,12 +238,12 @@ impl ViewerApp {
         // Test floor mesh
         if let Some(floor) = &renderer.floor_mesh {
             if let (Some(vertices), Some(indices)) = (&floor.base_vertices, &floor.base_indices) {
-                mesh_count += 1;
+                _mesh_count += 1;
                 let transform = floor.transform;
                 
                 for tri in indices.chunks(3) {
                     if tri.len() < 3 { continue; }
-                    tri_count += 1;
+                    _tri_count += 1;
                     
                     let v0 = transform.transform_point3(Vec3::from(vertices[tri[0] as usize].position));
                     let v1 = transform.transform_point3(Vec3::from(vertices[tri[1] as usize].position));
@@ -1304,6 +1207,28 @@ impl ViewerApp {
                                 }
                             });
                     });
+                    
+                    // Hover outline settings (only show when outline is enabled)
+                    if matches!(self.settings.hover_mode, super::settings::HoverMode::Outline | super::settings::HoverMode::Both) {
+                        ui.horizontal(|ui| {
+                            ui.label("Thickness:");
+                            if ui.add(egui::Slider::new(&mut self.settings.hover_outline_thickness, 0.5..=5.0)).changed() {
+                                if let Some(renderer) = &mut self.viewport.renderer {
+                                    renderer.hover_outline_thickness = self.settings.hover_outline_thickness;
+                                }
+                                self.settings.save();
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Opacity:");
+                            if ui.add(egui::Slider::new(&mut self.settings.hover_outline_alpha, 0.1..=1.0).step_by(0.1)).changed() {
+                                if let Some(renderer) = &mut self.viewport.renderer {
+                                    renderer.hover_outline_alpha = self.settings.hover_outline_alpha;
+                                }
+                                self.settings.save();
+                            }
+                        });
+                    }
                     
                     // Camera info
                     let pos = self.viewport.camera.position();
@@ -2352,28 +2277,8 @@ impl eframe::App for ViewerApp {
             })
         });
         
-        // Skip dynamic near/far adjustment when path tracing (causes constant resets)
-        if self.active_camera.is_none() && !self.settings.path_tracing {
-            if let Some(bounds) = &self.scene_bounds {
-                let center = bounds.center();
-                let radius = bounds.radius().max(0.1);
-                let cam_pos = self.viewport.camera.position();
-                let dist = (cam_pos - center).length();
-                let margin = radius * 2.0;
-                // Near: small fraction of distance, but not too small for Z precision
-                let min_near = 0.1;
-                let max_near = dist * 0.1; // Never clip more than 10% of view distance
-                let target_near = (dist - margin).clamp(min_near, max_near);
-                // Far: enough to see entire scene
-                let target_far = (dist + margin * 2.0).max(radius * 4.0);
-                let dt = ctx.input(|i| i.stable_dt);
-                let t = (dt * 6.0).clamp(0.0, 1.0);
-                self.viewport.camera.near =
-                    self.viewport.camera.near + (target_near - self.viewport.camera.near) * t;
-                self.viewport.camera.far =
-                    self.viewport.camera.far + (target_far - self.viewport.camera.far) * t;
-            }
-        }
+        // Near/far planes are now calculated dynamically in OrbitCamera::near()/far()
+        // based on camera distance, which provides stable z-buffer behavior
         
         checkpoint!("camera_setup");
         
@@ -2501,10 +2406,16 @@ impl eframe::App for ViewerApp {
                     renderer.auto_normals = self.settings.auto_normals;
                     renderer.background_color = self.settings.background_color;
                     renderer.hover_mode = self.settings.hover_mode;
+                    renderer.hover_outline_thickness = self.settings.hover_outline_thickness;
+                    renderer.hover_outline_alpha = self.settings.hover_outline_alpha;
                     // Path tracer settings
                     renderer.pt_max_samples = self.settings.pt_max_samples;
                     renderer.pt_max_bounces = self.settings.pt_max_bounces;
                     renderer.pt_samples_per_update = self.settings.pt_samples_per_update;
+                    renderer.pt_max_transmission_depth = self.settings.pt_max_transmission_depth;
+                    renderer.pt_dof_enabled = self.settings.pt_dof_enabled;
+                    renderer.pt_aperture = self.settings.pt_aperture;
+                    renderer.pt_focus_distance = self.settings.pt_focus_distance;
                     // Set floor if enabled (uses scene_bounds for sizing)
                     if self.settings.show_floor {
                         renderer.set_floor(&self.scene_bounds);
@@ -2695,12 +2606,6 @@ impl eframe::App for ViewerApp {
                         ctx.request_repaint();
                     }
                 }
-            }
-            
-            // Poll for hover result (after render has submitted commands)
-            if let Some(renderer) = &mut self.viewport.renderer {
-                // Note: poll_hover_result is called in the render loop after queue.submit
-                // The result will be available next frame
             }
         } else {
             // Hover mode disabled, clear state

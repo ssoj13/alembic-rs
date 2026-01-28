@@ -116,7 +116,7 @@ impl Viewport {
 
                 // Render scene
                 if let (Some(renderer), Some(rt)) = (&mut self.renderer, &self.render_texture) {
-                    renderer.render(&rt.view, width, height, self.camera.distance(), self.camera.near, self.camera.far);
+                    renderer.render(&rt.view, width, height, self.camera.distance(), self.camera.near(), self.camera.far());
                     
                     // Poll for hover pick result (must be after render submits GPU commands)
                     if renderer.hover_mode != super::settings::HoverMode::None {

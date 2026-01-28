@@ -20,10 +20,6 @@ pub struct OrbitCamera {
     rig: CameraRig,
     /// Vertical FOV in degrees
     pub fov: f32,
-    /// Near clip plane
-    pub near: f32,
-    /// Far clip plane
-    pub far: f32,
 }
 
 impl OrbitCamera {
@@ -39,9 +35,17 @@ impl OrbitCamera {
         Self {
             rig,
             fov: 45.0,
-            near: 0.1,
-            far: 1000.0,
         }
+    }
+    
+    /// Near clip plane - fixed value for stability
+    pub fn near(&self) -> f32 {
+        0.1
+    }
+    
+    /// Far clip plane - fixed value for stability
+    pub fn far(&self) -> f32 {
+        10000.0
     }
 
     /// Orbit around target (drag)
@@ -149,9 +153,9 @@ impl OrbitCamera {
         Mat4::look_at_rh(pos, pos + fwd, up)
     }
 
-    /// Get projection matrix
+    /// Get projection matrix with near/far planes
     pub fn projection_matrix(&self, aspect: f32) -> Mat4 {
-        wgpu_projection(self.fov.to_radians(), aspect, self.near, self.far)
+        wgpu_projection(self.fov.to_radians(), aspect, self.near(), self.far())
     }
 
     /// Get combined view-projection matrix
