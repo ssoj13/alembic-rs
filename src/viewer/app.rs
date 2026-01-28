@@ -2365,6 +2365,7 @@ impl eframe::App for ViewerApp {
         }
         
         // F = Focus on selected object, or fit whole scene if nothing selected
+        //     Also sets DoF focus distance to the new camera arm distance
         if ctx.input(|i| i.key_pressed(egui::Key::F)) {
             let mut focused = false;
             if let Some(name) = &self.selected_object {
@@ -2386,6 +2387,15 @@ impl eframe::App for ViewerApp {
                 } else {
                     self.viewport.camera.focus(glam::Vec3::ZERO, 5.0);
                     self.status_message = "No scene bounds".into();
+                }
+            }
+            // Set DoF focus distance = camera distance to pivot
+            let focus_dist = self.viewport.camera.distance;
+            self.settings.pt_focus_distance = focus_dist;
+            if let Some(renderer) = &mut self.viewport.renderer {
+                renderer.pt_focus_distance = focus_dist;
+                if let Some(pt) = &mut renderer.path_tracer {
+                    pt.reset_accumulation();
                 }
             }
         }

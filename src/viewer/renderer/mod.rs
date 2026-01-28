@@ -1002,13 +1002,9 @@ impl Renderer {
             render_pass.draw_indexed(0..mesh.mesh.index_count, 0, 0..1);
         }
         
-        // Render floor if present
-        if let Some(floor) = &self.floor_mesh {
-            render_pass.set_bind_group(1, &floor.model_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, floor.mesh.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(floor.mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..floor.mesh.index_count, 0, 0..1);
-        }
+        // Floor excluded from object ID pass: hovering floor would outline
+        // the scene silhouette (floor border = mesh silhouette), not useful.
+        // Floor is still pickable via CPU ray picking for selection.
     }
     
     /// Render hover highlight overlay (outline/tint)

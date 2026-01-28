@@ -79,8 +79,11 @@ impl Viewport {
         // Handle camera input
         self.handle_input(ui, &response);
 
-        // Update camera
-        self.camera.update(ui.input(|i| i.stable_dt));
+        // Update camera inertia; request repaint while decaying
+        let dt = ui.input(|i| i.stable_dt);
+        if self.camera.update(dt) {
+            ui.ctx().request_repaint();
+        }
 
         // Render to texture if we have a renderer and render state
         if let Some(render_state) = wgpu_render_state {
@@ -204,9 +207,19 @@ impl Viewport {
     fn handle_input(&mut self, ui: &Ui, response: &Response) {
         let input = ui.input(|i| i.clone());
 
+        // Track drag state for inertia
+        let any_drag = response.dragged_by(egui::PointerButton::Primary)
+            || response.dragged_by(egui::PointerButton::Middle)
+            || response.dragged_by(egui::PointerButton::Secondary);
+        if any_drag {
+            self.camera.begin_drag();
+        } else if response.drag_stopped() {
+            self.camera.end_drag();
+        }
+
         // Ctrl+LMB drag = continuous focus sampling (disable orbit)
         let ctrl_held = input.modifiers.ctrl;
-        
+
         // Orbit with left mouse drag (only when Ctrl not held)
         if response.dragged_by(egui::PointerButton::Primary) && !ctrl_held {
             let delta = response.drag_delta();

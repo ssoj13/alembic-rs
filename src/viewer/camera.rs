@@ -25,6 +25,16 @@ pub struct OrbitCamera {
     pub distance: f32,
     /// Vertical FOV in degrees
     pub fov: f32,
+
+    // Inertia velocities (per second)
+    vel_yaw: f32,
+    vel_pitch: f32,
+    vel_pan: Vec3,
+    vel_zoom: f32,
+    /// Inertia decay time in milliseconds (0 = no inertia)
+    pub inertia_ms: f32,
+    /// True while user is actively dragging
+    dragging: bool,
 }
 
 impl OrbitCamera {
@@ -35,18 +45,43 @@ impl OrbitCamera {
             pitch: -30.0,
             distance,
             fov: 45.0,
+            vel_yaw: 0.0,
+            vel_pitch: 0.0,
+            vel_pan: Vec3::ZERO,
+            vel_zoom: 0.0,
+            inertia_ms: 150.0,
+            dragging: false,
         }
     }
 
     pub fn near(&self) -> f32 { 0.1 }
     pub fn far(&self) -> f32 { 10000.0 }
 
+    /// Call when user starts dragging
+    pub fn begin_drag(&mut self) {
+        self.dragging = true;
+        // Kill residual velocity on new drag
+        self.vel_yaw = 0.0;
+        self.vel_pitch = 0.0;
+        self.vel_pan = Vec3::ZERO;
+        self.vel_zoom = 0.0;
+    }
+
+    /// Call when user stops dragging
+    pub fn end_drag(&mut self) {
+        self.dragging = false;
+    }
+
     /// Orbit around target (LMB drag) - Maya tumble
     pub fn orbit(&mut self, delta_x: f32, delta_y: f32) {
         let sensitivity = 0.3;
-        self.yaw -= delta_x * sensitivity;
-        self.pitch -= delta_y * sensitivity;
-        self.pitch = self.pitch.clamp(-89.0, 89.0);
+        let dy = -delta_x * sensitivity;
+        let dp = -delta_y * sensitivity;
+        self.yaw += dy;
+        self.pitch = (self.pitch + dp).clamp(-89.0, 89.0);
+        // Store velocity as degrees/frame for inertia
+        self.vel_yaw = dy;
+        self.vel_pitch = dp;
     }
 
     /// Pan camera (MMB drag) - screen-space translation of pivot
@@ -55,7 +90,9 @@ impl OrbitCamera {
         let right = rot * Vec3::X;
         let up = rot * Vec3::Y;
         let sensitivity = 0.002 * self.distance;
-        self.target += right * (-delta_x * sensitivity) + up * (delta_y * sensitivity);
+        let offset = right * (-delta_x * sensitivity) + up * (delta_y * sensitivity);
+        self.target += offset;
+        self.vel_pan = offset;
     }
 
     /// Zoom (RMB drag / scroll)
@@ -63,12 +100,14 @@ impl OrbitCamera {
         let sensitivity = 0.0002 * self.distance.max(1.0);
         let factor = 1.0 - delta * sensitivity;
         self.distance = (self.distance * factor).clamp(0.01, 50000.0);
+        self.vel_zoom = delta * sensitivity;
     }
 
     /// Focus on bounding box center with given radius
     pub fn focus(&mut self, center: Vec3, radius: f32) {
         self.target = center;
         self.distance = radius * 2.5;
+        self.kill_inertia();
     }
 
     /// Reset to default view
@@ -77,6 +116,7 @@ impl OrbitCamera {
         self.yaw = 45.0;
         self.pitch = -30.0;
         self.distance = 5.0;
+        self.kill_inertia();
     }
 
     /// Set distance from target
@@ -95,8 +135,53 @@ impl OrbitCamera {
         self.pitch = pitch.clamp(-89.0, 89.0);
     }
 
-    /// Update camera (no-op, kept for API compat)
-    pub fn update(&mut self, _dt: f32) {}
+    /// Returns true if inertia is still active (needs repaint)
+    pub fn update(&mut self, dt: f32) -> bool {
+        if self.dragging || self.inertia_ms <= 0.0 {
+            return false;
+        }
+
+        let has_velocity = self.vel_yaw.abs() > 0.001
+            || self.vel_pitch.abs() > 0.001
+            || self.vel_pan.length_squared() > 1e-8
+            || self.vel_zoom.abs() > 1e-6;
+
+        if !has_velocity {
+            return false;
+        }
+
+        // Exponential decay: half-life = inertia_ms / 1000 * ln(2)
+        let decay = (-dt / (self.inertia_ms * 0.001)).exp();
+
+        // Apply velocities
+        self.yaw += self.vel_yaw;
+        self.pitch = (self.pitch + self.vel_pitch).clamp(-89.0, 89.0);
+        self.target += self.vel_pan;
+        let zoom_factor = 1.0 - self.vel_zoom;
+        self.distance = (self.distance * zoom_factor).clamp(0.01, 50000.0);
+
+        // Decay
+        self.vel_yaw *= decay;
+        self.vel_pitch *= decay;
+        self.vel_pan *= decay;
+        self.vel_zoom *= decay;
+
+        // Stop when negligible
+        if self.vel_yaw.abs() < 0.001 { self.vel_yaw = 0.0; }
+        if self.vel_pitch.abs() < 0.001 { self.vel_pitch = 0.0; }
+        if self.vel_pan.length_squared() < 1e-8 { self.vel_pan = Vec3::ZERO; }
+        if self.vel_zoom.abs() < 1e-6 { self.vel_zoom = 0.0; }
+
+        true
+    }
+
+    /// Kill all inertia velocity
+    pub fn kill_inertia(&mut self) {
+        self.vel_yaw = 0.0;
+        self.vel_pitch = 0.0;
+        self.vel_pan = Vec3::ZERO;
+        self.vel_zoom = 0.0;
+    }
 
     /// Camera rotation quaternion (yaw around Y, then pitch around local X)
     fn rotation(&self) -> Quat {
