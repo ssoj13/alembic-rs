@@ -138,6 +138,15 @@ pub struct Renderer {
     pt_batch_rendering: bool,  // True during multi-sample batch (skip camera updates)
     pt_camera_snap_time: std::time::Instant,  // When PT camera was last snapped
     pt_snap_ready: bool,  // True when it's time to dispatch new samples (snap interval reached)
+    pt_last_dispatch_time: std::time::Instant,  // When PT last dispatched samples (for FPS limiting)
+    /// Samples dispatched in last second (for samples/sec display)
+    pub pt_samples_last_sec: u32,
+    pt_samples_counter: u32,  // Running counter for current second
+    pt_samples_sec_start: std::time::Instant,  // Start of current second
+    // Snapped camera state (used for PT when snap is enabled)
+    pt_snapped_view_proj: Option<glam::Mat4>,
+    pt_snapped_view: Option<glam::Mat4>,
+    pt_snapped_position: Option<glam::Vec3>,
     /// Max transmission/glass bounces (separate from diffuse/specular bounces)
     pub pt_max_transmission_depth: u32,
     /// Depth of field enabled
@@ -683,6 +692,13 @@ impl Renderer {
             pt_batch_rendering: false,
             pt_camera_snap_time: std::time::Instant::now(),
             pt_snap_ready: true,
+            pt_last_dispatch_time: std::time::Instant::now(),
+            pt_samples_last_sec: 0,
+            pt_samples_counter: 0,
+            pt_samples_sec_start: std::time::Instant::now(),
+            pt_snapped_view_proj: None,
+            pt_snapped_view: None,
+            pt_snapped_position: None,
             pt_max_transmission_depth: 8,
             pt_dof_enabled: false,
             pt_aperture: 0.1,
@@ -732,43 +748,76 @@ impl Renderer {
             return;
         }
 
-        // Camera snapping: Only update PT camera at target FPS intervals.
-        // This allows samples to accumulate between intervals without being reset
-        // by small camera movements (inertia, etc.), preventing ghost samples.
-        // Note: pt_snap_ready flag tells render() whether to dispatch new samples.
-        if self.pt_camera_snap {
+        // Camera snapping: Use a fixed camera position for PT to prevent ghost samples.
+        // When snap is enabled, we store a snapped camera and only update it at target FPS intervals.
+        // Between intervals, samples accumulate using the snapped camera even if user moves.
+
+        // Determine which camera to use for PT
+        let (pt_view_proj, pt_view, pt_position) = if self.pt_camera_snap {
             let snap_interval = 1.0 / self.pt_target_fps;
             let elapsed = self.pt_camera_snap_time.elapsed().as_secs_f32();
-            if elapsed < snap_interval {
-                // Not time for a new snapshot yet - skip camera update
-                // render() will only blit existing buffer, not dispatch new samples
-                self.pt_snap_ready = false;
-                return;
+
+            // Check if we need to update the snapped camera
+            let should_update_snap = self.pt_snapped_view_proj.is_none() || elapsed >= snap_interval;
+
+            if should_update_snap {
+                // Time to snap: check if camera actually moved since last snap
+                let snapped_changed = self.pt_snapped_position.map_or(true, |prev| {
+                    (prev - position).length() > 0.01
+                });
+
+                if snapped_changed {
+                    tracing::info!("SNAP: camera changed, updating snap and resetting accumulation");
+                    // Reset accumulation because camera position changed
+                    if let Some(pt) = &mut self.path_tracer {
+                        pt.reset_accumulation();
+                    }
+                }
+
+                // Update snapped camera
+                self.pt_snapped_view_proj = Some(view_proj);
+                self.pt_snapped_view = Some(view);
+                self.pt_snapped_position = Some(position);
+                self.pt_camera_snap_time = std::time::Instant::now();
+                self.pt_snap_ready = true;
+            } else {
+                // Not time for new snap yet - keep using old snapped camera
+                // Still allow rendering (samples accumulate)
+                self.pt_snap_ready = true;
             }
-            // Time for new snapshot - update snap time and allow rendering
-            self.pt_camera_snap_time = std::time::Instant::now();
-            self.pt_snap_ready = true;
+
+            // Use snapped camera for PT
+            (
+                self.pt_snapped_view_proj.unwrap_or(view_proj),
+                self.pt_snapped_view.unwrap_or(view),
+                self.pt_snapped_position.unwrap_or(position),
+            )
         } else {
-            self.pt_snap_ready = true; // Always ready when snap disabled
-        }
+            // Snap disabled - use current camera
+            self.pt_snap_ready = true;
+            (view_proj, view, position)
+        };
 
         if let Some(pt) = &mut self.path_tracer {
-            let inv_view = view.inverse();
-            let proj = view_proj * view.inverse();
+            let inv_view = pt_view.inverse();
+            let proj = pt_view_proj * pt_view.inverse();
             let inv_proj = proj.inverse();
 
-            let pos_arr = position.to_array();
+            let pos_arr = pt_position.to_array();
             // Compare with higher epsilon to avoid spurious resets
             // Position threshold: ~0.01 units of movement
             // ViewProj threshold: ~1% change in any matrix element
-            let vp_arr = view_proj.to_cols_array_2d();
+            let vp_arr = pt_view_proj.to_cols_array_2d();
+            // Use very small epsilon to catch any camera movement
+            const POS_EPS: f32 = 1e-5;
+            const VP_EPS: f32 = 1e-6;
             let camera_changed = pt.last_camera_pos.map_or(true, |prev| {
-                (prev[0] - pos_arr[0]).abs() > 0.01
-                    || (prev[1] - pos_arr[1]).abs() > 0.01
-                    || (prev[2] - pos_arr[2]).abs() > 0.01
+                (prev[0] - pos_arr[0]).abs() > POS_EPS
+                    || (prev[1] - pos_arr[1]).abs() > POS_EPS
+                    || (prev[2] - pos_arr[2]).abs() > POS_EPS
             }) || pt.last_view_proj.map_or(true, |prev| {
                 prev.iter().flatten().zip(vp_arr.iter().flatten())
-                    .any(|(a, b)| (a - b).abs() > 0.01)
+                    .any(|(a, b)| (a - b).abs() > VP_EPS)
             });
 
             let cam = super::pathtracer::PtCameraUniform {
@@ -2285,8 +2334,7 @@ impl Renderer {
                     label: Some("pt_encoder"),
                 });
                 
-                // Only dispatch new samples when snap is ready (or snap disabled)
-                // Otherwise just blit existing accumulation buffer
+                // Dispatch when snap is ready (throttling is done at viewport level)
                 if self.pt_snap_ready {
                     // Calculate samples per frame
                     let samples_this_frame = if self.pt_auto_spp {
@@ -2317,10 +2365,23 @@ impl Renderer {
                     let render_start = std::time::Instant::now();
 
                     // Multiple samples per frame for target FPS control
-                    for _ in 0..samples_this_frame {
-                        if !pt.dispatch(&mut encoder, &self.queue) {
+                    // Each dispatch creates and submits its own encoder to ensure
+                    // frame_count is synchronized (write_buffer is immediate, dispatch is deferred)
+                    let mut samples_dispatched = 0u32;
+                    for i in 0..samples_this_frame {
+                        if !pt.dispatch(&self.device, &self.queue) {
+                            tracing::debug!("PT dispatch loop: break at sample {}/{}", i, samples_this_frame);
                             break; // Scene not ready or converged
                         }
+                        samples_dispatched += 1;
+                    }
+
+                    // Update samples/sec counter
+                    self.pt_samples_counter += samples_dispatched;
+                    if self.pt_samples_sec_start.elapsed().as_secs_f32() >= 1.0 {
+                        self.pt_samples_last_sec = self.pt_samples_counter;
+                        self.pt_samples_counter = 0;
+                        self.pt_samples_sec_start = std::time::Instant::now();
                     }
 
                     // Update render time estimate (EMA)

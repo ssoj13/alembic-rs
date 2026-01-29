@@ -31,6 +31,13 @@ pub struct Viewport {
     pub hover_position: Option<(f32, f32)>,
     /// True if user moved the camera this frame (for turntable pause)
     pub camera_moved_by_user: bool,
+    /// Last render time for FPS throttling
+    last_render_time: std::time::Instant,
+    /// Render FPS tracking
+    render_count: u32,
+    render_count_start: std::time::Instant,
+    /// Current render FPS (updated every second)
+    pub render_fps: f32,
 }
 
 struct RenderTexture {
@@ -53,6 +60,10 @@ impl Viewport {
             pending_object_pick: None,
             hover_position: None,
             camera_moved_by_user: false,
+            last_render_time: std::time::Instant::now(),
+            render_count: 0,
+            render_count_start: std::time::Instant::now(),
+            render_fps: 0.0,
         }
     }
 
@@ -123,6 +134,14 @@ impl Viewport {
                 // Render scene
                 if let (Some(renderer), Some(rt)) = (&mut self.renderer, &self.render_texture) {
                     renderer.render(&rt.view, width, height, self.camera.distance, self.camera.near(), self.camera.far());
+                    
+                    // Track render FPS
+                    self.render_count += 1;
+                    if self.render_count_start.elapsed().as_secs_f32() >= 1.0 {
+                        self.render_fps = self.render_count as f32;
+                        self.render_count = 0;
+                        self.render_count_start = std::time::Instant::now();
+                    }
                     
                     // Poll for hover pick result (must be after render submits GPU commands)
                     if renderer.hover_mode != super::settings::HoverMode::None {

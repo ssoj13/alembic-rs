@@ -64,7 +64,10 @@ pub struct PtEnvUniform {
     pub intensity: f32,
     pub rotation: f32,
     pub enabled: f32,
-    pub _pad: f32,
+    pub use_importance_sampling: f32,  // 1.0 = use CDF importance sampling
+    pub env_width: u32,
+    pub env_height: u32,
+    pub _pad: [u32; 2],
 }
 
 impl Default for PtEnvUniform {
@@ -73,7 +76,10 @@ impl Default for PtEnvUniform {
             intensity: 1.0,
             rotation: 0.0,
             enabled: 0.0,
-            _pad: 0.0,
+            use_importance_sampling: 0.0,
+            env_width: 1,
+            env_height: 1,
+            _pad: [0; 2],
         }
     }
 }
@@ -106,6 +112,12 @@ pub struct PathTraceCompute {
     env_sampler: wgpu::Sampler,
     env_uniform_buffer: wgpu::Buffer,
     env_dirty: bool,
+    
+    // Environment importance sampling CDFs
+    env_marginal_cdf: wgpu::Buffer,
+    env_conditional_cdf: wgpu::Buffer,
+    env_width: u32,
+    env_height: u32,
 
     // Dimensions
     width: u32,
@@ -251,6 +263,28 @@ impl PathTraceCompute {
                     },
                     count: None,
                 },
+                // @binding(10) Environment marginal CDF (for importance sampling)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 10,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // @binding(11) Environment conditional CDF (for importance sampling)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -386,6 +420,18 @@ impl PathTraceCompute {
             contents: bytemuck::bytes_of(&PtEnvUniform::default()),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
+        
+        // Default CDF buffers (1x1, uniform distribution)
+        let env_marginal_cdf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pt_env_marginal_cdf"),
+            contents: bytemuck::cast_slice(&[1.0f32]),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let env_conditional_cdf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pt_env_conditional_cdf"),
+            contents: bytemuck::cast_slice(&[1.0f32]),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
 
         Self {
             pipeline,
@@ -406,6 +452,10 @@ impl PathTraceCompute {
             env_sampler,
             env_uniform_buffer,
             env_dirty: false,
+            env_marginal_cdf,
+            env_conditional_cdf,
+            env_width: 1,
+            env_height: 1,
             width,
             height,
             frame_count: 0,
@@ -587,6 +637,14 @@ impl PathTraceCompute {
                     binding: 9,
                     resource: self.visibility_buffer.as_entire_binding(),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: self.env_marginal_cdf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 11,
+                    resource: self.env_conditional_cdf.as_entire_binding(),
+                },
             ],
         }));
 
@@ -633,7 +691,10 @@ impl PathTraceCompute {
             intensity,
             rotation: 0.0,
             enabled: if enabled { 1.0 } else { 0.0 },
-            _pad: 0.0,
+            use_importance_sampling: if self.env_width > 1 { 1.0 } else { 0.0 },
+            env_width: self.env_width,
+            env_height: self.env_height,
+            _pad: [0; 2],
         };
         queue.write_buffer(&self.env_uniform_buffer, 0, bytemuck::bytes_of(&uniform));
         
@@ -659,11 +720,19 @@ impl PathTraceCompute {
         // Create our own view of the texture
         self.env_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         
+        // Get texture dimensions for importance sampling
+        let tex_size = texture.size();
+        self.env_width = tex_size.width;
+        self.env_height = tex_size.height;
+        
         let uniform = PtEnvUniform {
             intensity,
             rotation: 0.0,
             enabled: if enabled { 1.0 } else { 0.0 },
-            _pad: 0.0,
+            use_importance_sampling: 0.0,  // Will be enabled when CDF is uploaded
+            env_width: self.env_width,
+            env_height: self.env_height,
+            _pad: [0; 2],
         };
         queue.write_buffer(&self.env_uniform_buffer, 0, bytemuck::bytes_of(&uniform));
         
@@ -678,9 +747,59 @@ impl PathTraceCompute {
             intensity,
             rotation: 0.0,
             enabled: if enabled { 1.0 } else { 0.0 },
-            _pad: 0.0,
+            use_importance_sampling: if self.env_width > 1 { 1.0 } else { 0.0 },
+            env_width: self.env_width,
+            env_height: self.env_height,
+            _pad: [0; 2],
         };
         queue.write_buffer(&self.env_uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+    }
+    
+    /// Set environment CDFs for importance sampling.
+    /// marginal_cdf: height+1 floats (row selection)
+    /// conditional_cdf: height * (width+1) floats (column selection per row)
+    pub fn set_environment_cdfs(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        marginal_cdf: &[f32],
+        conditional_cdf: &[f32],
+        width: u32,
+        height: u32,
+    ) {
+        self.env_width = width;
+        self.env_height = height;
+        
+        // Create new CDF buffers
+        self.env_marginal_cdf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pt_env_marginal_cdf"),
+            contents: bytemuck::cast_slice(marginal_cdf),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        self.env_conditional_cdf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("pt_env_conditional_cdf"),
+            contents: bytemuck::cast_slice(conditional_cdf),
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        
+        // Enable importance sampling in uniform
+        let uniform = PtEnvUniform {
+            intensity: 1.0,  // Will be overwritten by update_environment_params
+            rotation: 0.0,
+            enabled: 1.0,
+            use_importance_sampling: 1.0,
+            env_width: width,
+            env_height: height,
+            _pad: [0; 2],
+        };
+        queue.write_buffer(&self.env_uniform_buffer, 0, bytemuck::bytes_of(&uniform));
+        
+        // Rebuild bind group with new CDF buffers
+        self.rebuild_bind_group(device);
+        self.reset_accumulation();
+        
+        tracing::info!("Environment CDFs uploaded: {}x{}, marginal={}, conditional={}", 
+            width, height, marginal_cdf.len(), conditional_cdf.len());
     }
 
     /// Set visibility for a specific object_id (0=hidden, 1=visible).
@@ -711,13 +830,18 @@ impl PathTraceCompute {
     ///
     /// Increments frame counter and writes it to camera uniform buffer
     /// so the shader can do progressive accumulation (blend = 1/frame_count).
-    #[tracing::instrument(skip_all, fields(frame = self.frame_count))]
-    pub fn dispatch(&mut self, encoder: &mut wgpu::CommandEncoder, queue: &wgpu::Queue) -> bool {
+    /// 
+    /// IMPORTANT: This creates and submits its own encoder to ensure frame_count
+    /// is synchronized with the dispatch. queue.write_buffer is immediate while
+    /// encoder commands are deferred - mixing them in a loop causes all dispatches
+    /// to see the final frame_count value.
+    pub fn dispatch(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> bool {
         let Some(bg) = &self.bind_group else { return false; };
         if !self.scene_ready { return false; }
         if self.frame_count >= self.max_samples { return true; } // converged
 
         self.frame_count += 1;
+        tracing::debug!("PT dispatch: frame_count={}", self.frame_count);
 
         // Update frame_count in camera uniform (offset of frame_count field)
         // inv_view (64) + inv_proj (64) + position (12) + _pad0 (4) = 144
@@ -733,13 +857,20 @@ impl PathTraceCompute {
         let wg_x = (self.width + WG_SIZE - 1) / WG_SIZE;
         let wg_y = (self.height + WG_SIZE - 1) / WG_SIZE;
 
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("pt_compute_pass"),
-            timestamp_writes: None,
+        // Create and submit encoder immediately to ensure frame_count sync
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("pt_dispatch_encoder"),
         });
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, bg, &[]);
-        pass.dispatch_workgroups(wg_x, wg_y, 1);
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("pt_compute_pass"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, bg, &[]);
+            pass.dispatch_workgroups(wg_x, wg_y, 1);
+        }
+        queue.submit([encoder.finish()]);
 
         true
     }
@@ -770,7 +901,7 @@ impl PathTraceCompute {
                 view: target,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    load: wgpu::LoadOp::Load,  // Keep previous frame to avoid flicker
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,

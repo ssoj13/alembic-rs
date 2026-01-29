@@ -84,13 +84,18 @@ struct HitInfo {
 @group(0) @binding(7) var env_sampler: sampler;
 @group(0) @binding(8) var<uniform> env: EnvParams;
 @group(0) @binding(9) var<storage, read> visibility: array<u32>;
+@group(0) @binding(10) var<storage, read> env_marginal_cdf: array<f32>;
+@group(0) @binding(11) var<storage, read> env_conditional_cdf: array<f32>;
 
 // Environment parameters
 struct EnvParams {
     intensity: f32,
     rotation: f32,
     enabled: f32,
-    _pad: f32,
+    use_importance_sampling: f32,
+    env_width: u32,
+    env_height: u32,
+    _pad: vec2<u32>,
 };
 
 const MAX_STACK_DEPTH: u32 = 32u;
@@ -104,7 +109,7 @@ const SUN_COLOR: vec3<f32> = vec3<f32>(1.0, 0.98, 0.95);
 const SUN_INTENSITY: f32 = 5.0;
 const SUN_ANGULAR_RADIUS: f32 = 0.00465; // ~0.53 degrees, real sun size
 
-// ---- PCG random number generator ----
+// ---- PCG random number generator (kept for RR and lobe selection) ----
 
 fn pcg_hash(input: u32) -> u32 {
     var state = input * 747796405u + 2891336453u;
@@ -115,6 +120,38 @@ fn pcg_hash(input: u32) -> u32 {
 fn rand(state: ptr<function, u32>) -> f32 {
     *state = pcg_hash(*state);
     return f32(*state) / 4294967296.0;
+}
+
+// ---- R2 Low-Discrepancy Sequence ----
+// Provides better sample distribution than pure random for faster convergence.
+// Based on the plastic constant (generalized golden ratio for 2D).
+
+const R2_A1: f32 = 0.7548776662466927;  // 1.0 / plastic constant
+const R2_A2: f32 = 0.5698402909980532;  // 1.0 / (plastic^2)
+
+// Generate 2D R2 sample for given index.
+fn r2_2d(n: u32) -> vec2<f32> {
+    return fract(vec2<f32>(0.5) + f32(n) * vec2<f32>(R2_A1, R2_A2));
+}
+
+// Cranley-Patterson rotation: add random offset per pixel for spatial variation.
+// This decorrelates samples between neighboring pixels.
+fn r2_2d_rotated(n: u32, offset: vec2<f32>) -> vec2<f32> {
+    return fract(r2_2d(n) + offset);
+}
+
+// Dimensions per frame for R2 sampling:
+// - dim 0: AA jitter
+// - dim 1: DoF lens
+// - dim 2+bounce*2: main lobe (diffuse/spec/trans)
+// - dim 3+bounce*2: secondary (coat, sun disc)
+const R2_DIMS_PER_FRAME: u32 = 20u;  // enough for 8 bounces
+
+// Get R2 sample for specific dimension within current frame.
+// Uses frame_count as base index for progressive refinement.
+fn get_r2_sample(frame: u32, dim: u32, offset: vec2<f32>) -> vec2<f32> {
+    let idx = frame * R2_DIMS_PER_FRAME + dim;
+    return r2_2d_rotated(idx, offset);
 }
 
 // ---- Intersection routines ----
@@ -204,12 +241,30 @@ fn trace_ray(ray: Ray) -> HitInfo {
                 }
             }
         } else {
-            // Internal: push children
+            // Internal: push children with near-far ordering based on ray direction
             if sp + 2u <= MAX_STACK_DEPTH {
-                stack[sp] = node.left_or_first + 1u;
-                sp += 1u;
-                stack[sp] = node.left_or_first;
-                sp += 1u;
+                let left_child = node.left_or_first;
+                let right_child = node.left_or_first + 1u;
+                
+                // Determine split axis from AABB extent (dominant axis)
+                let extent = node.aabb_max - node.aabb_min;
+                
+                // Find dominant axis and check if ray goes in negative direction
+                var flip = false;
+                if extent.x >= extent.y && extent.x >= extent.z {
+                    flip = ray.dir.x < 0.0;  // X dominant
+                } else if extent.y >= extent.z {
+                    flip = ray.dir.y < 0.0;  // Y dominant
+                } else {
+                    flip = ray.dir.z < 0.0;  // Z dominant
+                }
+                
+                // Order: near child processed first (pushed last onto LIFO stack)
+                let near_child = select(left_child, right_child, flip);
+                let far_child = select(right_child, left_child, flip);
+                
+                stack[sp] = far_child; sp += 1u;
+                stack[sp] = near_child; sp += 1u;
             }
         }
     }
@@ -248,12 +303,26 @@ fn trace_shadow_ray(ray: Ray, max_t: f32) -> bool {
                 }
             }
         } else {
-            // Internal: push children
+            // Internal: push children with near-far ordering
             if sp + 2u <= MAX_STACK_DEPTH {
-                stack[sp] = node.left_or_first + 1u;
-                sp += 1u;
-                stack[sp] = node.left_or_first;
-                sp += 1u;
+                let left_child = node.left_or_first;
+                let right_child = node.left_or_first + 1u;
+                
+                let extent = node.aabb_max - node.aabb_min;
+                var flip = false;
+                if extent.x >= extent.y && extent.x >= extent.z {
+                    flip = ray.dir.x < 0.0;
+                } else if extent.y >= extent.z {
+                    flip = ray.dir.y < 0.0;
+                } else {
+                    flip = ray.dir.z < 0.0;
+                }
+                
+                let near_child = select(left_child, right_child, flip);
+                let far_child = select(right_child, left_child, flip);
+                
+                stack[sp] = far_child; sp += 1u;
+                stack[sp] = near_child; sp += 1u;
             }
         }
     }
@@ -262,7 +331,8 @@ fn trace_shadow_ray(ray: Ray, max_t: f32) -> bool {
 }
 
 // Sample direction on sun disc (for soft shadows).
-fn sample_sun_direction(rng: ptr<function, u32>) -> vec3<f32> {
+// Takes pre-generated random values for R2 sequence support.
+fn sample_sun_direction(r1: f32, r2: f32) -> vec3<f32> {
     let sun_dir = normalize(SUN_DIR);
     
     // Build tangent frame
@@ -275,8 +345,6 @@ fn sample_sun_direction(rng: ptr<function, u32>) -> vec3<f32> {
     let b = cross(sun_dir, t);
     
     // Sample uniformly on disc
-    let r1 = rand(rng);
-    let r2 = rand(rng);
     let r = SUN_ANGULAR_RADIUS * sqrt(r1);
     let theta = 2.0 * PI * r2;
     
@@ -322,6 +390,34 @@ fn fresnel_schlick(cos_theta: f32, f0: vec3<f32>) -> vec3<f32> {
     let t = 1.0 - cos_theta;
     let t2 = t * t;
     return f0 + (1.0 - f0) * (t2 * t2 * t);
+}
+
+// ---- MIS (Multiple Importance Sampling) ----
+
+// Power heuristic for MIS (beta=2 is common choice)
+fn mis_power_heuristic(pdf_a: f32, pdf_b: f32) -> f32 {
+    let a2 = pdf_a * pdf_a;
+    let b2 = pdf_b * pdf_b;
+    return a2 / (a2 + b2 + EPSILON);
+}
+
+// PDF for cosine-weighted hemisphere sampling
+fn pdf_cosine_hemisphere(cos_theta: f32) -> f32 {
+    return cos_theta / PI;
+}
+
+// PDF for GGX importance sampling (half-vector distribution)
+fn pdf_ggx(ndoth: f32, hdotv: f32, alpha: f32) -> f32 {
+    let d = ggx_d(ndoth, alpha);
+    // Convert from half-vector PDF to reflection direction PDF
+    return d * ndoth / (4.0 * hdotv + EPSILON);
+}
+
+// PDF for uniform sampling on sun disc
+fn pdf_sun_disc() -> f32 {
+    // Solid angle of sun disc ≈ PI * (angular_radius)^2 for small angles
+    let solid_angle = PI * SUN_ANGULAR_RADIUS * SUN_ANGULAR_RADIUS;
+    return 1.0 / solid_angle;
 }
 
 // Build orthonormal basis from normal (n = up direction).
@@ -423,6 +519,125 @@ fn dir_to_equirect_uv(dir: vec3<f32>, rotation: f32) -> vec2<f32> {
     return vec2<f32>(u, v);
 }
 
+// Convert equirectangular UV back to direction.
+fn equirect_uv_to_dir(uv: vec2<f32>) -> vec3<f32> {
+    let theta = (uv.x - 0.5) * 2.0 * PI;  // -PI to PI
+    let phi = (0.5 - uv.y) * PI;          // -PI/2 to PI/2
+    let cos_phi = cos(phi);
+    return vec3<f32>(cos_phi * cos(theta), sin(phi), cos_phi * sin(theta));
+}
+
+// Binary search in CDF array. Returns index where cdf[index-1] < xi <= cdf[index].
+fn binary_search_cdf(cdf_offset: u32, size: u32, xi: f32) -> u32 {
+    var lo = 0u;
+    var hi = size;
+    while lo < hi {
+        let mid = (lo + hi) / 2u;
+        if env_conditional_cdf[cdf_offset + mid] < xi {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
+        }
+    }
+    return min(lo, size - 1u);
+}
+
+// Binary search in marginal CDF.
+fn binary_search_marginal(size: u32, xi: f32) -> u32 {
+    var lo = 0u;
+    var hi = size;
+    while lo < hi {
+        let mid = (lo + hi) / 2u;
+        if env_marginal_cdf[mid] < xi {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
+        }
+    }
+    return min(lo, size - 1u);
+}
+
+// Sample environment map direction using importance sampling.
+// Returns (direction, pdf).
+fn sample_env_direction(r1: f32, r2: f32) -> vec4<f32> {
+    let w = env.env_width;
+    let h = env.env_height;
+    
+    // Sample row from marginal CDF
+    let y = binary_search_marginal(h, r2);
+    
+    // Sample column from conditional CDF for that row
+    let row_offset = y * w;
+    let x = binary_search_cdf(row_offset, w, r1);
+    
+    // Convert pixel coords to UV (center of pixel)
+    let u = (f32(x) + 0.5) / f32(w);
+    let v = (f32(y) + 0.5) / f32(h);
+    
+    // Convert UV to direction (applying rotation)
+    let uv_rotated = vec2<f32>(u - env.rotation / (2.0 * PI), v);
+    let dir = equirect_uv_to_dir(uv_rotated);
+    
+    // Calculate PDF
+    // PDF = (luminance / total_luminance) * (width * height) / (2 * PI^2 * sin_theta)
+    // But we've normalized CDFs, so we use the CDF values directly
+    let sin_theta = max(sin(PI * v), EPSILON);
+    
+    // Get marginal PDF (probability of selecting row y)
+    var marginal_pdf: f32;
+    if y == 0u {
+        marginal_pdf = env_marginal_cdf[0];
+    } else {
+        marginal_pdf = env_marginal_cdf[y] - env_marginal_cdf[y - 1u];
+    }
+    
+    // Get conditional PDF (probability of selecting column x given row y)
+    var conditional_pdf: f32;
+    if x == 0u {
+        conditional_pdf = env_conditional_cdf[row_offset];
+    } else {
+        conditional_pdf = env_conditional_cdf[row_offset + x] - env_conditional_cdf[row_offset + x - 1u];
+    }
+    
+    // Combined PDF with Jacobian for equirectangular mapping
+    let pdf = max(marginal_pdf * conditional_pdf * f32(w) * f32(h) / (2.0 * PI * PI * sin_theta), EPSILON);
+    
+    return vec4<f32>(dir, pdf);
+}
+
+// Calculate PDF for a given direction under environment importance sampling.
+fn env_pdf(dir: vec3<f32>) -> f32 {
+    let uv = dir_to_equirect_uv(dir, env.rotation);
+    let w = env.env_width;
+    let h = env.env_height;
+    
+    // Find pixel coordinates
+    let x = min(u32(uv.x * f32(w)), w - 1u);
+    let y = min(u32(uv.y * f32(h)), h - 1u);
+    
+    // Get marginal PDF
+    var marginal_pdf: f32;
+    if y == 0u {
+        marginal_pdf = env_marginal_cdf[0];
+    } else {
+        marginal_pdf = env_marginal_cdf[y] - env_marginal_cdf[y - 1u];
+    }
+    
+    // Get conditional PDF
+    let row_offset = y * w;
+    var conditional_pdf: f32;
+    if x == 0u {
+        conditional_pdf = env_conditional_cdf[row_offset];
+    } else {
+        conditional_pdf = env_conditional_cdf[row_offset + x] - env_conditional_cdf[row_offset + x - 1u];
+    }
+    
+    // Jacobian
+    let sin_theta = max(sin(PI * uv.y), EPSILON);
+    
+    return max(marginal_pdf * conditional_pdf * f32(w) * f32(h) / (2.0 * PI * PI * sin_theta), EPSILON);
+}
+
 // HDR sky environment: use loaded HDR map or fallback to gradient.
 fn sky_color(dir: vec3<f32>) -> vec3<f32> {
     if env.enabled > 0.5 {
@@ -457,12 +672,18 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     let pixel_idx = px.y * w + px.x;
 
-    // Seed RNG from pixel position + frame count
+    // Seed RNG from pixel position (used for RR and lobe selection only)
     var rng = pcg_hash(pixel_idx * 1973u + camera.frame_count * 6133u + 1u);
-
-    // Sub-pixel jitter for AA
-    let jx = rand(&rng);
-    let jy = rand(&rng);
+    
+    // Per-pixel offset for Cranley-Patterson rotation (decorrelates R2 between pixels)
+    let pixel_offset = vec2<f32>(rand(&rng), rand(&rng));
+    let frame = camera.frame_count;
+    
+    // R2 low-discrepancy sequence for all primary samples (better convergence)
+    // Dimension 0: AA jitter
+    let jitter = get_r2_sample(frame, 0u, pixel_offset);
+    let jx = jitter.x;
+    let jy = jitter.y;
     var ray = gen_ray(f32(px.x), f32(px.y), vec2<f32>(f32(w), f32(h)), jx, jy, &rng);
 
     // Path trace with multiple bounces
@@ -522,11 +743,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let basis = onb_from_normal(normal);
 
         // ============================================================
-        // Next Event Estimation (NEE) - Direct sun light sampling
+        // Next Event Estimation (NEE) - Direct sun light sampling with MIS
         // ============================================================
         // Only for diffuse/non-transmission surfaces, and when HDR not loaded
         if transmission_weight < 0.5 && env.enabled < 0.5 {
-            let sun_dir_sample = sample_sun_direction(&rng);
+            // Use R2 sequence for sun disc sampling (dim 3 + bounce*2 = secondary sample)
+            let sun_sample = get_r2_sample(frame, 3u + bounce * 2u, pixel_offset);
+            let sun_dir_sample = sample_sun_direction(sun_sample.x, sun_sample.y);
             let ndotl_sun = dot(normal, sun_dir_sample);
             
             if ndotl_sun > 0.0 {
@@ -545,7 +768,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                     // Lambert diffuse contribution
                     let diffuse_contrib = diffuse_color * (1.0 - f_sun) * ndotl_sun / PI;
                     
-                    // GGX specular contribution (simplified for sun)
+                    // GGX specular contribution
                     let alpha = roughness * roughness;
                     let h_sun = normalize(v_dir + sun_dir_sample);
                     let ndoth_sun = max(dot(normal, h_sun), EPSILON);
@@ -555,8 +778,73 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
                     let f_spec_sun = fresnel_schlick(hdotv_sun, f0_nee);
                     let spec_contrib = spec_weight * f_spec_sun * d_sun * g_sun / (4.0 * ndotv * ndotl_sun + EPSILON);
                     
-                    let sun_contrib = (diffuse_contrib + spec_contrib) * SUN_COLOR * SUN_INTENSITY;
+                    // MIS weight: combine light sampling PDF with BSDF PDF
+                    let pdf_light = pdf_sun_disc();
+                    // BSDF PDF is weighted average of diffuse and specular PDFs
+                    let pdf_diffuse = pdf_cosine_hemisphere(ndotl_sun);
+                    let pdf_specular = pdf_ggx(ndoth_sun, hdotv_sun, alpha);
+                    // Weight by lobe probabilities (simplified: assume 50/50 for non-metals)
+                    let spec_prob = mix(0.5, 1.0, metallic);
+                    let pdf_bsdf = mix(pdf_diffuse, pdf_specular, spec_prob);
+                    
+                    let mis_weight = mis_power_heuristic(pdf_light, pdf_bsdf);
+                    
+                    let sun_contrib = (diffuse_contrib + spec_contrib) * SUN_COLOR * SUN_INTENSITY * mis_weight;
                     radiance += throughput * sun_contrib;
+                }
+            }
+        }
+        
+        // ============================================================
+        // NEE for HDR environment map with importance sampling
+        // ============================================================
+        if transmission_weight < 0.5 && env.enabled > 0.5 && env.use_importance_sampling > 0.5 {
+            // Sample environment using CDF importance sampling
+            let env_sample = get_r2_sample(frame, 3u + bounce * 2u, pixel_offset);
+            let env_result = sample_env_direction(env_sample.x, env_sample.y);
+            let env_dir = env_result.xyz;
+            let env_pdf_light = env_result.w;
+            let ndotl_env = dot(normal, env_dir);
+            
+            if ndotl_env > 0.0 {
+                // Shadow ray to check visibility
+                var shadow_ray: Ray;
+                shadow_ray.origin = p + normal * 0.001;
+                shadow_ray.dir = env_dir;
+                
+                if !trace_shadow_ray(shadow_ray, T_MAX) {
+                    // Get environment radiance
+                    let env_radiance = sky_color(env_dir);
+                    
+                    // Evaluate diffuse BRDF
+                    let diffuse_color = base_color * base_weight * (1.0 - metallic);
+                    let f0_dielectric = vec3<f32>(pow((ior - 1.0) / (ior + 1.0), 2.0));
+                    let f0_env = mix(f0_dielectric, base_color, metallic);
+                    let f_env = fresnel_schlick(ndotl_env, f0_env);
+                    
+                    // Lambert diffuse
+                    let diffuse_contrib_env = diffuse_color * (1.0 - f_env) * ndotl_env / PI;
+                    
+                    // GGX specular
+                    let alpha = roughness * roughness;
+                    let h_env = normalize(v_dir + env_dir);
+                    let ndoth_env = max(dot(normal, h_env), EPSILON);
+                    let hdotv_env = max(dot(h_env, v_dir), EPSILON);
+                    let d_env = ggx_d(ndoth_env, alpha);
+                    let g_env = smith_g1(ndotv, alpha) * smith_g1(ndotl_env, alpha);
+                    let f_spec_env = fresnel_schlick(hdotv_env, f0_env);
+                    let spec_contrib_env = spec_weight * f_spec_env * d_env * g_env / (4.0 * ndotv * ndotl_env + EPSILON);
+                    
+                    // MIS: combine env sampling PDF with BSDF PDF
+                    let pdf_diffuse_env = pdf_cosine_hemisphere(ndotl_env);
+                    let pdf_specular_env = pdf_ggx(ndoth_env, hdotv_env, alpha);
+                    let spec_prob_env = mix(0.5, 1.0, metallic);
+                    let pdf_bsdf_env = mix(pdf_diffuse_env, pdf_specular_env, spec_prob_env);
+                    
+                    let mis_weight_env = mis_power_heuristic(env_pdf_light, pdf_bsdf_env);
+                    
+                    let env_contrib = (diffuse_contrib_env + spec_contrib_env) * env_radiance * mis_weight_env / max(env_pdf_light, EPSILON);
+                    radiance += throughput * env_contrib;
                 }
             }
         }
@@ -570,11 +858,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             let coat_reflect_prob = coat_weight * (coat_fresnel.x + coat_fresnel.y + coat_fresnel.z) / 3.0;
 
             if rand(&rng) < coat_reflect_prob {
-                // Sample coat GGX
+                // Sample coat GGX using R2 sequence
                 let coat_alpha = coat_roughness * coat_roughness;
-                let r1 = rand(&rng);
-                let r2 = rand(&rng);
-                let h_local = sample_ggx(r1, r2, coat_alpha);
+                let coat_sample = get_r2_sample(frame, 3u + bounce * 2u, pixel_offset);
+                let h_local = sample_ggx(coat_sample.x, coat_sample.y, coat_alpha);
                 let h_world = normalize(basis * h_local);
                 let hdotv = max(dot(h_world, v_dir), EPSILON);
                 let reflect_dir = reflect(-v_dir, h_world);
@@ -622,10 +909,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let lobe_rand = rand(&rng);
 
         if lobe_rand < p_spec {
-            // ---- Specular (GGX) reflection ----
-            let r1 = rand(&rng);
-            let r2 = rand(&rng);
-            let h_local = sample_ggx(r1, r2, alpha);
+            // ---- Specular (GGX) reflection using R2 sequence ----
+            let spec_sample = get_r2_sample(frame, 2u + bounce * 2u, pixel_offset);
+            let h_local = sample_ggx(spec_sample.x, spec_sample.y, alpha);
             let h_world = normalize(basis * h_local);
             let hdotv = max(dot(h_world, v_dir), EPSILON);
             let reflect_dir = reflect(-v_dir, h_world);
@@ -655,10 +941,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             
             let eta = select(ior, 1.0 / ior, dot(n, ray.dir) < 0.0);
             
-            // Sample microfacet for rough refraction
-            let r1 = rand(&rng);
-            let r2 = rand(&rng);
-            let h_local = sample_ggx(r1, r2, alpha);
+            // Sample microfacet for rough refraction using R2 sequence
+            let trans_sample = get_r2_sample(frame, 2u + bounce * 2u, pixel_offset);
+            let h_local = sample_ggx(trans_sample.x, trans_sample.y, alpha);
             let h_world = normalize(basis * h_local);
             
             // Compute refracted direction
@@ -685,10 +970,9 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
             }
 
         } else {
-            // ---- Diffuse (Lambert) ----
-            let r1 = rand(&rng);
-            let r2 = rand(&rng);
-            let local_dir = cosine_hemisphere(r1, r2);
+            // ---- Diffuse (Lambert) using R2 sequence ----
+            let diff_sample = get_r2_sample(frame, 2u + bounce * 2u, pixel_offset);
+            let local_dir = cosine_hemisphere(diff_sample.x, diff_sample.y);
             let world_dir = basis * local_dir;
 
             let diffuse_color = base_color * base_weight * (1.0 - metallic);

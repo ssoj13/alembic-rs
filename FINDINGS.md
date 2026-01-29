@@ -1,385 +1,437 @@
-# Alembic-RS Audit Findings
+# GPU Path Tracer Optimization Analysis
 
-**Audit Date:** 2026-01-26
-**Auditor:** Claude
-**Purpose:** Comprehensive audit of C++ Alembic port to Rust
-
-## Summary
-
-Overall the port is **very complete and production-ready**. All major features are implemented with good Rust idioms. The code is well-structured and follows modern Rust practices.
+**Date:** 2026-01-28  
+**Purpose:** Identify performance bottlenecks and optimization opportunities for static geometry
 
 ---
 
-## 1. Core API Parity
+## 1. Current Architecture Summary
 
-### 1.1 Archive (IArchive/OArchive)
-- [x] IArchive - read archive
-- [x] OArchive - write archive
-- [x] Archive info (app name, library version, date written)
-- [x] TimeSampling management
-- [x] Top object access
-- [ ] ReadArraySampleCache (not implemented - low priority)
+### 1.1 BVH Construction (CPU, `build.rs`)
+- **Algorithm:** SAH (Surface Area Heuristic) with binned partitioning
+- **Bins:** 12 (standard choice)
+- **Max leaf size:** 4 triangles
+- **Node size:** 32 bytes (cache-line friendly)
+- **Build:** Iterative stack-based (avoids recursion stack overflow)
 
-### 1.2 Object Hierarchy (IObject/OObject)
-- [x] Object creation/traversal
-- [x] Parent/child relationships
-- [x] Object names and full paths
-- [x] Metadata handling
-- [x] Object headers
-- [x] getChildHeader(index) - implemented
-- [x] Instance API surface (isInstanceRoot, instanceSourcePath, isInstanceDescendant, isChildInstance)
-- [!] Instance methods are stubs (default trait impls) - ogawa reader doesn't parse instance data
+### 1.2 GPU Traversal (`bvh_traverse.wgsl`)
+- **Traversal:** Stack-based, MAX_STACK_DEPTH = 32
+- **Workgroup:** 8×8 = 64 threads
+- **Intersection:** Moller-Trumbore (standard)
+- **AABB test:** Slab method
 
-### 1.3 Properties
-- [x] Scalar properties
-- [x] Array properties  
-- [x] Compound properties
-- [x] Property headers
-- [x] Data types (all POD types)
-- [x] Extent handling
+### 1.3 Data Structures
+| Structure | Size | Notes |
+|-----------|------|-------|
+| `BvhNode` | 32 bytes | AABB + left_or_first + count |
+| `GpuTriangle` | 112 bytes | 3 vertices + 3 normals + IDs + padding |
+| `GpuMaterial` | 144 bytes | Full Standard Surface params |
 
-### 1.4 TimeSampling
-- [x] Uniform sampling
-- [x] Cyclic sampling
-- [x] Acyclic sampling
-- [x] Time sampling pool
-- [x] Sample time queries
+### 1.4 Path Tracing Features
+- Progressive accumulation (frame averaging)
+- GGX specular + Lambertian diffuse
+- Coat layer (clearcoat)
+- Transmission/refraction with TIR
+- NEE for sun light only
+- HDR environment map sampling
+- PCG random number generator
 
 ---
 
-## 2. Geometry Schemas
+## 2. Performance Bottlenecks
 
-### 2.1 PolyMesh (IPolyMesh/OPolyMesh) - COMPLETE
-- [x] Positions (P)
-- [x] Face counts
-- [x] Face indices
-- [x] Velocities
-- [x] Normals (N) with GeomParam support
-- [x] UVs with indexed support
-- [x] Self bounds
-- [x] Child bounds
-- [x] Arbitrary GeomParams
-- [x] FaceSets
-- [x] Topology variance detection
+### 2.1 🔴 HIGH IMPACT: BVH Traversal Inefficiency
 
-### 2.2 Xform (IXform/OXform) - COMPLETE
-- [x] Translation
-- [x] Rotation (X/Y/Z and arbitrary axis)
-- [x] Scale
-- [x] Matrix (4x4)
-- [x] Inherits transform flag
-- [x] Operations stack decoding
-- [x] Child bounds
+**Problem:** Current traversal pushes both children without checking which is closer.
 
-### 2.3 Camera (ICamera/OCamera) - COMPLETE
-- [x] Focal length
-- [x] Horizontal/Vertical aperture
-- [x] Film offsets
-- [x] Lens squeeze ratio
-- [x] Near/far clipping
-- [x] Focus distance
-- [x] Shutter open/close
-- [x] Film back xform operations
+```wgsl
+// Current code (suboptimal):
+if sp + 2u <= MAX_STACK_DEPTH {
+    stack[sp] = node.left_or_first + 1u;  // right
+    sp += 1u;
+    stack[sp] = node.left_or_first;       // left  
+    sp += 1u;
+}
+```
 
-### 2.4 Curves (ICurves/OCurves) - COMPLETE
-- [x] Positions
-- [x] Curve types (linear, cubic, bezier, bspline, catmullrom, hermite)
-- [x] Wrap mode (periodic/non-periodic)
-- [x] Num vertices per curve
-- [x] Knots
-- [x] Orders
-- [x] Widths
-- [x] Basis type
+**Fix:** Order children by ray direction sign. Visit near child first, far child only if ray could still hit it.
 
-### 2.5 Points (IPoints/OPoints) - COMPLETE
-- [x] Positions
-- [x] Ids
-- [x] Velocities
-- [x] Widths
+```wgsl
+// Better: order by ray direction
+let axis = /* dominant axis of AABB extent */;
+let dir_sign = ray.dir[axis] > 0.0;
+let near_child = select(node.left_or_first + 1u, node.left_or_first, dir_sign);
+let far_child = select(node.left_or_first, node.left_or_first + 1u, dir_sign);
+// Push far first (so near is popped first)
+stack[sp] = far_child; sp += 1u;
+stack[sp] = near_child; sp += 1u;
+```
 
-### 2.6 SubD (ISubD/OSubD) - COMPLETE
-- [x] Positions
-- [x] Face counts/indices
-- [x] FV interpolate boundary
-- [x] FV propagate corners
-- [x] Interpolate boundary
-- [x] Crease indices/lengths/sharpnesses
-- [x] Corner indices/sharpnesses
-- [x] Holes
-- [x] Subdivision scheme (catmull-clark, loop, bilinear)
-- [x] UVs
+**Expected improvement:** 10-30% traversal speedup
 
-### 2.7 NuPatch (INuPatch/ONuPatch) - COMPLETE
-- [x] Positions
-- [x] Num U/V
-- [x] U/V Order
-- [x] U/V Knot
-- [x] Position weights
-- [x] Normals
-- [x] UVs
-- [x] Trim curves
+### 2.2 🔴 HIGH IMPACT: Triangle Data Size
 
-### 2.8 FaceSet (IFaceSet/OFaceSet) - COMPLETE
-- [x] Faces
-- [x] Exclusivity
-- [x] Visibility
+**Problem:** 112 bytes per triangle is large. Memory bandwidth is often the bottleneck.
 
-### 2.9 Light (ILight/OLight) - COMPLETE
-- [x] Camera schema (shared)
-- [x] Child bounds
-- [x] Arbitrary GeomParams
+**Current layout:**
+```rust
+pub struct GpuTriangle {
+    v0: [f32; 3], material_id: u32,  // 16 bytes
+    v1: [f32; 3], object_id: u32,    // 16 bytes
+    v2: [f32; 3], _pad1: u32,        // 16 bytes
+    n0: [f32; 3], _pad2: u32,        // 16 bytes
+    n1: [f32; 3], _pad3: u32,        // 16 bytes
+    n2: [f32; 3], _pad4: u32,        // 16 bytes
+}  // Total: 96 bytes (actually 112 with padding?)
+```
 
----
+**Optimizations:**
+1. **Quantized positions:** Store positions as fixed-point relative to leaf AABB
+2. **Compressed normals:** Octahedral encoding (2 floats → 2 bytes each)
+3. **Deferred normals:** Store indices, compute normals only on hit
 
-## 3. Ogawa Format - COMPLETE
+**Compressed layout (48 bytes):**
+```rust
+pub struct GpuTriangleCompact {
+    v0: [f32; 3], material_id: u16, object_id: u16,  // 16 bytes
+    e1: [f32; 3], n0_oct: u32,                        // 16 bytes (e1 = v1-v0)
+    e2: [f32; 3], n1n2_oct: u32,                      // 16 bytes (e2 = v2-v0)
+}  // Total: 48 bytes
+```
 
-### 3.1 Reading
-- [x] Header parsing (magic, version, frozen flag)
-- [x] Group reading with child offsets
-- [x] Data reading
-- [x] Indexed metadata strings
-- [x] Memory-mapped I/O
-- [ ] Buffered I/O option (for modifiable files)
+**Expected improvement:** 2x memory bandwidth → 20-50% traversal speedup
 
-### 3.2 Writing
-- [x] Header generation
-- [x] Group writing
-- [x] Data writing
-- [x] Metadata indexing
-- [x] SpookyHash V2 for deduplication
-- [x] MurmurHash3 for metadata
-- [x] Stream management
-- [x] Deferred group writing (C++ compatible mode)
+### 2.3 🟡 MEDIUM IMPACT: No Ray Compaction
 
----
+**Problem:** Terminated rays waste compute. Each bounce, some rays exit the scene.
 
-## 4. Python Bindings (PyO3) - COMPLETE
+**Solution:** Between bounces:
+1. Compact active rays to front of buffer
+2. Only dispatch work for active rays
+3. Use atomic counter for compaction
 
-### 4.1 Archive
-- [x] IArchive opening (Abc.IArchive)
-- [x] OArchive creation (Abc.OArchive)
-- [x] Top object access
-- [x] Archive info (getAppName, getDateWritten, etc.)
+**Implementation complexity:** Requires wavefront architecture (multiple dispatch calls).
 
-### 4.2 Objects
-- [x] Object traversal
-- [x] Object properties access
-- [x] Object metadata
+### 2.4 🟡 MEDIUM IMPACT: Megakernel vs Wavefront
 
-### 4.3 Geometry - All Schemas
-- [x] IPolyMesh/IPolyMeshSchema
-- [x] IXform/IXformSchema
-- [x] ICamera/ICameraSchema
-- [x] ICurves/ICurvesSchema
-- [x] IPoints/IPointsSchema
-- [x] ISubD/ISubDSchema
-- [x] INuPatch/INuPatchSchema
-- [x] IFaceSet/IFaceSetSchema
-- [x] ILight/ILightSchema
+**Problem:** Single monolithic shader with divergent control flow.
 
-### 4.4 Properties
-- [x] ICompoundProperty
-- [x] Property info
+**Wavefront architecture:**
+1. **Generate:** Create primary rays
+2. **Extend:** Traverse BVH, find intersections
+3. **Shade:** Evaluate materials, generate shadow/bounce rays
+4. **Connect:** Shadow ray visibility tests
 
-### 4.5 Write Classes
-- [x] OPolyMesh, OXform, OCurves, OPoints
-- [x] OSubD, OCamera, ONuPatch, OLight
-- [x] OFaceSet, OMaterial, OCollections
-- [x] OScalarProperty, OArrayProperty, OCompoundProperty
+**Benefits:**
+- Material-coherent shading (sort rays by material)
+- Separate optimization per kernel
+- Better occupancy
 
-### 4.6 Constants
-- [x] GeometryScope (kConstantScope, kVertexScope, etc.)
-- [x] CurveType, CurvePeriodicity
-- [x] BasisType
-- [x] SubDScheme
-- [x] TopologyVariance
-- [x] FaceSetExclusivity
-- [x] ObjectVisibility
+**Drawback:** More complex, multiple dispatch calls, intermediate buffers.
+
+### 2.5 🟡 MEDIUM IMPACT: Stackless Traversal
+
+**Problem:** Stack uses register space. 32 × u32 = 128 bytes of registers per thread.
+
+**Alternative: Restart trail**
+- Encode path through tree as bits
+- No stack needed
+- Slightly more traversal but less register pressure
+
+**Alternative: Short stack + restart**
+- Small stack (4-8 entries)
+- On overflow, restart from root with better heuristic
+
+### 2.6 🟢 LOWER IMPACT: Better Sampling
+
+**Current:** PCG random, cosine hemisphere, GGX importance sampling.
+
+**Improvements:**
+1. **Blue noise:** Sobol/Halton sequences for faster convergence
+2. **Env map importance sampling:** Build CDF, sample bright regions
+3. **MIS:** Multiple importance sampling for NEE
 
 ---
 
-## 5. Viewer (Additional Feature) - PRODUCTION READY
+## 3. Optimization Roadmap
 
-### 5.1 Rendering
-- [x] Mesh rendering (solid + wireframe)
-- [x] StandardSurface material shader
-- [x] Environment maps (HDR)
-- [x] Shadows
-- [x] MSAA antialiasing
-- [x] Grid display
+### Phase 1: Quick Wins (No Architecture Change)
 
-### 5.2 UI
-- [x] Orbit camera controls
-- [x] Scene camera support
-- [x] Timeline with playback controls
-- [x] Scene hierarchy tree
-- [x] Wildcard object filtering
-- [x] Settings panel
-- [x] Recent files menu
+| Optimization | Effort | Impact | Status |
+|--------------|--------|--------|--------|
+| Child ordering by ray direction | Low | High | ✅ Done |
+| Early termination in AABB test | Low | Medium | 🔲 TODO |
+| Increase SAH bins to 32 | Low | Low | 🔲 TODO |
+| Tune workgroup size (16×16?) | Low | Low | 🔲 TODO |
 
-### 5.3 Performance
-- [x] Async loading via worker thread
-- [x] Hash-based scene change detection
-- [x] GPU buffer caching
+### Phase 2: Data Structure Optimization
 
-### 5.4 Export
-- [x] Export functionality
+| Optimization | Effort | Impact | Status |
+|--------------|--------|--------|--------|
+| Triangle compression (48 bytes) | Medium | High | 🔲 TODO |
+| Octahedral normal encoding | Medium | Medium | 🔲 TODO |
+| Separate vertex/normal buffers | Low | Medium | 🔲 TODO |
 
----
+### Phase 3: Advanced Algorithms
 
-## 6. Additional Crates - COMPLETE
+| Optimization | Effort | Impact | Status |
+|--------------|--------|--------|--------|
+| Wavefront path tracing | High | High | 🔲 TODO |
+| Ray compaction | Medium | High | 🔲 TODO |
+| Stackless traversal | Medium | Medium | 🔲 TODO |
+| LBVH GPU construction | High | High (dynamic) | 🔲 TODO |
 
-### 6.1 murmur3
-- [x] MurmurHash3 x64_128 implementation
-- [x] Binary compatible with C++ Alembic
-- [x] Big-endian POD byte swapping support
+### Phase 4: Sampling Quality
 
-### 6.2 spooky-hash
-- [x] SpookyHash V2 implementation
-- [x] All rotation constants match reference
-- [x] Short/long message paths
-- [x] Incremental hashing support
-- [x] Binary compatible test cases
-
-### 6.3 standard-surface
-- [x] MaterialX StandardSurface shader params
-- [x] wgpu shader implementation
+| Optimization | Effort | Impact | Status |
+|--------------|--------|--------|--------|
+| Blue noise (Sobol) | Medium | Medium | ✅ R2 Done |
+| Env importance sampling | Medium | Medium | ✅ Done |
+| MIS for NEE | Low | Low | ✅ Done |
 
 ---
 
-## 7. Findings
+## 4. Immediate Action Items
 
-### Critical Issues
-*None found - the port is functionally complete*
+### 4.1 Child Ordering Fix (Highest Priority)
 
-### Missing Features (Low Priority)
-1. **Instance support** - `isInstanceRoot()`, `instanceSourcePath()` not implemented
-   - Used for referencing objects within archive
-   - Relatively rare in production files
-   
-2. **ReadArraySampleCache** - read-side sample caching
-   - C++ Alembic has this for performance
-   - Rust mmap provides similar benefits
+Modify `trace_ray()` in `bvh_traverse.wgsl`:
 
-3. **Buffered I/O reader** - alternative to mmap
-   - For files that may be modified during read
-   - Comment mentions this but not implemented
+```wgsl
+// Store axis hint in BVH node (reuse a padding bit or store in build)
+// For now, use longest axis of AABB
 
-### API Differences (Acceptable)
-1. `getTimeSampling()` returns index instead of TimeSampling object
-   - Rust ownership makes returning reference tricky
-   - Can get object via archive.getTimeSampling(index)
+fn trace_ray(ray: Ray) -> HitInfo {
+    // ... existing code ...
+    
+    } else {
+        // Internal: push children with ordering
+        if sp + 2u <= MAX_STACK_DEPTH {
+            let left_child = node.left_or_first;
+            let right_child = node.left_or_first + 1u;
+            
+            // Determine axis (could be stored in node)
+            let extent = node.aabb_max - node.aabb_min;
+            var axis: u32 = 0u;
+            if extent.y > extent.x && extent.y > extent.z { axis = 1u; }
+            if extent.z > extent.x && extent.z > extent.y { axis = 2u; }
+            
+            // Order by ray direction
+            let dir_positive = ray.dir[axis] > 0.0;
+            let first = select(right_child, left_child, dir_positive);
+            let second = select(left_child, right_child, dir_positive);
+            
+            // Push far child first (so near is processed first)
+            stack[sp] = second; sp += 1u;
+            stack[sp] = first; sp += 1u;
+        }
+    }
+```
 
-2. `getChildHeader()` not exposed as separate method
-   - Can get via getChild(i).getHeader()
+**Note:** WGSL doesn't allow indexing vec3 with runtime variable. Need workaround:
 
-### Optimizations Applied
-1. **FIXED: Per-frame bind group allocation** - 4x `create_bind_group` per frame for SSAO, SSAO blur (H+V), and lighting passes. Now cached and rebuilt only on texture resize or env map change. This was the root cause of periodic stuttering.
-2. **FIXED: Redundant uniform writes** - SSAO blur direction params now use two static buffers instead of rewriting one buffer twice per frame.
+```wgsl
+fn get_axis(v: vec3<f32>, axis: u32) -> f32 {
+    switch axis {
+        case 0u: { return v.x; }
+        case 1u: { return v.y; }
+        default: { return v.z; }
+    }
+}
+```
 
-### Writer Bugs Fixed (Binary Compatibility)
-3. **FIXED: OCurves `.nVertices` → `nVertices`** - Dotted prefix was incorrect. C++ ref: `OCurves.cpp:393` uses `"nVertices"`.
-4. **FIXED: OSubD schema version `v2` → `v1`** - Writer used `AbcGeom_SubD_v2` but C++ ref: `SchemaInfoDeclarations.h:72` declares `AbcGeom_SubD_v1`.
-5. **FIXED: OCurves curveBasisAndType** - Writer used 3 separate string scalars (`.curveType`, `.wrap`, `.basis`) but C++ ref: `OCurves.cpp:395-397` uses a single `curveBasisAndType` scalar (kUint8POD, extent=4) with layout `[type, wrap, basis, basis]`.
+### 4.2 Store Split Axis in BVH Node
 
-### Writer Audit (All Schemas vs C++ Ref)
-6. **VERIFIED**: All 8 writer schemas (PolyMesh, SubD, Curves, Points, Camera, Xform, Light, NuPatch, FaceSet) audited against C++ reference. Schema versions, property names, data types all match after fixes above.
-7. **FIXED: OCurves width property `.widths` → `width`** - C++ ref: `OCurves.cpp:511` uses `"width"` (no dot, singular, via GeomParam).
+Modify `BvhNode` to include split axis:
 
-### Reader Bugs Fixed (Binary Compatibility)
-8. **FIXED: ICurves `.knots`/`.orders`** - Reader used `"knots"` and `"orders"` but C++ ref: `ICurves.cpp:128,134` uses `".knots"` and `".orders"` (with dot prefix).
-9. **FIXED: IPoints `.velocities`** - Reader had non-standard `"velocity"` as primary fallback. C++ ref: `IPoints.cpp:62` only reads `".velocities"`.
-10. **FIXED: IPoints `.widths`** - Reader used `"width"` but C++ ref: `IPoints.cpp:70` uses `".widths"` (with dot, plural).
+```rust
+pub struct BvhNode {
+    pub aabb_min: [f32; 3],
+    pub left_or_first: u32,
+    pub aabb_max: [f32; 3],
+    pub count_and_axis: u32,  // low 30 bits = count, high 2 bits = axis
+}
+```
 
-### Reader Audit (All Schemas vs C++ Ref)
-11. **VERIFIED**: All readers (PolyMesh, SubD, Curves, Points, Camera, Xform, NuPatch, FaceSet, Light) audited against C++ reference. Property names match after fixes above.
-
-### Enum/Type Compatibility Fixes
-12. **FIXED: CurveType enum** - Had 6 values (Cubic, Linear, Bezier, Bspline, CatmullRom, Hermite) but C++ ref `CurveType.h` only has 3: kCubic=0, kLinear=1, kVariableOrder=2. Bezier/Bspline/etc belong in BasisType, not CurveType. Removed wrong variants, added VariableOrder.
-13. **FIXED: OSubDSample default scheme** - Used `"catmullClark"` (camelCase) but C++ ref `OSubD.h:105` uses `"catmull-clark"` (hyphenated). Fixed default and parser to accept both forms.
-14. **FIXED: Python CurveType constants** - Removed kBezier/kBspline/kCatmullRom/kHermite from CurveType constants (those were BasisType values). Added kVariableOrder.
-
-### Optimizations Possible
-1. More aggressive use of `zerocopy`/`bytemuck` for POD types
-2. Property reader could cache decoded samples
-3. Viewer: LOD support for very large scenes
-4. Viewer: Frustum culling for many objects
-
-### Code Quality Notes
-- Well-structured modular code
-- Good use of Rust idioms (Result, Option, traits)
-- Comprehensive error types
-- Tests present for critical paths
-- Good documentation in module headers
-
----
-
-## 8. Recommendations
-
-### Short Term
-1. Add `isInstanceRoot()` / `instanceSourcePath()` for instance support
-2. Add `getChildHeader(index)` method to IObject
-
-### Long Term
-1. Consider adding ReadArraySampleCache equivalent
-2. Add buffered I/O option for reader
-3. Profile and optimize hot paths
+This avoids recomputing axis in shader.
 
 ---
 
-## 9. Changelog
+## 5. Benchmarking Notes
 
-| Date | Item | Status | Notes |
-|------|------|--------|-------|
-| 2026-01-26 | Core API audit | Complete | IArchive, OArchive, IObject OK |
-| 2026-01-26 | Geometry schemas audit | Complete | All 9 schemas implemented |
-| 2026-01-26 | Ogawa format audit | Complete | Read/write binary compatible |
-| 2026-01-26 | Python bindings audit | Complete | Full API coverage |
-| 2026-01-26 | Hash functions audit | Complete | SpookyV2, MurmurHash3 correct |
-| 2026-01-26 | Viewer audit | Complete | Production-ready |
-| 2026-01-26 | Bind group caching fix | Complete | Root cause of viewer stuttering |
-| 2026-01-26 | IBL hemisphere sampling | Complete | Improved diffuse quality |
-| 2026-01-26 | OCurves nVertices fix | Complete | Binary compat: dot prefix removed |
-| 2026-01-26 | OSubD schema v1 fix | Complete | Binary compat: v2→v1 |
-| 2026-01-26 | curveBasisAndType fix | Complete | Binary compat: 3 strings→1 uint8x4 scalar |
-| 2026-01-26 | Full writer audit | Complete | All 8 schemas verified vs C++ ref |
-| 2026-01-26 | Roundtrip tests added | Complete | Curves, Points, SubD, Camera |
-| 2026-01-26 | OCurves width prop fix | Complete | Binary compat: .widths→width |
-| 2026-01-26 | Reader property fixes | Complete | knots/orders dots, points vel/widths |
-| 2026-01-26 | Full reader audit | Complete | All schemas verified vs C++ ref |
-| 2026-01-26 | CurveType enum fix | Complete | Removed wrong variants, added VariableOrder |
-| 2026-01-26 | SubD scheme default | Complete | catmullClark→catmull-clark |
-| 2026-01-26 | Python constants fix | Complete | CurveType constants corrected |
-| 2026-01-26 | Zero-copy cast optimization | Complete | try_cast_vec for f32/i32 arrays |
-| 2026-01-26 | IFaceSet reader fix | Complete | .geom→.faceset compound name |
-| 2026-01-26 | Edge-case tests added | Complete | NuPatch, basis types, empty mesh, anim curves, light, faceset |
-| 2026-01-26 | ISampleSelector Python API | Complete | Full index/time/floor/ceil/near selection |
-| 2026-01-26 | Schema getValue() selector | Complete | All 9 schemas accept ISampleSelector |
-| 2026-01-26 | PyIObject getMetaData/getArchive | Complete | Metadata dict + archive back-ref |
-| 2026-01-26 | Panic safety fixes | Complete | abc_impl ?-operator, geom_param let-else |
-| 2026-01-27 | Points varying widths test | Complete | 2-frame animation with per-point widths + velocities |
-| 2026-01-27 | All POD types test | Complete | Roundtrip all 12 scalar types (bool→string) via OProperty/IProperty |
-| 2026-01-27 | Path tracer BVH infrastructure | Complete | bvh.rs (data types), build.rs (SAH builder), gpu_data.rs (serialization) |
-| 2026-01-27 | BVH traverse WGSL shader | Complete | Moller-Trumbore intersection, slab AABB test, stack-based traversal |
-| 2026-01-27 | Full API audit vs C++ _ref | Complete | All 9 geometry readers/writers at parity. TimeSampling methods present. Only missing: ArchiveBounds convenience helpers |
-| 2026-01-27 | Thread safety review | Complete | ArchiveReader trait is Send+Sync, IArchive auto-derives. No unsafe Send/Sync impls needed |
-| 2026-01-27 | PT compute pipeline | Complete | compute.rs: PathTraceCompute with dispatch/blit, blit.wgsl ACES tone map |
-| 2026-01-27 | PT scene converter | Complete | scene_convert.rs: Vertex/indices → Triangle with world-space transform |
-| 2026-01-27 | Binary compat verified | Complete | C++ abcls/abctree/abcecho all read our files. Byte-level ordering diffs but logically identical |
-| 2026-01-27 | F-key focus bug fix | Complete | Curves/hair now included in scene bounds (ConvertedCurves.bounds + compute_scene_bounds) |
-| 2026-01-27 | Path tracing UI toggle | Complete | Checkbox in Display panel, lazy init + scene upload on enable |
-| 2026-01-27 | Progressive path tracing | Complete | PCG RNG, cosine hemisphere sampling, 3-bounce GI, HDR sky+sun, accumulation buffer |
-| 2026-01-27 | PT real indices fix | Complete | upload_scene uses base_indices (real face data) instead of identity 0..N |
-| 2026-01-27 | PT materials pipeline | Complete | binding(5) materials buffer, GpuMaterial vec4-packed layout, per-mesh material_id |
-| 2026-01-27 | PT GGX specular shading | Complete | GGX importance sampling, Fresnel-weighted diffuse/spec split, metallic workflow, emission |
-| 2026-01-27 | WGSL `target` keyword fix | Complete | Renamed to `dest` — `target` is reserved in WGSL |
-| 2026-01-27 | WGSL alignment fix | Complete | vec3<f32> align=16 mismatch; restructured GpuMaterial to vec4-packed (48 bytes) |
-| 2026-01-27 | PT frame_count GPU sync | Complete | dispatch() now writes frame_count to camera buffer — was 0 causing div-by-zero → black screen |
-| 2026-01-27 | PT floor mesh in BVH | Complete | set_floor() stores base_vertices/base_indices; upload includes floor_mesh |
-| 2026-01-27 | PT auto-init on startup | Complete | If path_tracing saved in settings, PT inits automatically on scene load |
-| 2026-01-27 | PT UI controls | Complete | Bounces slider (1-8), sample counter next to checkbox |
-| 2026-01-27 | Tracing spans added | Complete | #[tracing::instrument] on render, dispatch, upload_scene, build_bvh |
+Need to measure before/after for each optimization:
+- **Metric:** Rays per second (width × height × samples / time)
+- **Test scenes:** 
+  - Simple (floor + few objects)
+  - Complex (BMW, chess)
+  - Dense (millions of triangles)
 
 ---
 
-**Conclusion:** The alembic-rs port is **production-ready** with excellent coverage of the C++ API. The missing features (instances, caching) are low-priority and the existing implementation handles the vast majority of real-world Alembic files.
+## 6. References
+
+- [Efficient BVH Traversal on GPUs](https://research.nvidia.com/publication/understanding-efficiency-ray-traversal-gpus)
+- [Wavefront Path Tracing](https://research.nvidia.com/publication/megakernels-considered-harmful-wavefront-path-tracing-gpus)
+- [Octahedral Normal Encoding](https://jcgt.org/published/0003/02/01/)
+- [LBVH Construction](https://research.nvidia.com/publication/fast-bvh-construction-gpus)
+
+---
+
+## 7. Advanced Sampling Techniques (Modern Renderers)
+
+Современные рендеры используют продвинутые техники сэмплинга для радикального уменьшения шума.
+
+### 7.1 🔥 ReSTIR (Reservoir-based Spatiotemporal Importance Resampling)
+
+**Прорыв NVIDIA 2020 года.** Используется в Cyberpunk 2077, Alan Wake 2, Path of Exile 2.
+
+**Как работает:**
+- Каждый пиксель хранит "резервуар" (reservoir) с несколькими световыми сэмплами
+- Weighted Importance Sampling (WIS) выбирает лучшие сэмплы
+- **Spatial reuse:** Соседние пиксели делятся сэмплами (multiplier ~25x)
+- **Temporal reuse:** Сэмплы переиспользуются между кадрами (multiplier ~10x)
+- **Результат:** 100-1000x меньше шума для сцен с множеством источников света
+
+**Варианты:**
+| Variant | Description | Complexity | Impact |
+|---------|-------------|------------|--------|
+| ReSTIR DI | Direct Illumination | Medium | Very High |
+| ReSTIR GI | Global Illumination | High | Extreme |
+| ReSTIR PT | Full Path Tracing | Very High | Extreme |
+
+**Реализация ReSTIR DI (базовая):**
+```wgsl
+struct Reservoir {
+    sample: LightSample,  // selected sample
+    w_sum: f32,           // sum of weights
+    M: u32,               // number of candidates seen
+    W: f32,               // final weight
+};
+
+fn update_reservoir(r: ptr<function, Reservoir>, sample: LightSample, w: f32, rng: ptr<function, u32>) {
+    (*r).w_sum += w;
+    (*r).M += 1u;
+    if rand(rng) < w / (*r).w_sum {
+        (*r).sample = sample;
+    }
+}
+```
+
+### 7.2 Blue Noise / Low-Discrepancy Sequences
+
+**Проблема:** PCG/white noise создаёт кластеры сэмплов, что замедляет сходимость.
+
+**Решения:**
+
+| Sequence | Quality | Speed | Notes |
+|----------|---------|-------|-------|
+| Sobol | Excellent | Medium | Needs Owen scrambling |
+| Halton | Good | Fast | Simple but correlation issues |
+| R2 | Very Good | Very Fast | Simple formula, recommended |
+| Blue Noise Textures | Excellent | Very Fast | Precomputed, spatially varied |
+
+**R2 Sequence (простейшая реализация):**
+```wgsl
+const PLASTIC: f32 = 1.32471795724; // plastic constant
+const A1: f32 = 1.0 / PLASTIC;
+const A2: f32 = 1.0 / (PLASTIC * PLASTIC);
+
+fn r2_sample(n: u32) -> vec2<f32> {
+    return fract(vec2<f32>(0.5) + vec2<f32>(f32(n)) * vec2<f32>(A1, A2));
+}
+```
+
+**Blue Noise Texture:**
+- Предвычисленная 128×128 текстура с blue noise
+- Каждый пиксель читает по своим координатам + frame offset
+- Даёт spatially-varied низкодискрепантный шум
+
+### 7.3 Path Guiding
+
+**Идея:** Запоминать, откуда приходит свет, и направлять сэмплинг в важные направления.
+
+**Реализации:**
+- **SD-Tree (NVIDIA PPG):** Пространственное дерево + directional tree per voxel
+- **VMM (Von Mises-Fisher Mixture Model):** Направленные гауссианы
+- **Neural (NVIDIA NRCG):** Нейросеть предсказывает распределение
+
+**Сложность:** Требует много памяти и вычислений. Подходит для offline рендеринга.
+
+### 7.4 Environment Map Importance Sampling
+
+**Текущее состояние:** Семплим env map uniform → много шума на ярких пикселях.
+
+**Улучшение:**
+1. Build 2D CDF (cumulative distribution function) из luminance
+2. Sample CDF для выбора направления
+3. PDF = luminance / total_luminance
+
+```wgsl
+// Precompute: row CDFs + marginal CDF
+// At runtime:
+fn sample_env_importance(r1: f32, r2: f32) -> vec3<f32> {
+    // Binary search in marginal CDF → v
+    // Binary search in row CDF[v] → u
+    // Return direction from (u, v)
+}
+```
+
+### 7.5 Multiple Importance Sampling (MIS)
+
+**Текущее состояние:** NEE для солнца, но без MIS.
+
+**Улучшение:** Комбинировать BSDF sampling и light sampling с balance heuristic:
+
+```wgsl
+fn mis_weight(pdf_a: f32, pdf_b: f32) -> f32 {
+    return pdf_a / (pdf_a + pdf_b);  // balance heuristic
+}
+
+// Or power heuristic (beta=2):
+fn mis_power(pdf_a: f32, pdf_b: f32) -> f32 {
+    let a2 = pdf_a * pdf_a;
+    let b2 = pdf_b * pdf_b;
+    return a2 / (a2 + b2);
+}
+```
+
+### 7.6 Adaptive Sampling
+
+**Идея:** Семплить больше там, где высокая variance.
+
+**Реализация:**
+1. Compute per-pixel variance (running estimate)
+2. Allocate more samples to high-variance pixels
+3. Stop sampling converged pixels early
+
+---
+
+## 8. Recommended Implementation Order for Advanced Sampling
+
+| Priority | Technique | Effort | Impact | Dependencies |
+|----------|-----------|--------|--------|-------------|
+| 1 | R2/Sobol sequences | Low | Medium | ✅ Done |
+| 2 | Env importance sampling | Medium | High | ✅ Done |
+| 3 | MIS for NEE | Low | Medium | ✅ Done |
+| 4 | Blue noise textures | Low | Medium | Precomputed texture |
+| 5 | ReSTIR DI | High | Very High | Screen-space buffers |
+| 6 | ReSTIR GI | Very High | Extreme | ReSTIR DI, radiance cache |
+| 7 | Path guiding | Very High | High | SD-tree or neural net |
+
+---
+
+## 9. Session Log
+
+| Time | Action | Result |
+|------|--------|--------|
+| 2026-01-28 | Initial analysis | Identified 6 major bottlenecks |
+| 2026-01-28 | Code review | BVH traversal lacks child ordering |
+| 2026-01-28 | Created optimization roadmap | 4 phases, prioritized |
+| 2026-01-28 | Added advanced sampling section | ReSTIR, Blue Noise, Path Guiding, Env IS |
+| 2026-01-28 | User question | Requested info on modern renderer sampling |
+| 2026-01-28 | Implemented R2 sequence | AA jitter now uses low-discrepancy R2 |
+| 2026-01-28 | Implemented BVH child ordering | Near-far ordering by ray direction |
+| 2026-01-28 | Added env CDF generation | CPU-side importance sampling CDFs ready |
+| 2026-01-28 | Implemented MIS for NEE | Power heuristic for sun light sampling |
+| 2026-01-28 | GPU env importance sampling | Full integration: CDF bindings, binary search, NEE |
+

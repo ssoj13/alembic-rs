@@ -1381,14 +1381,17 @@ impl ViewerApp {
         ui.horizontal(|ui| {
             ui.label(&self.status_message);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Average frame time from ring buffer
-                if !self.frame_times.is_empty() {
-                    let avg_ms = self.frame_times.iter().sum::<f32>() / self.frame_times.len() as f32;
-                    let avg_fps = 1000.0 / avg_ms;
-                    ui.label(format!("{:.1} ms ({:.0} fps)", avg_ms, avg_fps));
-                } else {
-                    ui.label(format!("FPS: {:.0}", ui.ctx().input(|i| 1.0 / i.stable_dt)));
+                // Show PT samples/sec when path tracing
+                if self.settings.path_tracing {
+                    if let Some(renderer) = &self.viewport.renderer {
+                        ui.label(format!("SPP: {} | {}/sec", 
+                            renderer.path_tracer.as_ref().map(|pt| pt.frame_count).unwrap_or(0),
+                            renderer.pt_samples_last_sec));
+                        ui.separator();
+                    }
                 }
+                // Show viewport render FPS (not UI refresh rate)
+                ui.label(format!("{:.0} fps", self.viewport.render_fps));
             });
         });
     }

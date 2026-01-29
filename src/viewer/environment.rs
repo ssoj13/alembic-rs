@@ -4,7 +4,7 @@ use std::path::Path;
 use half::f16;
 use wgpu::util::DeviceExt;
 
-/// Environment map data
+/// Environment map data with importance sampling support
 #[allow(dead_code)] // GPU resources held alive
 pub struct EnvironmentMap {
     pub texture: wgpu::Texture,
@@ -13,6 +13,20 @@ pub struct EnvironmentMap {
     pub bind_group: wgpu::BindGroup,
     pub uniform_buffer: wgpu::Buffer,
     pub intensity: f32,
+    
+    // Importance sampling data (for path tracer)
+    /// Marginal CDF (1D, height entries) - probability of selecting each row
+    pub marginal_cdf: wgpu::Buffer,
+    /// Conditional CDFs (2D, width x height) - probability within each row
+    pub conditional_cdf: wgpu::Buffer,
+    /// Raw CDF data for creating new buffers
+    pub marginal_cdf_data: Vec<f32>,
+    pub conditional_cdf_data: Vec<f32>,
+    /// Total luminance (for PDF normalization)
+    pub total_luminance: f32,
+    /// Dimensions for importance sampling
+    pub width: u32,
+    pub height: u32,
 }
 
 /// Create bind group layout for environment map (group 4)
@@ -79,20 +93,86 @@ impl Default for EnvUniform {
 }
 
 /// Load HDR/EXR file using image crate, convert to f16
-fn load_image_file(path: &Path) -> anyhow::Result<(u32, u32, Vec<f16>)> {
+fn load_image_file(path: &Path) -> anyhow::Result<(u32, u32, Vec<f16>, Vec<f32>)> {
     use image::{GenericImageView, ImageReader};
     
     let img = ImageReader::open(path)?.decode()?;
     let (width, height) = img.dimensions();
     let rgba = img.to_rgba32f();
+    let raw = rgba.as_raw();
     
     // Convert f32 to f16 for filterable texture format
-    let data: Vec<f16> = rgba.as_raw().iter().map(|&v| f16::from_f32(v)).collect();
+    let data: Vec<f16> = raw.iter().map(|&v| f16::from_f32(v)).collect();
     
-    Ok((width, height, data))
+    // Also keep f32 luminance for CDF building
+    let luminance: Vec<f32> = raw.chunks(4)
+        .map(|px| {
+            // Luminance with sin(theta) weight for equirectangular projection
+            let lum = 0.2126 * px[0] + 0.7152 * px[1] + 0.0722 * px[2];
+            lum
+        })
+        .collect();
+    
+    Ok((width, height, data, luminance))
 }
 
-/// Load HDR/EXR image from file and create GPU texture
+/// Build importance sampling CDFs from luminance data.
+/// Returns (conditional_cdf, marginal_cdf, total_luminance)
+/// 
+/// For equirectangular maps, we weight by sin(theta) to account for solid angle.
+fn build_env_cdfs(width: u32, height: u32, luminance: &[f32]) -> (Vec<f32>, Vec<f32>, f32) {
+    let w = width as usize;
+    let h = height as usize;
+    
+    // Conditional CDFs: for each row, cumulative probability of each column
+    let mut conditional_cdf = vec![0.0f32; w * h];
+    // Row integrals (will become marginal PDF)
+    let mut row_integrals = vec![0.0f32; h];
+    
+    for y in 0..h {
+        // Sin(theta) weight for equirectangular projection
+        let theta = std::f32::consts::PI * (y as f32 + 0.5) / h as f32;
+        let sin_theta = theta.sin();
+        
+        let row_start = y * w;
+        let mut row_sum = 0.0f32;
+        
+        // Build conditional CDF for this row
+        for x in 0..w {
+            let lum = luminance[row_start + x] * sin_theta;
+            row_sum += lum;
+            conditional_cdf[row_start + x] = row_sum;
+        }
+        
+        // Normalize to [0, 1]
+        if row_sum > 0.0 {
+            for x in 0..w {
+                conditional_cdf[row_start + x] /= row_sum;
+            }
+        }
+        
+        row_integrals[y] = row_sum;
+    }
+    
+    // Marginal CDF: cumulative probability of each row
+    let mut marginal_cdf = vec![0.0f32; h];
+    let mut total = 0.0f32;
+    for y in 0..h {
+        total += row_integrals[y];
+        marginal_cdf[y] = total;
+    }
+    
+    // Normalize marginal CDF
+    if total > 0.0 {
+        for y in 0..h {
+            marginal_cdf[y] /= total;
+        }
+    }
+    
+    (conditional_cdf, marginal_cdf, total)
+}
+
+/// Load HDR/EXR image from file and create GPU texture with importance sampling CDFs
 pub fn load_env_map(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -100,7 +180,7 @@ pub fn load_env_map(
     path: &Path,
 ) -> anyhow::Result<EnvironmentMap> {
     // Load image (image crate handles HDR and EXR)
-    let (width, height, data) = load_image_file(path)?;
+    let (width, height, data, luminance) = load_image_file(path)?;
     
     let bytes: &[u8] = bytemuck::cast_slice(&data);
     
@@ -170,6 +250,23 @@ pub fn load_env_map(
         ],
     });
     
+    // Build importance sampling CDFs
+    let (conditional_cdf_data, marginal_cdf_data, total_luminance) = 
+        build_env_cdfs(width, height, &luminance);
+    
+    // Create GPU buffers for CDFs (used by path tracer)
+    let conditional_cdf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("env_conditional_cdf"),
+        contents: bytemuck::cast_slice(&conditional_cdf_data),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    
+    let marginal_cdf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("env_marginal_cdf"),
+        contents: bytemuck::cast_slice(&marginal_cdf_data),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    
     Ok(EnvironmentMap {
         texture,
         view,
@@ -177,6 +274,13 @@ pub fn load_env_map(
         bind_group,
         uniform_buffer,
         intensity: 1.0,
+        marginal_cdf,
+        conditional_cdf,
+        marginal_cdf_data,
+        conditional_cdf_data,
+        total_luminance,
+        width,
+        height,
     })
 }
 
@@ -243,6 +347,18 @@ pub fn create_default_env(
         ],
     });
     
+    // Dummy CDF buffers (1x1 uniform distribution)
+    let marginal_cdf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("default_marginal_cdf"),
+        contents: bytemuck::cast_slice(&[1.0f32]),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    let conditional_cdf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("default_conditional_cdf"),
+        contents: bytemuck::cast_slice(&[1.0f32]),
+        usage: wgpu::BufferUsages::STORAGE,
+    });
+    
     EnvironmentMap {
         texture,
         view,
@@ -250,5 +366,12 @@ pub fn create_default_env(
         bind_group,
         uniform_buffer,
         intensity: 0.0,
+        marginal_cdf,
+        conditional_cdf,
+        marginal_cdf_data: vec![1.0f32],
+        conditional_cdf_data: vec![1.0f32],
+        total_luminance: 0.0,
+        width: 1,
+        height: 1,
     }
 }
