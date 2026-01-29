@@ -56,7 +56,8 @@ struct Camera {
     dof_enabled: u32,           // offset 156, 4 bytes
     aperture: f32,              // offset 160, 4 bytes
     focus_distance: f32,        // offset 164, 4 bytes
-    _pad1: vec2<u32>,           // offset 168, 8 bytes
+    global_opacity: f32,        // offset 168, 4 bytes
+    _pad1: u32,                 // offset 172, 4 bytes
     _pad2: vec4<u32>,           // offset 176, 16 bytes
     // Total: 192 bytes
 };
@@ -711,20 +712,38 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
 
         // Unpack material fields (Standard Surface)
-        let base_color = mat.base_color_weight.rgb;
-        let base_weight = mat.base_color_weight.a;
-        let spec_color = mat.specular_color_weight.rgb;
-        let spec_weight = mat.specular_color_weight.a;
-        let transmission_color = mat.transmission_color_weight.rgb;
-        let transmission_weight = mat.transmission_color_weight.a;
-        let coat_color = mat.coat_color_weight.rgb;
-        let coat_weight = mat.coat_color_weight.a;
-        let emission = mat.emission_color_weight.rgb * mat.emission_color_weight.a;
-        let metallic = mat.params1.y;
-        let roughness = mat.params1.z;
-        let ior = mat.params1.w;
-        let coat_roughness = mat.params2.y;
-        let coat_ior = mat.params2.z;
+        // Global opacity blends between original material and clear glass
+        let glass_blend = 1.0 - camera.global_opacity;
+
+        // Glass material parameters (clear refractive glass)
+        // Glass has NO diffuse (base_weight=0), only specular reflection + transmission
+        let glass_base_color = vec3<f32>(1.0, 1.0, 1.0);
+        let glass_base_weight = 0.0;  // No diffuse for glass!
+        let glass_spec_color = vec3<f32>(1.0, 1.0, 1.0);
+        let glass_spec_weight = 1.0;
+        let glass_transmission_color = vec3<f32>(1.0, 1.0, 1.0);
+        let glass_transmission_weight = 1.0;
+        let glass_metallic = 0.0;
+        let glass_roughness = 0.01;
+        let glass_ior = 1.5;
+        let glass_coat_weight = 1.0;  // Glass has sharp coat
+        let glass_coat_roughness = 0.005;  // Very sharp, like wine glass
+
+        // Blend all parameters between original material and glass
+        let base_color = mix(mat.base_color_weight.rgb, glass_base_color, glass_blend);
+        let base_weight = mix(mat.base_color_weight.a, glass_base_weight, glass_blend);
+        let spec_color = mix(mat.specular_color_weight.rgb, glass_spec_color, glass_blend);
+        let spec_weight = mix(mat.specular_color_weight.a, glass_spec_weight, glass_blend);
+        let transmission_color = mix(mat.transmission_color_weight.rgb, glass_transmission_color, glass_blend);
+        let transmission_weight = mix(mat.transmission_color_weight.a, glass_transmission_weight, glass_blend);
+        let coat_color = mix(mat.coat_color_weight.rgb, vec3<f32>(1.0), glass_blend);
+        let coat_weight = mix(mat.coat_color_weight.a, glass_coat_weight, glass_blend);
+        let emission = mat.emission_color_weight.rgb * mat.emission_color_weight.a * camera.global_opacity;
+        let metallic = mix(mat.params1.y, glass_metallic, glass_blend);
+        let roughness = mix(mat.params1.z, glass_roughness, glass_blend);
+        let ior = mix(mat.params1.w, glass_ior, glass_blend);
+        let coat_roughness = mix(mat.params2.y, glass_coat_roughness, glass_blend);
+        let coat_ior = mix(mat.params2.z, 1.5, glass_blend);  // Glass coat IOR
 
         // Add emission
         radiance += throughput * emission;

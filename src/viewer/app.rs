@@ -849,6 +849,7 @@ impl ViewerApp {
                                 renderer.pt_dof_enabled = self.settings.pt_dof_enabled;
                                 renderer.pt_aperture = self.settings.pt_aperture;
                                 renderer.pt_focus_distance = self.settings.pt_focus_distance;
+                                renderer.pt_global_opacity = self.settings.pt_global_opacity;
                                 renderer.init_path_tracer(1280, 720);
                                 renderer.upload_scene_to_path_tracer_with_normals(
                                     self.settings.smooth_normals,
@@ -1055,7 +1056,21 @@ impl ViewerApp {
                             }
                             
                             ui.separator();
-                            
+
+                            // Global Opacity (transparency control)
+                            ui.horizontal(|ui| {
+                                ui.label("Opacity:");
+                                if ui.add(egui::Slider::new(&mut self.settings.pt_global_opacity, 0.0..=1.0)).changed() {
+                                    renderer.pt_global_opacity = self.settings.pt_global_opacity;
+                                    if let Some(pt) = &mut renderer.path_tracer {
+                                        pt.reset_accumulation();
+                                    }
+                                    changed = true;
+                                }
+                            });
+
+                            ui.separator();
+
                             // Depth of Field
                             if ui.checkbox(&mut self.settings.pt_dof_enabled, "Depth of Field").changed() {
                                 renderer.pt_dof_enabled = self.settings.pt_dof_enabled;
@@ -2286,6 +2301,7 @@ impl ViewerApp {
             renderer.pt_dof_enabled = self.settings.pt_dof_enabled;
             renderer.pt_aperture = self.settings.pt_aperture;
             renderer.pt_focus_distance = self.settings.pt_focus_distance;
+            renderer.pt_global_opacity = self.settings.pt_global_opacity;
             if renderer.path_tracer.is_none() {
                 renderer.init_path_tracer(1280, 720);
             }
@@ -2614,6 +2630,7 @@ impl eframe::App for ViewerApp {
                     renderer.pt_dof_enabled = self.settings.pt_dof_enabled;
                     renderer.pt_aperture = self.settings.pt_aperture;
                     renderer.pt_focus_distance = self.settings.pt_focus_distance;
+                    renderer.pt_global_opacity = self.settings.pt_global_opacity;
                     // Set floor if enabled (uses scene_bounds for sizing)
                     if self.settings.show_floor {
                         renderer.set_floor(&self.scene_bounds);

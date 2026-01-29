@@ -1,5 +1,39 @@
 # CHANGELOG
 
+## Session 2026-01-29: Path Tracer Enhancements
+
+### Global Opacity Slider (Material-to-Glass Morphing)
+- Added `pt_global_opacity` setting (0.0-1.0) to Path Tracer UI
+- Smoothly blends ALL material parameters between original and clear glass:
+  - `opacity=1.0` → original material as-is
+  - `opacity=0.5` → 50% mix of original + glass parameters
+  - `opacity=0.0` → pure refractive glass (IOR 1.5, roughness 0.01)
+- Glass parameters: no diffuse (base_weight=0), sharp coat, transmission=1.0
+- Affects: base_color, base_weight, spec_color, metallic, roughness, IOR, transmission, coat
+
+### Path Tracer Fixes
+- Fixed ghosting when moving camera (queue.write_buffer vs encoder synchronization)
+- Fixed FPS not throttling correctly (removed triple-throttle: viewport + renderer + sleep)
+- Fixed black flicker at 30fps (changed blit LoadOp::Clear to LoadOp::Load)
+- Camera change threshold reduced from 0.01 to 1e-5/1e-6 for stability
+
+### Verified Already-Implemented Features
+- Environment CDF importance sampling (marginal + conditional CDFs)
+- Next Event Estimation (NEE) for HDR environment
+- Multiple Importance Sampling (MIS) with power heuristic
+- Russian roulette path termination
+- Coat layer with separate roughness
+- Refraction for glass/water materials
+
+### Files Changed
+- `src/viewer/settings.rs` - Added `pt_global_opacity` field
+- `src/viewer/pathtracer/compute.rs` - Added `global_opacity` to PtCameraUniform
+- `src/viewer/pathtracer/bvh_traverse.wgsl` - Material-glass blend logic
+- `src/viewer/renderer/mod.rs` - Pass global_opacity, fixed camera threshold
+- `src/viewer/app.rs` - Opacity slider UI, sync to renderer
+
+---
+
 ## Session 2026-01-26 .. 2026-01-28: Viewer Major Upgrade
 
 ### Path Tracer (GPU compute, new module `src/viewer/pathtracer/`)

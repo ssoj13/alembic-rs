@@ -47,8 +47,10 @@ pub struct PtCameraUniform {
     pub aperture: f32,
     /// Focus distance for DoF. Offset 164, 4 bytes.
     pub focus_distance: f32,
-    /// Padding. Offset 168, 8 bytes.
-    pub _pad1: [u32; 2],
+    /// Global opacity multiplier (0-1). Offset 168, 4 bytes.
+    pub global_opacity: f32,
+    /// Padding. Offset 172, 4 bytes.
+    pub _pad1: u32,
     /// Final padding. Offset 176, 16 bytes.
     pub _pad2: [u32; 4],
     // Total: 192 bytes

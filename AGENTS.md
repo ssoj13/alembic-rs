@@ -227,6 +227,78 @@ apply_scene(frame, CollectedScene)
 Renderer::render() -> GPU passes
 ```
 
+## Path Tracer Pipeline (2026-01-29)
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                     PATH TRACER COMPUTE PIPELINE                          │
+└──────────────────────────────────────────────────────────────────────────┘
+
+PathTraceCompute (src/viewer/pathtracer/compute.rs)
+    |
+    v
+┌───────────────────────────────────────────────────────────────┐
+│                    GPU Buffers                                 │
+│   - BVH nodes (AABB tree)                                     │
+│   - Triangles (positions, normals, UVs)                       │
+│   - Materials (Standard Surface parameters)                   │
+│   - Environment CDFs (marginal + conditional for importance)  │
+│   - Camera uniform (inv_view, inv_proj, global_opacity, DoF)  │
+│   - Accumulation texture (progressive refinement)             │
+└───────────────────────────────────────────────────────────────┘
+    |
+    v
+┌───────────────────────────────────────────────────────────────┐
+│              bvh_traverse.wgsl (Compute Shader)               │
+│                                                               │
+│   Per-pixel ray generation:                                   │
+│     1. Generate primary ray from camera                       │
+│     2. Apply DoF lens sampling (if enabled)                   │
+│                                                               │
+│   Path tracing loop (max_bounces iterations):                 │
+│     1. BVH traversal → find closest hit                       │
+│     2. Material parameter blend (original ↔ glass)            │
+│        - glass_blend = 1.0 - global_opacity                   │
+│        - mix(mat.param, glass.param, glass_blend)             │
+│     3. Russian roulette termination (after bounce 0)          │
+│     4. NEE: Direct sun lighting with MIS                      │
+│     5. NEE: Environment sampling with CDF importance          │
+│     6. Layer evaluation:                                      │
+│        - Coat layer (GGX, separate roughness)                 │
+│        - Specular/Transmission/Diffuse (Fresnel-weighted)     │
+│     7. Next ray direction sampling                            │
+│                                                               │
+│   Output: accumulated radiance to texture                     │
+└───────────────────────────────────────────────────────────────┘
+    |
+    v
+┌───────────────────────────────────────────────────────────────┐
+│                    Blit to Screen                              │
+│   - Divide by frame_count for progressive average             │
+│   - Tone mapping (exposure)                                   │
+│   - LoadOp::Load (preserve previous frame, no flicker)        │
+└───────────────────────────────────────────────────────────────┘
+```
+
+### Global Opacity Material Blend
+
+```
+opacity = 1.0                    opacity = 0.5                    opacity = 0.0
+┌─────────────┐                  ┌─────────────┐                  ┌─────────────┐
+│ Original    │                  │ 50% Mix     │                  │ Clear Glass │
+│ Material    │      ───►        │ Parameters  │      ───►        │ IOR=1.5     │
+│ as-is       │                  │             │                  │ rough=0.01  │
+└─────────────┘                  └─────────────┘                  └─────────────┘
+
+Glass target parameters:
+  - base_weight = 0.0 (no diffuse)
+  - transmission_weight = 1.0
+  - metallic = 0.0
+  - roughness = 0.01
+  - ior = 1.5
+  - coat_weight = 1.0, coat_roughness = 0.005
+```
+
 ## Camera Input Mapping (Current vs Desired)
 
 ```

@@ -99,7 +99,8 @@ pub struct Settings {
     pub pt_dof_enabled: bool,
     pub pt_aperture: f32,       // Aperture radius in world units
     pub pt_focus_distance: f32, // Focus distance in world units
-    
+    pub pt_global_opacity: f32, // Global opacity multiplier (0-1)
+
     // Material randomization
     pub materialize_missing: bool,
     
@@ -159,6 +160,7 @@ impl Default for Settings {
             pt_dof_enabled: false,
             pt_aperture: 0.1,
             pt_focus_distance: 10.0,
+            pt_global_opacity: 1.0,
             materialize_missing: false,
             hover_mode: HoverMode::Outline,  // Default to outline hover
             hover_outline_thickness: 2.0,

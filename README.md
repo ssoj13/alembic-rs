@@ -47,6 +47,17 @@ alembic copy in.abc out.abc # Round-trip copy test
 - Animation timeline scrubbing
 - Settings persist between sessions
 
+### Path Tracer (GPU Compute)
+- Full GPU path tracing via wgpu compute shaders
+- BVH acceleration structure for ray-triangle intersection
+- PBR materials: glass, metals, plastics, rubber, leather
+- Environment importance sampling (CDF-based)
+- Next Event Estimation (NEE) with MIS
+- Depth of Field with aperture/focus controls
+- Global opacity slider (morphs any material to glass)
+- Russian roulette path termination
+- Coat layer with separate roughness
+
 ## Installation
 
 ### Rust Library

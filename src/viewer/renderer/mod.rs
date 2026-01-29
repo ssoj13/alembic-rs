@@ -157,6 +157,8 @@ pub struct Renderer {
     pub pt_focus_distance: f32,
     /// World-space point to keep in focus (set by F-key or Ctrl+LMB pick)
     pub pt_focus_point: Option<glam::Vec3>,
+    /// Global opacity multiplier for all PT materials (0-1)
+    pub pt_global_opacity: f32,
     /// Surface format needed for path tracer blit pipeline creation.
     #[allow(dead_code)]
     surface_format: wgpu::TextureFormat,
@@ -704,6 +706,7 @@ impl Renderer {
             pt_aperture: 0.1,
             pt_focus_distance: 10.0,
             pt_focus_point: None,
+            pt_global_opacity: 1.0,
             surface_format: format,
             object_id_texture: None,
             object_id_pick_buffer,
@@ -831,7 +834,8 @@ impl Renderer {
                 dof_enabled: if self.pt_dof_enabled { 1 } else { 0 },
                 aperture: self.pt_aperture,
                 focus_distance: self.pt_focus_distance,
-                _pad1: [0; 2],
+                global_opacity: self.pt_global_opacity,
+                _pad1: 0,
                 _pad2: [0; 4],
             };
             pt.update_camera(&self.queue, &cam);
