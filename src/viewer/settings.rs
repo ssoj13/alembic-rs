@@ -92,6 +92,9 @@ pub struct Settings {
     pub pt_max_bounces: u32,
     pub pt_max_samples: u32,
     pub pt_samples_per_update: u32,
+    pub pt_target_fps: f32,       // Target FPS for auto SPP mode
+    pub pt_auto_spp: bool,        // Auto-adjust samples per frame to hit target FPS
+    pub pt_camera_snap: bool,     // Snap camera at target FPS intervals (prevents ghost samples)
     pub pt_max_transmission_depth: u32,
     pub pt_dof_enabled: bool,
     pub pt_aperture: f32,       // Aperture radius in world units
@@ -104,6 +107,10 @@ pub struct Settings {
     pub hover_mode: HoverMode,
     pub hover_outline_thickness: f32,
     pub hover_outline_alpha: f32,
+
+    // Auto turntable
+    pub turntable_enabled: bool,
+    pub turntable_speed: f32,  // degrees per second
 }
 
 impl Default for Settings {
@@ -145,6 +152,9 @@ impl Default for Settings {
             pt_max_bounces: 4,
             pt_max_samples: 512,
             pt_samples_per_update: 1,
+            pt_target_fps: 30.0,
+            pt_auto_spp: false,
+            pt_camera_snap: true,  // On by default to prevent ghost samples
             pt_max_transmission_depth: 8,
             pt_dof_enabled: false,
             pt_aperture: 0.1,
@@ -153,6 +163,8 @@ impl Default for Settings {
             hover_mode: HoverMode::Outline,  // Default to outline hover
             hover_outline_thickness: 2.0,
             hover_outline_alpha: 1.0,
+            turntable_enabled: false,
+            turntable_speed: 15.0,  // 15 deg/sec = 24 sec per revolution
         }
     }
 }

@@ -131,6 +131,13 @@ pub struct Renderer {
     pub pt_max_bounces: u32,
     /// Samples per frame update (batch multiple samples before display refresh)
     pub pt_samples_per_update: u32,
+    pub pt_target_fps: f32,
+    pub pt_auto_spp: bool,
+    pub pt_camera_snap: bool,  // Snap camera at target FPS intervals
+    last_render_time_ms: f32,  // Actual render time (not including wait)
+    pt_batch_rendering: bool,  // True during multi-sample batch (skip camera updates)
+    pt_camera_snap_time: std::time::Instant,  // When PT camera was last snapped
+    pt_snap_ready: bool,  // True when it's time to dispatch new samples (snap interval reached)
     /// Max transmission/glass bounces (separate from diffuse/specular bounces)
     pub pt_max_transmission_depth: u32,
     /// Depth of field enabled
@@ -669,6 +676,13 @@ impl Renderer {
             pt_max_samples: 512,
             pt_max_bounces: 4,
             pt_samples_per_update: 1,
+            pt_target_fps: 30.0,
+            pt_auto_spp: false,
+            pt_camera_snap: true,
+            last_render_time_ms: 10.0,  // Conservative initial estimate
+            pt_batch_rendering: false,
+            pt_camera_snap_time: std::time::Instant::now(),
+            pt_snap_ready: true,
             pt_max_transmission_depth: 8,
             pt_dof_enabled: false,
             pt_aperture: 0.1,
@@ -713,6 +727,31 @@ impl Renderer {
         }
 
         // Update path tracer camera — only reset accumulation if camera actually moved
+        // Skip during batch rendering to avoid ghost samples
+        if self.pt_batch_rendering {
+            return;
+        }
+
+        // Camera snapping: Only update PT camera at target FPS intervals.
+        // This allows samples to accumulate between intervals without being reset
+        // by small camera movements (inertia, etc.), preventing ghost samples.
+        // Note: pt_snap_ready flag tells render() whether to dispatch new samples.
+        if self.pt_camera_snap {
+            let snap_interval = 1.0 / self.pt_target_fps;
+            let elapsed = self.pt_camera_snap_time.elapsed().as_secs_f32();
+            if elapsed < snap_interval {
+                // Not time for a new snapshot yet - skip camera update
+                // render() will only blit existing buffer, not dispatch new samples
+                self.pt_snap_ready = false;
+                return;
+            }
+            // Time for new snapshot - update snap time and allow rendering
+            self.pt_camera_snap_time = std::time::Instant::now();
+            self.pt_snap_ready = true;
+        } else {
+            self.pt_snap_ready = true; // Always ready when snap disabled
+        }
+
         if let Some(pt) = &mut self.path_tracer {
             let inv_view = view.inverse();
             let proj = view_proj * view.inverse();
@@ -760,7 +799,7 @@ impl Renderer {
                         .map(|(a, b)| (a - b).abs())
                         .fold(0.0f32, f32::max)
                 });
-                tracing::warn!("PT: camera changed, pos_delta={pos_delta:.2e}, vp_delta={vp_delta:.2e}, resetting");
+                tracing::warn!("PT: camera snapped, pos_delta={pos_delta:.2e}, vp_delta={vp_delta:.2e}, resetting");
                 pt.reset_accumulation();
             }
             pt.last_camera_pos = Some(pos_arr);
@@ -888,6 +927,11 @@ impl Renderer {
         if let Some(pt) = &mut self.path_tracer {
             pt.set_object_visible(&self.queue, object_id, visible);
         }
+    }
+    
+    /// Update frame time for auto SPP calculation (deprecated - now measured internally)
+    pub fn update_frame_time(&mut self, _frame_time_ms: f32) {
+        // Now measured internally in render() for accuracy
     }
 
     /// Reset to default 3-point lighting
@@ -2068,7 +2112,7 @@ impl Renderer {
         )?;
         self.postfx_bind_groups_dirty = true;
         
-        // Update path tracer environment
+        // Update path tracer environment with texture and CDFs for importance sampling
         if let Some(pt) = &mut self.path_tracer {
             pt.set_environment_texture(
                 &self.device,
@@ -2076,6 +2120,15 @@ impl Renderer {
                 &self.env_map.texture,
                 self.env_map.intensity,
                 true,
+            );
+            // Upload CDF data for importance sampling
+            pt.set_environment_cdfs(
+                &self.device,
+                &self.queue,
+                &self.env_map.marginal_cdf_data,
+                &self.env_map.conditional_cdf_data,
+                self.env_map.width,
+                self.env_map.height,
             );
         }
         Ok(())
@@ -2231,7 +2284,59 @@ impl Renderer {
                 let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("pt_encoder"),
                 });
-                pt.dispatch(&mut encoder, &self.queue);
+                
+                // Only dispatch new samples when snap is ready (or snap disabled)
+                // Otherwise just blit existing accumulation buffer
+                if self.pt_snap_ready {
+                    // Calculate samples per frame
+                    let samples_this_frame = if self.pt_auto_spp {
+                        // Auto mode: adaptive based on last render time
+                        let target_frame_ms = 1000.0 / self.pt_target_fps;
+                        let current_spp = self.pt_samples_per_update.max(1);
+                        let time_per_sample = self.last_render_time_ms / current_spp as f32;
+
+                        // Only adjust if we have reasonable timing data
+                        if time_per_sample > 0.1 {
+                            let estimated = (target_frame_ms / time_per_sample) as u32;
+                            // Gradual adjustment: don't jump more than 2x
+                            let max_increase = current_spp * 2;
+                            let min_decrease = (current_spp / 2).max(1);
+                            estimated.clamp(min_decrease, max_increase.min(128))
+                        } else {
+                            // Start conservative
+                            current_spp.min(2)
+                        }
+                    } else {
+                        self.pt_samples_per_update
+                    };
+
+                    // Lock camera during batch to prevent ghost samples
+                    self.pt_batch_rendering = true;
+
+                    // Measure actual render time
+                    let render_start = std::time::Instant::now();
+
+                    // Multiple samples per frame for target FPS control
+                    for _ in 0..samples_this_frame {
+                        if !pt.dispatch(&mut encoder, &self.queue) {
+                            break; // Scene not ready or converged
+                        }
+                    }
+
+                    // Update render time estimate (EMA)
+                    let render_time_ms = render_start.elapsed().as_secs_f32() * 1000.0;
+                    self.last_render_time_ms = self.last_render_time_ms * 0.7 + render_time_ms * 0.3;
+
+                    // Update actual samples per update for next frame estimation
+                    if self.pt_auto_spp {
+                        self.pt_samples_per_update = samples_this_frame;
+                    }
+
+                    // Unlock camera after batch
+                    self.pt_batch_rendering = false;
+                }
+                // Always blit (shows accumulated result even between snap intervals)
+                
                 pt.blit(&mut encoder, view);
                 
                 // Add hover overlay in PT mode if enabled

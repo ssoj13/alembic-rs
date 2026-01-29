@@ -1,6 +1,6 @@
 //! Main application state and UI
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -71,6 +71,8 @@ pub struct ViewerApp {
     
     // UI state
     status_message: String,
+    frame_times: VecDeque<f32>,  // Ring buffer for avg frame time (last 20 frames)
+    last_render_time: Instant,   // For measuring actual frame time
     
     // Scene info
     mesh_count: usize,
@@ -101,6 +103,9 @@ pub struct ViewerApp {
     
     // Scene reload trigger (for materialize toggle, etc.)
     needs_scene_reload: bool,
+
+    // Auto turntable state
+    turntable_last_input: Instant,  // Last time user moved camera
 }
 
 /// Guess material properties from object path for auto-materialization
@@ -369,6 +374,8 @@ impl ViewerApp {
             scene_is_static: false,
             last_scene_hash: None,
             status_message: "Ready".into(),
+            frame_times: VecDeque::with_capacity(20),
+            last_render_time: Instant::now(),
             mesh_count: 0,
             vertex_count: 0,
             face_count: 0,
@@ -387,6 +394,7 @@ impl ViewerApp {
             is_fullscreen: false,
             _trace_guard: trace_guard,
             needs_scene_reload: false,
+            turntable_last_input: Instant::now(),
         }
     }
 
@@ -834,6 +842,9 @@ impl ViewerApp {
                                 renderer.pt_max_samples = self.settings.pt_max_samples;
                                 renderer.pt_max_bounces = self.settings.pt_max_bounces;
                                 renderer.pt_samples_per_update = self.settings.pt_samples_per_update;
+                                renderer.pt_target_fps = self.settings.pt_target_fps;
+                                renderer.pt_auto_spp = self.settings.pt_auto_spp;
+                                renderer.pt_camera_snap = self.settings.pt_camera_snap;
                                 renderer.pt_max_transmission_depth = self.settings.pt_max_transmission_depth;
                                 renderer.pt_dof_enabled = self.settings.pt_dof_enabled;
                                 renderer.pt_aperture = self.settings.pt_aperture;
@@ -1002,6 +1013,46 @@ impl ViewerApp {
                                     changed = true;
                                 }
                             });
+                            // Auto SPP mode
+                            if ui.checkbox(&mut self.settings.pt_auto_spp, "Auto SPP").changed() {
+                                renderer.pt_auto_spp = self.settings.pt_auto_spp;
+                                // Restore manual SPP value when turning off Auto
+                                if !self.settings.pt_auto_spp {
+                                    renderer.pt_samples_per_update = self.settings.pt_samples_per_update;
+                                }
+                            }
+
+                            // Camera snapping (prevents ghost samples when SPP > 1)
+                            if ui.checkbox(&mut self.settings.pt_camera_snap, "Camera Snap")
+                                .on_hover_text("Snap camera at Target FPS intervals. Prevents ghost samples when rendering multiple samples per frame.")
+                                .changed()
+                            {
+                                renderer.pt_camera_snap = self.settings.pt_camera_snap;
+                            }
+
+                            // Target FPS - used by both Auto SPP and Camera Snap
+                            if self.settings.pt_auto_spp || self.settings.pt_camera_snap {
+                                ui.horizontal(|ui| {
+                                    ui.label("Target FPS:");
+                                    if ui.add(egui::Slider::new(&mut self.settings.pt_target_fps, 1.0..=120.0).integer()).changed() {
+                                        renderer.pt_target_fps = self.settings.pt_target_fps;
+                                    }
+                                });
+                            }
+
+                            if self.settings.pt_auto_spp {
+                                // Show current auto SPP value
+                                ui.horizontal(|ui| {
+                                    ui.label(format!("SPP/frame: {}", renderer.pt_samples_per_update));
+                                });
+                            } else {
+                                ui.horizontal(|ui| {
+                                    ui.label("SPP/frame:");
+                                    if ui.add(egui::Slider::new(&mut self.settings.pt_samples_per_update, 1..=64)).changed() {
+                                        renderer.pt_samples_per_update = self.settings.pt_samples_per_update;
+                                    }
+                                }).response.on_hover_text("Samples per frame. Higher = faster convergence, lower FPS");
+                            }
                             
                             ui.separator();
                             
@@ -1277,6 +1328,34 @@ impl ViewerApp {
                         });
                     }
                     
+                    ui.separator();
+
+                    // Auto turntable
+                    if ui.checkbox(&mut self.settings.turntable_enabled, "Turntable")
+                        .on_hover_text("Auto-rotate camera around scene. Pauses for 1s after user input.")
+                        .changed()
+                    {
+                        if self.settings.turntable_enabled {
+                            // Fit to scene on enable
+                            if let Some(bounds) = &self.scene_bounds {
+                                self.viewport.camera.focus(bounds.center(), bounds.radius().max(0.1));
+                            }
+                            self.turntable_last_input = Instant::now();
+                        }
+                        self.settings.save();
+                    }
+
+                    if self.settings.turntable_enabled {
+                        ui.horizontal(|ui| {
+                            ui.label("Speed:");
+                            if ui.add(egui::Slider::new(&mut self.settings.turntable_speed, 1.0..=60.0)
+                                .suffix("°/s")).changed()
+                            {
+                                self.settings.save();
+                            }
+                        });
+                    }
+
                     // Camera info
                     let pos = self.viewport.camera.position();
                     ui.label(format!("Camera: ({:.1}, {:.1}, {:.1})", pos.x, pos.y, pos.z));
@@ -1302,7 +1381,14 @@ impl ViewerApp {
         ui.horizontal(|ui| {
             ui.label(&self.status_message);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(format!("FPS: {:.0}", ui.ctx().input(|i| 1.0 / i.stable_dt)));
+                // Average frame time from ring buffer
+                if !self.frame_times.is_empty() {
+                    let avg_ms = self.frame_times.iter().sum::<f32>() / self.frame_times.len() as f32;
+                    let avg_fps = 1000.0 / avg_ms;
+                    ui.label(format!("{:.1} ms ({:.0} fps)", avg_ms, avg_fps));
+                } else {
+                    ui.label(format!("FPS: {:.0}", ui.ctx().input(|i| 1.0 / i.stable_dt)));
+                }
             });
         });
     }
@@ -2317,6 +2403,21 @@ impl eframe::App for ViewerApp {
     
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let _span = tracing::info_span!("viewer_update").entered();
+        
+        // Measure frame time for statistics
+        let now = Instant::now();
+        let frame_time_ms = now.duration_since(self.last_render_time).as_secs_f32() * 1000.0;
+        self.last_render_time = now;
+        // Ring buffer: keep last 20 frame times
+        if self.frame_times.len() >= 20 {
+            self.frame_times.pop_front();
+        }
+        self.frame_times.push_back(frame_time_ms);
+        
+        // Update renderer frame time for auto SPP
+        if let Some(renderer) = &mut self.viewport.renderer {
+            renderer.update_frame_time(frame_time_ms);
+        }
 
         let _update_start = std::time::Instant::now();
         macro_rules! checkpoint {
@@ -2503,6 +2604,9 @@ impl eframe::App for ViewerApp {
                     renderer.pt_max_samples = self.settings.pt_max_samples;
                     renderer.pt_max_bounces = self.settings.pt_max_bounces;
                     renderer.pt_samples_per_update = self.settings.pt_samples_per_update;
+                    renderer.pt_target_fps = self.settings.pt_target_fps;
+                    renderer.pt_auto_spp = self.settings.pt_auto_spp;
+                    renderer.pt_camera_snap = self.settings.pt_camera_snap;
                     renderer.pt_max_transmission_depth = self.settings.pt_max_transmission_depth;
                     renderer.pt_dof_enabled = self.settings.pt_dof_enabled;
                     renderer.pt_aperture = self.settings.pt_aperture;
@@ -2599,6 +2703,20 @@ impl eframe::App for ViewerApp {
             let render_state = frame.wgpu_render_state();
             self.viewport.show(ui, render_state);
         });
+
+        // Auto turntable: rotate camera if enabled and no user input for 1 second
+        if self.settings.turntable_enabled {
+            if self.viewport.camera_moved_by_user {
+                // User moved camera - reset timer
+                self.turntable_last_input = Instant::now();
+            } else if self.turntable_last_input.elapsed().as_secs_f32() > 1.0 {
+                // Auto-rotate around current target
+                let dt = ctx.input(|i| i.stable_dt);
+                let delta_yaw = self.settings.turntable_speed * dt;
+                self.viewport.camera.yaw += delta_yaw;
+                ctx.request_repaint();
+            }
+        }
 
         // Handle Ctrl+Click focus pick for DoF - use CPU ray-triangle intersection
         if let Some((rel_x, rel_y)) = self.viewport.take_focus_pick() {
@@ -2740,8 +2858,16 @@ impl eframe::App for ViewerApp {
 
         // egui handles repaint for pointer interactions automatically
         // This saves CPU when idle (was causing 100% CPU usage)
-        if self.playing || self.settings.path_tracing {
+        if self.playing {
             ctx.request_repaint();
+        } else if self.settings.path_tracing {
+            // For path tracing: limit repaint rate when camera snap or auto SPP enabled
+            if self.settings.pt_camera_snap || self.settings.pt_auto_spp {
+                let frame_duration = std::time::Duration::from_secs_f32(1.0 / self.settings.pt_target_fps);
+                ctx.request_repaint_after(frame_duration);
+            } else {
+                ctx.request_repaint();
+            }
         }
 
         let update_ms = _update_start.elapsed().as_secs_f64() * 1000.0;

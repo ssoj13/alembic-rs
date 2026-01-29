@@ -29,6 +29,8 @@ pub struct Viewport {
     pending_object_pick: Option<(f32, f32)>,
     /// Current mouse hover position (normalized 0-1 coords)
     pub hover_position: Option<(f32, f32)>,
+    /// True if user moved the camera this frame (for turntable pause)
+    pub camera_moved_by_user: bool,
 }
 
 struct RenderTexture {
@@ -50,6 +52,7 @@ impl Viewport {
             pending_focus_pick: None,
             pending_object_pick: None,
             hover_position: None,
+            camera_moved_by_user: false,
         }
     }
 
@@ -77,7 +80,7 @@ impl Viewport {
         let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
 
         // Handle camera input
-        self.handle_input(ui, &response);
+        self.camera_moved_by_user = self.handle_input(ui, &response);
 
         // Update camera inertia; request repaint while decaying
         let dt = ui.input(|i| i.stable_dt);
@@ -204,8 +207,10 @@ impl Viewport {
         });
     }
 
-    fn handle_input(&mut self, ui: &Ui, response: &Response) {
+    /// Handle camera input, returns true if user moved the camera
+    fn handle_input(&mut self, ui: &Ui, response: &Response) -> bool {
         let input = ui.input(|i| i.clone());
+        let mut camera_moved = false;
 
         // Track drag state for inertia
         let any_drag = response.dragged_by(egui::PointerButton::Primary)
@@ -224,18 +229,21 @@ impl Viewport {
         if response.dragged_by(egui::PointerButton::Primary) && !ctrl_held {
             let delta = response.drag_delta();
             self.camera.orbit(delta.x, delta.y);
+            camera_moved = true;
         }
 
         // Pan with middle mouse drag
         if response.dragged_by(egui::PointerButton::Middle) {
             let delta = response.drag_delta();
             self.camera.pan(delta.x, delta.y);
+            camera_moved = true;
         }
 
         // Zoom with right mouse drag
         if response.dragged_by(egui::PointerButton::Secondary) {
             let delta = response.drag_delta();
             self.camera.zoom(delta.y * 0.1);
+            camera_moved = true;
         }
 
         // Zoom with scroll
@@ -243,12 +251,14 @@ impl Viewport {
             let scroll = input.raw_scroll_delta.y;
             if scroll.abs() > 0.0 {
                 self.camera.zoom(scroll * 0.1);
+                camera_moved = true;
             }
         }
 
         // Reset camera with Home key
         if response.has_focus() && input.key_pressed(egui::Key::Home) {
             self.camera.reset();
+            camera_moved = true;
         }
 
         // MMB click or Ctrl+LMB = DoF focus pick
@@ -264,7 +274,7 @@ impl Viewport {
                 }
             }
         }
-        
+
         // LMB click = object picking (selection); click-drag = orbit, click-release = select
         if response.clicked() && !ctrl_held {
             if let Some(pos) = input.pointer.hover_pos() {
@@ -276,7 +286,7 @@ impl Viewport {
                 }
             }
         }
-        
+
         // Track hover position for highlighting
         if response.hovered() {
             if let Some(pos) = input.pointer.hover_pos() {
@@ -294,6 +304,8 @@ impl Viewport {
         } else {
             self.hover_position = None;
         }
+
+        camera_moved
     }
     
     /// Take pending focus pick request (normalized 0-1 coordinates)
